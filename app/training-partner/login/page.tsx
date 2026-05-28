@@ -7,13 +7,13 @@ const TrainingPartnerLoginPage = () => {
   return (
     <main className="min-h-screen flex bg-[#f8fbff] overflow-hidden">
 
-      <section className="hidden lg:flex relative w-[25%] xl:w-[25%] bg-white border-r border-[#051f42] overflow-hidden flex-shrink-0">
-        <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(37,99,235,0.05)_1px,transparent_1px),linear-gradient(to_bottom,rgba(37,99,235,0.05)_1px,transparent_1px)] bg-[size:64px_64px]" />
-        <div className="absolute top-0 right-0 w-[420px] h-[420px] rounded-full bg-[#60a5fa] opacity-20 blur-[120px]" />
-        <div className="absolute bottom-0 left-0 w-[300px] h-[300px] rounded-full bg-[#3b82f6] opacity-10 blur-[100px]" />
-        <div className="absolute right-[-80px] top-[28%] w-[320px] h-[320px] rounded-full border border-[#93c5fd]" />
-        <div className="absolute right-[-60px] top-[30%] w-[240px] h-[240px] rounded-full border border-[#bfdbfe]" />
-        <div className="absolute left-[-50px] bottom-[15%] w-[200px] h-[200px] rounded-full border border-[#dbeafe]" />
+      <section className="hidden lg:flex relative w-[25%] xl:w-[25%] bg-white border-r border-[#051f42] overflow-hidden shrink-0">
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(37,99,235,0.05)_1px,transparent_1px),linear-gradient(to_bottom,rgba(37,99,235,0.05)_1px,transparent_1px)] bg-size-[64px_64px]" />
+        <div className="absolute top-0 right-0 w-105 h-105 rounded-full bg-[#60a5fa] opacity-20 blur-[120px]" />
+        <div className="absolute bottom-0 left-0 w-75 h-75 rounded-full bg-[#3b82f6] opacity-10 blur-[100px]" />
+        <div className="absolute -right-20 top-[28%] w-[320px] h-80 rounded-full border border-[#93c5fd]" />
+        <div className="absolute -right-15 top-[30%] w-60 h-60 rounded-full border border-[#bfdbfe]" />
+        <div className="absolute -left-12.5 bottom-[15%] w-50 h-50 rounded-full border border-[#dbeafe]" />
         <div className="relative z-10 flex items-center flex-col h-full w-full px-10 xl:px-12 py-10 justify-between">
 
           <div className="flex items-center">
@@ -28,10 +28,10 @@ const TrainingPartnerLoginPage = () => {
             </div>
           </div>
 
-          <div className="max-w-[340px]">
+          <div className="max-w-85">
             <h1 className="text-[#0f172a] text-[38px] xl:text-[40px] font-black leading-[1.1] tracking-tight mb-6">
               Gram Tarang{" "}
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#2563eb] to-[#60a5fa]">
+              <span className="text-transparent bg-clip-text bg-linear-to-r from-[#2563eb] to-[#60a5fa]">
                 Training
               </span>{" "}
               Center
@@ -75,11 +75,11 @@ const TrainingPartnerLoginPage = () => {
 
       <section className="flex-1 flex items-center justify-center px-5 sm:px-8 md:px-12 py-10 min-h-screen relative">
         <div className="absolute inset-0 overflow-hidden">
-          <div className="absolute top-[-100px] right-[-100px] w-[300px] h-[300px] rounded-full bg-[#dbeafe] blur-[100px] opacity-50" />
-          <div className="absolute bottom-[-120px] left-[-120px] w-[260px] h-[260px] rounded-full bg-[#bfdbfe] blur-[100px] opacity-40" />
+          <div className="absolute -top-25 -right-25 w-75 h-75 rounded-full bg-[#dbeafe] blur-[100px] opacity-50" />
+          <div className="absolute -bottom-30 -left-30 w-65 h-65 rounded-full bg-[#bfdbfe] blur-[100px] opacity-40" />
         </div>
 
-        <div className="relative z-10 w-full max-w-[440px]">
+        <div className="relative z-10 w-full max-w-110">
 
           <div className="lg:hidden flex justify-center mb-8">
             <div className="bg-[#eff6ff] border border-[#dbeafe] rounded-2xl px-6 py-3 shadow-sm">

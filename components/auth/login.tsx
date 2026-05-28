@@ -32,7 +32,7 @@ export default function LoginPage({
         <LabelInputContainer>
           <Label
             htmlFor="email"
-            className="text-[11px] font-semibold text-gray-400 tracking-[0.1em] uppercase"
+            className="text-[11px] font-semibold text-gray-400 tracking-widest uppercase"
           >
             Email Address
           </Label>
@@ -52,7 +52,7 @@ export default function LoginPage({
         <LabelInputContainer>
           <Label
             htmlFor="password"
-            className="text-[11px] font-semibold text-gray-400 tracking-[0.1em] uppercase"
+            className="text-[11px] font-semibold text-gray-400 tracking-widest uppercase"
           >
             Password
           </Label>
@@ -78,7 +78,7 @@ export default function LoginPage({
           </div>
         </LabelInputContainer>
 
-        <div className="flex justify-end !mt-1">
+        <div className="flex justify-end mt-1!">
           <a
             href="/forgot-password"
             className="text-[12px] text-[#1a56db] font-medium hover:underline underline-offset-2 transition-colors"
@@ -98,7 +98,7 @@ export default function LoginPage({
               className="transition-transform duration-200 group-hover:translate-x-1"
             />
           </span>
-          <span className="absolute inset-0 bg-gradient-to-r from-transparent via-[#1a56db]/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+          <span className="absolute inset-0 bg-linear-to-r from-transparent via-[#1a56db]/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
         </button>
 
       </form>
@@ -113,9 +113,9 @@ export default function LoginPage({
      <a href={RedirectUrl}>
       <button
         type="button"
-        className="group w-full h-11 bg-transparent border border-gray-200 hover:border-[#1a56db] hover:bg-[#1a56db]/[0.03] rounded-xl text-sm text-gray-500 hover:text-[#010d1f] flex items-center px-4 gap-3 transition-all duration-200"
+        className="group w-full h-11 bg-transparent border border-gray-200 hover:border-[#1a56db] hover:bg-[#1a56db]/3 rounded-xl text-sm text-gray-500 hover:text-[#010d1f] flex items-center px-4 gap-3 transition-all duration-200"
       >
-        <div className="w-6 h-6 rounded-lg bg-[#010d1f] flex items-center justify-center flex-shrink-0">
+        <div className="w-6 h-6 rounded-lg bg-[#010d1f] flex items-center justify-center shrink-0">
           <Building2 size={12} className="text-[#3b82f6]" />
         </div>
         <span className="font-medium">{SecondaryButtonText}</span>

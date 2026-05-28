@@ -4,7 +4,7 @@ export const AUTH_CONTENT ={
         subHeading:"Login as admin to manage the platform and its users",
         SubmitButtonText:"Login as Admin",
         PlaceholderMail:"admin@example.com",
-        RedirectUrl:"/traning-partner/login",
+        RedirectUrl:"/training-partner/login",
         SecondaryButtonText:"Login as Training Partner"
     },
     trainingPartner:{

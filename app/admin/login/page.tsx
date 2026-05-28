@@ -3,7 +3,7 @@ import { AUTH_CONTENT } from "@/constants/auth";
 import Image from "next/image";
 import { ShieldCheck } from "lucide-react";
 
-const Page = () => {
+const AdminLoginPage = () => {
   return (
     <main className="min-h-screen flex bg-[#f8fbff] overflow-hidden">
 
@@ -108,4 +108,4 @@ const Page = () => {
   );
 };
 
-export default Page;
+export default AdminLoginPage;

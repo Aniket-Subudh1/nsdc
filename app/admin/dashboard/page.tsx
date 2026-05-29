@@ -1,5 +1,3 @@
-import { ADMIN_SIDEBAR_LINKS } from '@/constants/sidebar'
-import { SidebarDemo } from '@/components/dashboard/sidebar'
 
 export default function Page() {
   return (

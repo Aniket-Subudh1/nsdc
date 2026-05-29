@@ -60,13 +60,13 @@ export const Logo = () => {
       href="#"
       className="relative z-20 flex items-center space-x-2 py-1 text-sm font-normal text-black"
     >
-      <div className="h-5 w-6 shrink-0 rounded-tl-lg rounded-tr-sm rounded-br-lg rounded-bl-sm bg-black" />
+      <Image src="/logo.png" className="h-10 w-10 shrink-0" width={50} height={50} alt="Logo" />
       <motion.span
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        className="font-medium whitespace-pre text-black dark:text-white"
+        className="font-medium whitespace-pre text-black"
       >
-        Acet Labs
+        GT Training Center
       </motion.span>
     </a>
   );
@@ -77,7 +77,7 @@ export const LogoIcon = () => {
       href="#"
       className="relative z-20 flex items-center space-x-2 py-1 text-sm font-normal text-black"
     >
-      <div className="h-5 w-6 shrink-0 rounded-tl-lg rounded-tr-sm rounded-br-lg rounded-bl-sm bg-black" />
+      <Image src="/logo.png" className="h-5 w-5 shrink-0" width={50} height={50} alt="Logo" />
     </a>
   );
 };

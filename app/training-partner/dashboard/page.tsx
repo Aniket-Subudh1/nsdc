@@ -1,6 +1,6 @@
-import { TRAINING_PARTNER_SIDEBAR_LINKS } from '@/constants/sidebar'
 import React from 'react'
-import { SidebarDemo } from '@/components/dashboard/sidebar'
+import pathname from "path";
+
 
 export default function Page() {
   return (

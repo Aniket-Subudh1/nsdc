@@ -203,12 +203,59 @@ describe("SIDH connector", () => {
       3,
       "https://backend.itrackglobal.com/api/user/v1/login",
       expect.objectContaining({
+        body: expect.stringContaining("username=uat-user"),
         headers: expect.objectContaining({
+          "Content-Type": "application/x-www-form-urlencoded",
           Cookie: "csrf-session=abc123",
           "x-csrf-token": "csrf-token",
         }),
       }),
     );
+  });
+
+  it("encrypts the login password when the returned PEM contains indented lines", async () => {
+    const indentedPem = `-----BEGIN PUBLIC KEY-----
+    MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAyN6utk97FCkC6cycT0mN
+    bPcwSzxvsheiDtZFMTmC0yszmL8xWWsf06bPjglLzJzGRJEAXlP4/UC07y4qFxWO
+    QnmOZiUQWFVeKPih52ib44u0dclqojyHNj7A0dieoeH1TaIvs5ng0FqJy3s0jIpk
+    vUNGtJsbr6Bt+lsPccBIu0fJ84VBG9KVEZu0Ob75kPLgSFlbMFPn+Hwa5UDnOXjq
+    kP0qAPvTFxZqgyGoLZOcffL4ZO9pZkNl5nSEta6XetQgZ9gqWGb01tS0GH5NOzul
+    PsdcLTNlCs56dwuvyntUU3cdc3ZLRoMkHCa50sBcEbK1q631+LZjJo3eOpdWkPZl
+    EyNNNjGB+PayzqfLjN8Vn1sBsnspL8fm8CQJsntrwapS28Ap1WZ1r4mTMsSf+tj8
+    4ADGPmLZBVN3db4vjDIybWo9NAA2+Od12YlTb4tKp3FVMXRb4OTwNN7+6Ylxo+vm
+    W9TYYtnikBG2DSJQWF/s9z7WYE2fD2URooHAXluXyQ8RAcRKOx4CFBQmfbYF3JNU
+    t7ZQzk77WAzeQK3mQfJm+R0pTJMNx8O1/USVLWqhl+TxeZb6W/fo3y/6OiWyeYfP
+    mnwuoms+MOvbv6HtYcpA3Kb6NbmtlHG+sSbjwGWALhreVfPateoGJIn/YRwBMFHG
+    q28mY/SYVxdVCZO2+aXuneUCAwEAAQ==
+    -----END PUBLIC KEY-----`;
+
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token" }, status: 200 }))
+      .mockResolvedValueOnce(createJsonResponse({ publicKey: indentedPem, secret: "test-secret" }))
+      .mockResolvedValueOnce(createJsonResponse({ accessToken: "access-token" }))
+      .mockResolvedValueOnce(createJsonResponse({ candidateId: "CAN_778899" }, { status: 201 }));
+
+    const connector = createSidhConnector({ env, fetchImpl });
+
+    await connector.registerCandidate({
+      attemptId: "syncatt_006",
+      payload: {
+        candidate: { fullName: "Rohit Kumar" },
+        candidateReferenceId: "cand_001",
+        center: { centerId: "tc_001", centerName: "Center One", sidhTcId: "TC164648" },
+        meta: { centerId: "tc_001", programId: "prg_001", registrationMode: "internal_registration" },
+        tpId: "TP_UAT",
+      },
+      syncJobId: "sync_001",
+    });
+
+    const loginCall = fetchImpl.mock.calls[2];
+    const loginBody = new URLSearchParams(String(loginCall?.[1]?.body ?? ""));
+    const encryptedPassword = loginBody.get("password");
+
+    expect(encryptedPassword).toBeTruthy();
+    expect(encryptedPassword).not.toBe(Buffer.from("uat-password:test-secret", "utf8").toString("base64"));
   });
 
   it("preserves plain-text auth errors instead of failing json parsing", async () => {
@@ -238,5 +285,36 @@ describe("SIDH connector", () => {
       message: "Unauthorized : csrf",
       status: 401,
     });
+  });
+
+  it("marks login 403 responses as non-retryable credential rejections", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token", "set-cookie": "csrf-session=abc123" }, status: 200 }))
+      .mockResolvedValueOnce(createJsonResponse({ publicKey: "test-public-key", secret: "test-secret" }))
+      .mockResolvedValueOnce(new Response("Error in request", { status: 403 }));
+
+    const connector = createSidhConnector({ env, fetchImpl });
+
+    await expect(
+      connector.registerCandidate({
+        attemptId: "syncatt_007",
+        payload: {
+          candidate: { fullName: "Rohit Kumar" },
+          candidateReferenceId: "cand_001",
+          center: { centerId: "tc_001", centerName: "Center One", sidhTcId: "TC164648" },
+          meta: { centerId: "tc_001", programId: "prg_001", registrationMode: "internal_registration" },
+          tpId: "TP_UAT",
+        },
+        syncJobId: "sync_001",
+      }),
+    ).rejects.toMatchObject({
+      code: "SIDH_LOGIN_REJECTED",
+      manualReview: true,
+      retryable: false,
+      status: 403,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 });

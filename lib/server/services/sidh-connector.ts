@@ -68,7 +68,7 @@ type ConnectorSession = {
 
 type RequestOptions = {
   attemptId: string;
-  body?: Record<string, unknown>;
+  body?: Record<string, unknown> | URLSearchParams;
   headers?: Record<string, string>;
   operation: string;
   path: string;
@@ -89,10 +89,16 @@ function normalizePublicKey(publicKey: string) {
   }
 
   if (trimmed.includes("BEGIN PUBLIC KEY")) {
-    return trimmed;
+    const normalizedLines = trimmed
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    return normalizedLines.join("\n");
   }
 
-  const wrapped = trimmed.match(/.{1,64}/g)?.join("\n") ?? trimmed;
+  const compact = trimmed.replace(/\s+/g, "");
+  const wrapped = compact.match(/.{1,64}/g)?.join("\n") ?? compact;
   return `-----BEGIN PUBLIC KEY-----\n${wrapped}\n-----END PUBLIC KEY-----`;
 }
 
@@ -117,11 +123,11 @@ function redactValue(value: unknown): unknown {
 }
 
 function buildLoginPayload(username: string, encryptedPassword: string, tpId: string) {
-  return {
+  return new URLSearchParams({
     password: encryptedPassword,
     tpId,
     username,
-  };
+  });
 }
 
 function buildAuthHeaders(session?: ConnectorSession) {
@@ -158,6 +164,26 @@ function extractErrorMessage(responseBody: unknown, fallbackMessage: string) {
   }
 
   return extractJsonValue<string>(responseBody, ["message", "error", "errorMessage"]) ?? fallbackMessage;
+}
+
+function serializeRequestBody(body: RequestOptions["body"]) {
+  if (!body) {
+    return { contentType: null, payload: undefined as string | undefined, requestPayload: {} as unknown };
+  }
+
+  if (body instanceof URLSearchParams) {
+    return {
+      contentType: "application/x-www-form-urlencoded",
+      payload: body.toString(),
+      requestPayload: Object.fromEntries(body.entries()),
+    };
+  }
+
+  return {
+    contentType: "application/json",
+    payload: JSON.stringify(body),
+    requestPayload: body,
+  };
 }
 
 function extractJsonValue<T = unknown>(payload: unknown, candidates: string[]): T | undefined {
@@ -248,15 +274,29 @@ async function logTransaction(input: {
   });
 }
 
-function classifyError(responseStatus: number, responseBody: unknown, fallbackMessage: string) {
+function classifyError(responseStatus: number, responseBody: unknown, fallbackMessage: string, operation?: string) {
   const remoteCandidateId = extractRemoteCandidateId(responseBody);
 
-  if (responseStatus === 401 || responseStatus === 403) {
+  if (responseStatus === 401) {
     return new SidhConnectorError({
       code: "SIDH_AUTH_FAILED",
       message: fallbackMessage,
       responseBody,
       retryable: true,
+      status: responseStatus,
+    });
+  }
+
+  if (responseStatus === 403) {
+    return new SidhConnectorError({
+      code: operation === "auth.login" ? "SIDH_LOGIN_REJECTED" : "SIDH_ACCESS_DENIED",
+      manualReview: true,
+      message:
+        operation === "auth.login"
+          ? "SIDH login was rejected. Verify SIDH username, password, and TP ID for the active environment."
+          : fallbackMessage,
+      responseBody,
+      retryable: false,
       status: responseStatus,
     });
   }
@@ -309,16 +349,17 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
 
   async function requestJson(options: RequestOptions): Promise<{ headers: Headers; payload: unknown; status: number }> {
     const url = new URL(options.path, credentials.baseUrl).toString();
+    const serializedBody = serializeRequestBody(options.body);
     const requestHeaders = {
       Accept: "application/json",
       ...buildAuthHeaders(options.session),
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...(serializedBody.contentType ? { "Content-Type": serializedBody.contentType } : {}),
       ...(options.headers ?? {}),
     };
 
     try {
       const response = await fetchImpl(url, {
-        body: options.body ? JSON.stringify(options.body) : undefined,
+        body: serializedBody.payload,
         headers: requestHeaders,
         method: options.headers?.["x-http-method"] ?? (options.body ? "POST" : "GET"),
       });
@@ -331,7 +372,7 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
         endpoint: options.path,
         operation: options.operation,
         requestHeaders,
-        requestPayload: options.body ?? {},
+        requestPayload: serializedBody.requestPayload,
         responseHeaders,
         responsePayload: payload,
         responseStatus: response.status,
@@ -342,7 +383,7 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
       if (!response.ok) {
         cachedSession = null;
         const message = extractErrorMessage(payload, `SIDH ${options.operation} failed`);
-        throw classifyError(response.status, payload, message);
+        throw classifyError(response.status, payload, message, options.operation);
       }
 
       return {
@@ -360,7 +401,7 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
         endpoint: options.path,
         operation: options.operation,
         requestHeaders,
-        requestPayload: options.body ?? {},
+        requestPayload: serializedBody.requestPayload,
         responseHeaders: {},
         responsePayload: { message: error instanceof Error ? error.message : "Unknown network error" },
         responseStatus: null,
@@ -502,7 +543,7 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
       } catch (error) {
         if (
           error instanceof SidhConnectorError &&
-          (error.status === 401 || error.status === 403 || error.status === 412 || error.code === "SIDH_AUTH_FAILED")
+          (error.status === 401 || error.status === 412 || error.code === "SIDH_AUTH_FAILED")
         ) {
           cachedSession = null;
           return executeRegistration(true);

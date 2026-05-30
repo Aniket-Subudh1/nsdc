@@ -99,6 +99,7 @@ const TrainingPartnerLoginPage = () => {
                 AUTH_CONTENT.trainingPartner.SubmitButtonText
               }
               placeholderMail={AUTH_CONTENT.trainingPartner.PlaceholderMail}
+              portal={AUTH_CONTENT.trainingPartner.portal}
               RedirectUrl={AUTH_CONTENT.trainingPartner.RedirectUrl}
               SecondaryButtonText={AUTH_CONTENT.trainingPartner.SecondaryButtonText}
             />

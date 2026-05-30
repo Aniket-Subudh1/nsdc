@@ -8,4 +8,5 @@ export type SidebarLinkType = {
 
 export type SidebarProps = {
   links: SidebarLinkType[];
+  userName?: string;
 };

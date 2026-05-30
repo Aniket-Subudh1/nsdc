@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -12,10 +13,57 @@ export default function LoginPage({
   subHeading,
   submitButtonText,
   placeholderMail,
+  portal,
   RedirectUrl,
   SecondaryButtonText,
 }: LoginPageProps) {
+  const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
+  const [email, setEmail] = useState(placeholderMail);
+  const [password, setPassword] = useState("");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isPending, setIsPending] = useState(false);
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsPending(true);
+    setErrorMessage(null);
+
+    try {
+      const response = await fetch("/api/v1/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          email,
+          password,
+          portal,
+        }),
+      });
+
+      const payload = (await response.json()) as {
+        message?: string;
+        success: boolean;
+        data?: {
+          redirectPath?: string;
+        };
+      };
+
+      if (!response.ok || !payload.success) {
+        setErrorMessage(payload.message ?? "Unable to sign in");
+        return;
+      }
+
+      router.replace(payload.data?.redirectPath ?? "/admin/dashboard");
+      router.refresh();
+    } catch {
+      setErrorMessage("Unable to sign in. Please try again.");
+    } finally {
+      setIsPending(false);
+    }
+  }
 
   return (
     <div className=" rounded-3xl p-8 md:p-10 w-full">
@@ -28,7 +76,7 @@ export default function LoginPage({
           {subHeading}
         </p>
       </div>
-      <form className="space-y-5">
+      <form className="space-y-5" onSubmit={handleSubmit}>
         <LabelInputContainer>
           <Label
             htmlFor="email"
@@ -45,7 +93,11 @@ export default function LoginPage({
               id="email"
               type="email"
               placeholder={placeholderMail}
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
               className="h-11 pl-10 pr-4 bg-gray-50 border-gray-200 rounded-xl text-sm text-gray-800 placeholder:text-gray-300 focus-visible:ring-[#1a56db]/20 focus-visible:border-[#1a56db] transition-all"
+              autoComplete="email"
+              required
             />
           </div>
         </LabelInputContainer>
@@ -65,7 +117,11 @@ export default function LoginPage({
               id="password"
               type={showPassword ? "text" : "password"}
               placeholder="••••••••••••"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
               className="h-11 pl-10 pr-11 bg-gray-50 border-gray-200 rounded-xl text-sm text-gray-800 placeholder:text-gray-300 focus-visible:ring-[#1a56db]/20 focus-visible:border-[#1a56db] transition-all"
+              autoComplete="current-password"
+              required
             />
             <button
               type="button"
@@ -87,12 +143,19 @@ export default function LoginPage({
           </a>
         </div>
 
+        {errorMessage ? (
+          <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {errorMessage}
+          </p>
+        ) : null}
+
         <button
           type="submit"
+          disabled={isPending}
           className="group relative w-full h-11 bg-[#010d1f] hover:bg-[#0a1f3d] text-white rounded-xl text-sm font-semibold tracking-wide flex items-center justify-center gap-2.5 transition-all duration-200 active:scale-[0.98] overflow-hidden"
         >
           <span className="relative z-10 flex items-center gap-2">
-            {submitButtonText}
+            {isPending ? "Signing in..." : submitButtonText}
             <ArrowRight
               size={15}
               className="transition-transform duration-200 group-hover:translate-x-1"

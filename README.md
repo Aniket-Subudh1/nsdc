@@ -1,37 +1,39 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# NSDC Portal
 
-## Getting Started
+This repository now includes the Sprint 01 backend foundation on top of the existing Next.js UI shell, using MongoDB for persistence.
 
-First, run the development server:
+## Local Setup
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+1. Copy `.env.example` to `.env.local` and fill in the secrets.
+2. Start MongoDB locally or point `DATABASE_URL` to your MongoDB Atlas cluster.
+3. Install dependencies with `npm install`.
+4. Seed the initial platform admin with `npm run seed:admin`.
+5. Start the app with `npm run dev`.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Available Scripts
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `npm run dev` starts the Next.js app.
+- `npm run lint` runs ESLint.
+- `npm run typecheck` runs TypeScript without emitting.
+- `npm run test` runs the Vitest suite.
+- `npm run seed:admin` creates or updates the initial platform admin in MongoDB.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Sprint 01 API Surface
 
-## Learn More
+- `/api/v1/auth/login`
+- `/api/v1/auth/logout`
+- `/api/v1/auth/me`
+- `/api/v1/admin/users`
+- `/api/v1/admin/users/:userId`
+- `/api/v1/admin/users/:userId/roles`
+- `/api/v1/admin/users/:userId/centers`
+- `/api/v1/masters/training-centers`
+- `/api/v1/health`
+- `/api/v1/health/ready`
+- `/api/v1/openapi`
 
-To learn more about Next.js, take a look at the following resources:
+## Notes
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-# nsdc
+- Authentication uses an HttpOnly cookie plus persisted MongoDB sessions.
+- Default RBAC roles are seeded automatically when the backend first initializes.
+- Audit logs are written for login, logout, user creation, role assignment, center assignment, and training-center creation.

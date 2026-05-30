@@ -8,6 +8,7 @@ import {SidebarProps} from "@/types/sidebar";
 
 export function SidebarDemo({
  links,
+ userName,
  children,
 }: SidebarProps & { children?: React.ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -32,7 +33,7 @@ export function SidebarDemo({
           <div>
             <SidebarLink
               link={{
-                label: "Manu Arora",
+                label: userName ?? "Signed in user",
                 href: "#",
                 icon: (
                   <Image

@@ -1,5 +1,4 @@
-import React from 'react'
-import pathname from "path";
+import React from "react";
 
 
 export default function Page() {

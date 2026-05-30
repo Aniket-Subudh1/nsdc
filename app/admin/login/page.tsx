@@ -99,6 +99,7 @@ const AdminLoginPage = () => {
                 AUTH_CONTENT.admin.SubmitButtonText
               }
               placeholderMail={AUTH_CONTENT.admin.PlaceholderMail}
+              portal={AUTH_CONTENT.admin.portal}
               RedirectUrl={AUTH_CONTENT.admin.RedirectUrl}
               SecondaryButtonText={AUTH_CONTENT.admin.SecondaryButtonText}
             />

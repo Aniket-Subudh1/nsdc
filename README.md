@@ -72,22 +72,29 @@ This uses `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` from `.env.local`.
 
 Sprint 03 adds a server-side worker for queued SIDH registration jobs.
 
-Run the worker once with the default batch size:
+Start the pull-based worker in polling mode:
 
 ```bash
 npm run sync:process
 ```
 
-Run the worker once with an explicit limit:
+Start the same worker with an explicit limit:
 
 ```bash
 npm run sync:process -- 10
 ```
 
+Run the worker once instead of polling continuously:
+
+```bash
+npm run sync:process -- --once
+```
+
 Worker behavior:
 
 - claims queued sync jobs with `nextRunAt <= now`
-- processes up to 25 jobs per run
+- runs as a pull-based polling worker by default
+- processes up to 25 jobs per polling iteration
 - uses the seeded admin or another active platform admin as the worker actor
 - calls the SIDH connector server-side only, never from the browser
 - writes attempt history and SIDH transaction logs to the sync job detail view
@@ -98,21 +105,28 @@ You can also trigger the same processing path from the UI in the Sprint 03 `Sync
 
 Sprint 04 adds a dedicated worker loop for queued SIDH batch creation and candidate enrollment jobs.
 
-Run the worker once with the default limit:
+Start the pull-based worker in polling mode:
 
 ```bash
-npm run sync:batches:process -- --once
+npm run sync:batches:process
 ```
 
-Run the worker continuously with an explicit limit:
+Start the same worker with an explicit limit:
 
 ```bash
 npm run sync:batches:process -- --limit=10
 ```
 
+Run the worker once instead of polling continuously:
+
+```bash
+npm run sync:batches:process -- --once
+```
+
 Worker behavior:
 
 - polls the batch sync queue and enrollment sync queue in the same process
+- runs as a pull-based polling worker by default, like the candidate sync worker
 - uses the same active platform-admin worker actor pattern as the candidate sync worker
 - processes up to 25 queued batch jobs and 25 queued enrollment jobs per iteration
 - writes SIDH transaction logs through the shared connector layer
@@ -126,7 +140,7 @@ Worker behavior:
 - `npm run typecheck` runs TypeScript without emitting
 - `npm run test` runs the Vitest suite
 - `npm run seed:admin` creates or updates the initial platform admin in MongoDB
-- `npm run sync:process -- [limit]` processes queued Sprint 03 sync jobs
+- `npm run sync:process -- [--once] [--limit=5]` starts the pull-based Sprint 03 candidate sync worker
 - `npm run sync:batches:process -- [--once] [--limit=5]` processes queued Sprint 04 batch and enrollment sync jobs
 
 ## Current API Highlights

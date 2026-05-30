@@ -1,5 +1,5 @@
 import { SidebarDemo } from "@/components/dashboard/sidebar";
-import { ADMIN_SIDEBAR_LINKS } from "@/constants/sidebar";
+import { TRAINING_PARTNER_SIDEBAR_LINKS } from "@/constants/sidebar";
 import { redirect } from "next/navigation";
 
 import {
@@ -8,7 +8,7 @@ import {
   getServerSession,
 } from "@/lib/server/services/session";
 
-export default async function AdminLayout({
+export default async function TrainingPartnerDashboardLayout({
   children,
 }: {
   children: React.ReactNode;
@@ -16,18 +16,18 @@ export default async function AdminLayout({
   const session = await getServerSession();
 
   if (!session) {
-    redirect("/admin/login");
+    redirect("/training-partner/login");
   }
 
   try {
-    assertPortalAccess(session.user.roles, "admin");
+    assertPortalAccess(session.user.roles, "training_partner");
   } catch {
     redirect(getDefaultRedirectPath(session.user.roles));
   }
 
   return (
     <SidebarDemo
-      links={ADMIN_SIDEBAR_LINKS}
+      links={TRAINING_PARTNER_SIDEBAR_LINKS}
       userName={session.user.name}
     >
       {children}

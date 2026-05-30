@@ -58,6 +58,10 @@ function createTokenHash(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
+function normalizeStringArray<T extends string>(values?: readonly T[] | null) {
+  return values ? Array.from(values) : [];
+}
+
 export function serializeUser(user: {
   centerIds?: string[];
   email: string;
@@ -69,14 +73,17 @@ export function serializeUser(user: {
   status?: "active" | "inactive";
   userId: string;
 }) {
+  const roles = normalizeStringArray(user.roles);
+  const centerIds = normalizeStringArray(user.centerIds);
+
   return {
     id: user.userId,
     name: user.name,
     email: user.email,
     mobileNumber: user.mobileNumber ?? null,
-    roles: user.roles,
-    role: user.roles[0] ?? "trainer_data_entry",
-    centerIds: user.centerIds ?? [],
+    roles,
+    role: roles[0] ?? "trainer_data_entry",
+    centerIds,
     status: user.status ?? "active",
     mustChangePassword: user.mustChangePassword ?? false,
     lastLoginAt: user.lastLoginAt ? user.lastLoginAt.toISOString() : null,
@@ -156,8 +163,8 @@ export async function loginUser(input: LoginInput) {
     sid: sessionId,
     email: user.email,
     name: user.name,
-    roles: user.roles,
-    centerIds: user.centerIds,
+    roles: normalizeStringArray(user.roles),
+    centerIds: normalizeStringArray(user.centerIds),
   });
 
   const expiresAt = new Date(Date.now() + getEnv().SESSION_TTL_HOURS * 60 * 60 * 1000);

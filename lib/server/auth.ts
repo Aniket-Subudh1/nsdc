@@ -31,12 +31,14 @@ export async function verifyPassword(value: string, hash: string) {
 export async function signAccessToken(payload: SessionTokenPayload) {
   const env = getEnv();
   const expiresInMinutes = env.ACCESS_TOKEN_TTL_MINUTES;
+  const roles = Array.from(payload.roles);
+  const centerIds = Array.from(payload.centerIds);
 
   return new SignJWT({
     email: payload.email,
     name: payload.name,
-    roles: payload.roles,
-    centerIds: payload.centerIds,
+    roles,
+    centerIds,
     sid: payload.sid,
   })
     .setProtectedHeader({ alg: "HS256" })

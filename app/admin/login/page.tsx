@@ -2,8 +2,26 @@ import Login from "@/components/auth/login";
 import { AUTH_CONTENT } from "@/constants/auth";
 import Image from "next/image";
 import { ShieldCheck } from "lucide-react";
+import { redirect } from "next/navigation";
 
-const AdminLoginPage = () => {
+import {
+  assertPortalAccess,
+  getDefaultRedirectPath,
+  getServerSession,
+} from "@/lib/server/services/session";
+
+const AdminLoginPage = async () => {
+  const session = await getServerSession();
+
+  if (session) {
+    try {
+      assertPortalAccess(session.user.roles, "admin");
+      redirect("/admin/dashboard");
+    } catch {
+      redirect(getDefaultRedirectPath(session.user.roles));
+    }
+  }
+
   return (
     <main className="min-h-screen flex bg-[#f8fbff] overflow-hidden">
 

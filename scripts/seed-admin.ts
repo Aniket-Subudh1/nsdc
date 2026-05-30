@@ -1,3 +1,5 @@
+import { loadEnvConfig } from "@next/env";
+
 import { hashPassword } from "../lib/server/auth";
 import { createEnv } from "../lib/server/env";
 import { ensureBootstrapData } from "../lib/server/bootstrap";
@@ -6,6 +8,7 @@ import { connectToDatabase } from "../lib/server/mongodb";
 import { UserModel } from "../lib/server/models/user";
 
 async function main() {
+  loadEnvConfig(process.cwd());
   const env = createEnv(process.env);
 
   await connectToDatabase();

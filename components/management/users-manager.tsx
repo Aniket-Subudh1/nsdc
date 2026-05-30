@@ -83,7 +83,7 @@ const ROLE_OPTIONS: Array<{ description: string; label: string; value: RoleKey }
 const portalContent = {
   admin: {
     description:
-      "Create internal users, update their profile details, then assign roles and training-center scope using the Sprint 01 admin APIs.",
+      "Create internal users, update their profile details, and assign roles plus training-center scope from one workspace.",
     heading: "User Management",
   },
   training_partner: {
@@ -367,7 +367,7 @@ export default function UsersManager({ portal }: UsersManagerProps) {
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-sky-600">Sprint 01</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-sky-600">Operations</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-900">{content.heading}</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{content.description}</p>
           </div>

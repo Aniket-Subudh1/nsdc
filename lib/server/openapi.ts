@@ -36,7 +36,7 @@ export function getOpenApiDocument() {
       title: "NSDC Training Management Portal API",
       version: "0.6.0",
       description:
-        "Sprint 01 foundation, Sprint 02 master-data modules, Sprint 03 candidate intake and sync processing, and Sprint 04 batch creation, enrollment sync, and attendance ingestion.",
+        "Authentication, master data, candidate intake, sync processing, batch operations, enrollment management, and attendance ingestion for the NSDC training management platform.",
     },
     servers: [{ url: "/api/v1" }],
     tags: [

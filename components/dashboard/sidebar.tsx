@@ -17,7 +17,7 @@ export function SidebarDemo({
   return (
     <div
       className={cn(
-        "flex w-full flex-1 overflow-hidden bg-gray-100 md:flex-row",
+        "flex w-full flex-1 flex-col overflow-hidden bg-gray-100 md:flex-row",
         "h-screen",
       )}
     >

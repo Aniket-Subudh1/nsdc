@@ -126,7 +126,7 @@ export default function DashboardOverview({ portal }: DashboardOverviewProps) {
   return (
     <div className="flex flex-1 flex-col gap-6 bg-slate-100 px-4 py-4 md:px-8 md:py-8">
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-sky-600">Sprint 01</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-sky-600">Overview</p>
         <div className="mt-3 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <h1 className="text-3xl font-semibold tracking-tight text-slate-900">{content.heading}</h1>
@@ -188,11 +188,11 @@ export default function DashboardOverview({ portal }: DashboardOverviewProps) {
         </div>
 
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-semibold text-slate-900">Current Sprint UI Scope</h2>
+          <h2 className="text-xl font-semibold text-slate-900">Platform Scope</h2>
           <ul className="mt-4 space-y-3 text-sm leading-6 text-slate-600">
             <li>Authentication and forgot-password are live.</li>
-            <li>User management UI is backed by create, list, patch, role, and center assignment APIs.</li>
-            <li>Training center UI is backed by create and list APIs.</li>
+            <li>User management supports profile updates, role assignment, and center access controls.</li>
+            <li>Training center management supports creation, review, and scoped operations.</li>
             <li>Health and OpenAPI remain docs/operator surfaces rather than dashboard widgets.</li>
           </ul>
         </div>

@@ -543,7 +543,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
             <div className="max-w-3xl">
               <p className="mb-3 inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-sky-700">
                 <ShieldCheck className="h-3.5 w-3.5" />
-                Sprint 04 Operations
+                Batch Operations
               </p>
               <h1 className="text-3xl font-semibold tracking-tight text-slate-950 md:text-4xl">{content.heading}</h1>
               <p className="mt-3 text-sm leading-6 text-slate-600 md:text-base">{content.description}</p>

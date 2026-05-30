@@ -110,13 +110,13 @@ type CandidateReferenceData = {
 
 const portalContent = {
   admin: {
-    eyebrow: "Sprint 02",
+    eyebrow: "Operations",
     heading: "Master Data Control Tower",
     description:
-      "Manage programs, sectors, schemes, course mappings, and candidate dropdown sources through the internal NSDC APIs.",
+      "Manage programs, sectors, schemes, course mappings, and candidate reference sources from one place.",
   },
   training_partner: {
-    eyebrow: "Sprint 02",
+    eyebrow: "Operations",
     heading: "Scoped Master Data Workspace",
     description:
       "Review and maintain the operational master data needed before candidate and batch flows are added.",
@@ -483,7 +483,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
       </section>
       <div className="grid gap-6 xl:grid-cols-2">
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <SectionHeader title={selectedProgram ? "Edit Program" : "Create Program"} description="Backed by GET/POST/PATCH /api/v1/masters/programs" />
+          <SectionHeader title={selectedProgram ? "Edit Program" : "Create Program"} description="Create and maintain program records used across the platform." />
           <form className="mt-6 space-y-4" onSubmit={handleProgramSubmit}>
             <Field label="Program Name">
               <input className={inputClassName} value={programForm.name} onChange={(event) => setProgramForm((current) => ({ ...current, name: event.target.value }))} required />
@@ -519,7 +519,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
         </section>
 
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <SectionHeader title="Create Sector" description="Backed by GET/POST /api/v1/masters/sectors" />
+          <SectionHeader title="Create Sector" description="Add sectors that organize schemes and course mappings." />
           <form className="mt-6 space-y-4" onSubmit={handleSectorSubmit}>
             <Field label="Sector Name">
               <input className={inputClassName} value={sectorForm.name} onChange={(event) => setSectorForm((current) => ({ ...current, name: event.target.value }))} required />
@@ -549,7 +549,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
         </section>
 
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <SectionHeader title={selectedScheme ? "Edit Scheme" : "Create Scheme"} description="Backed by GET/POST/PATCH /api/v1/masters/schemes" />
+          <SectionHeader title={selectedScheme ? "Edit Scheme" : "Create Scheme"} description="Maintain scheme eligibility, validity, and sync settings." />
           <form className="mt-6 space-y-4" onSubmit={handleSchemeSubmit}>
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Scheme Name">
@@ -606,7 +606,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
         </section>
 
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <SectionHeader title={selectedCourse ? "Edit Course Mapping" : "Create Course Mapping"} description="Backed by GET/POST/PATCH /api/v1/masters/courses and GET /api/v1/masters/courses/{courseId}/versions" />
+          <SectionHeader title={selectedCourse ? "Edit Course Mapping" : "Create Course Mapping"} description="Configure course mappings, scope, and stored version history." />
           <form className="mt-6 space-y-4" onSubmit={handleCourseSubmit}>
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Course Name">
@@ -736,7 +736,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
       </div>
 
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <SectionHeader title="Candidate Reference Snapshot" description="Backed by GET /api/v1/reference-data/candidate" />
+        <SectionHeader title="Candidate Reference Snapshot" description="Review the reference data used across candidate operations." />
         {referenceData ? (
           <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <ReferenceGroup title="Programs" values={referenceData.programs.map((item) => item.name)} />

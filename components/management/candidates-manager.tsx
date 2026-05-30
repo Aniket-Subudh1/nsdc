@@ -1145,7 +1145,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-sky-600">Sprint 03</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-sky-600">Operations</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-900">{content.heading}</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{content.description}</p>
           </div>
@@ -1172,7 +1172,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
             </span>
             <div>
               <h2 className="text-lg font-semibold text-slate-900">{selectedCandidate ? "Edit Candidate" : "Create Candidate"}</h2>
-              <p className="text-sm text-slate-500">Backed by GET, POST, PATCH, and queue-sync endpoints under /api/v1/candidates</p>
+              <p className="text-sm text-slate-500">Create, update, and queue candidate records from one workspace.</p>
             </div>
           </div>
 
@@ -1413,7 +1413,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
               </span>
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Link Existing SIDH Candidate</h2>
-                <p className="text-sm text-slate-500">Backed by POST /api/v1/candidates/link-existing-sidh</p>
+                <p className="text-sm text-slate-500">Attach an existing SIDH profile to a locally managed candidate record.</p>
               </div>
             </div>
 
@@ -1603,7 +1603,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
             <div className="mt-5 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <div className="text-sm font-semibold text-slate-900">Process queued sync jobs</div>
-                <div className="mt-1 text-sm text-slate-500">Server-side worker execution: POST /api/v1/sync/jobs/process</div>
+                <div className="mt-1 text-sm text-slate-500">Run the worker to process queued registrations and inspect the latest outcomes.</div>
               </div>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <select value={processLimit} onChange={(event) => setProcessLimit(event.target.value)} className="h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition-colors focus:border-sky-300">

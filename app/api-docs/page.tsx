@@ -13,9 +13,7 @@ export default function ApiDocsPage() {
       <div className="mx-auto max-w-7xl space-y-4">
         <div className="rounded-3xl border border-slate-200 bg-white px-6 py-5 shadow-sm">
           <h1 className="text-2xl font-semibold tracking-tight">API Documentation</h1>
-          <p className="mt-2 text-sm text-slate-600">
-            Interactive Swagger UI backed by the live OpenAPI document at <code>/api/v1/openapi</code>.
-          </p>
+          <p className="mt-2 text-sm text-slate-600">Interactive Swagger UI for the live NSDC service contract.</p>
         </div>
         <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
           <SwaggerUi />

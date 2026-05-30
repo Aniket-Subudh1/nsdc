@@ -52,7 +52,7 @@ const portalContent = {
   },
   training_partner: {
     description:
-      "Manage the training centers in your current scope using the same sprint 2 master-data APIs and program validations.",
+      "Manage the training centers in your current scope with the program links and validations your team needs.",
     heading: "Scoped Training Centers",
   },
 } as const;
@@ -238,7 +238,7 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-sky-600">Sprint 02</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-sky-600">Operations</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-900">{content.heading}</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{content.description}</p>
           </div>
@@ -259,7 +259,7 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
             </span>
             <div>
               <h2 className="text-lg font-semibold text-slate-900">{selectedCenter ? "Edit Training Center" : "Create Training Center"}</h2>
-              <p className="text-sm text-slate-500">Backed by GET/POST/PATCH /api/v1/masters/training-centers.</p>
+              <p className="text-sm text-slate-500">Create new centers or update existing center records.</p>
             </div>
           </div>
 
@@ -384,7 +384,7 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
             </span>
             <div>
               <h2 className="text-lg font-semibold text-slate-900">Visible Centers</h2>
-              <p className="text-sm text-slate-500">Backed by GET /api/v1/masters/training-centers.</p>
+              <p className="text-sm text-slate-500">Browse the centers available in your current scope.</p>
             </div>
           </div>
 

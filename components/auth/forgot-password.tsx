@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Building2, KeyRound, Lock, Mail } from "lucide-react";
+import { toast } from "sonner";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,6 +28,18 @@ export default function ForgotPasswordForm({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isPending, setIsPending] = useState(false);
+
+  useEffect(() => {
+    if (errorMessage) {
+      toast.error(errorMessage);
+    }
+  }, [errorMessage]);
+
+  useEffect(() => {
+    if (statusMessage) {
+      toast.success(statusMessage);
+    }
+  }, [statusMessage]);
 
   async function handleRequestOtp(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -139,10 +152,6 @@ export default function ForgotPasswordForm({
               />
             </div>
           </LabelInputContainer>
-
-          {errorMessage ? <ErrorBanner message={errorMessage} /> : null}
-          {statusMessage ? <StatusBanner message={statusMessage} /> : null}
-
           <button
             type="submit"
             disabled={isPending}
@@ -214,10 +223,6 @@ export default function ForgotPasswordForm({
               />
             </div>
           </LabelInputContainer>
-
-          {errorMessage ? <ErrorBanner message={errorMessage} /> : null}
-          {statusMessage ? <StatusBanner message={statusMessage} /> : null}
-
           <button
             type="submit"
             disabled={isPending}
@@ -247,7 +252,9 @@ export default function ForgotPasswordForm({
 
       {step === "success" ? (
         <div className="space-y-5">
-          {statusMessage ? <StatusBanner message={statusMessage} /> : null}
+          <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+            Password reset successful. Redirecting to login.
+          </p>
           <button
             type="button"
             onClick={() => router.replace(loginUrl)}
@@ -290,14 +297,6 @@ export default function ForgotPasswordForm({
       </p>
     </div>
   );
-}
-
-function ErrorBanner({ message }: { message: string }) {
-  return <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{message}</p>;
-}
-
-function StatusBanner({ message }: { message: string }) {
-  return <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{message}</p>;
 }
 
 const LabelInputContainer = ({

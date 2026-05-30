@@ -22,6 +22,7 @@ import {
   Users,
   Workflow,
 } from "lucide-react";
+import { toast } from "sonner";
 
 import { apiFetch, ClientApiError, type ApiEnvelope } from "@/lib/client/api";
 
@@ -770,6 +771,18 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   const flaggedJobs = syncJobs.filter((job) => job.status === "failed" || job.status === "manual_review" || job.status === "dead_letter").length;
   const isImportReady = Boolean(importForm.programId && importForm.centerId && importForm.file);
 
+  useEffect(() => {
+    if (errorMessage) {
+      toast.error(errorMessage);
+    }
+  }, [errorMessage]);
+
+  useEffect(() => {
+    if (successMessage) {
+      toast.success(successMessage);
+    }
+  }, [successMessage]);
+
   async function loadImportRows(jobId: string, page = importPagination.page, pageSize = importPagination.pageSize) {
     const rowData = await fetchImportRows(jobId, page, pageSize);
     setImportRows(rowData.items);
@@ -780,9 +793,9 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
     setIsLoadingSyncDetail(true);
 
     try {
-      const job = await apiFetch<SyncJobRecord>(`/api/v1/sync/jobs/${syncJobId}`);
+      const syncJob = await apiFetch<SyncJobRecord>(`/api/v1/sync/jobs/${syncJobId}`);
       setSelectedSyncJobId(syncJobId);
-      setSelectedSyncJob(job);
+      setSelectedSyncJob(syncJob);
     } catch (error) {
       setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to load sync job details");
     } finally {
@@ -791,18 +804,27 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   }
 
   async function refreshVisibleData() {
-    const [candidateData, syncJobData] = await Promise.all([fetchCandidates(candidateFilters), fetchSyncJobs(syncFilters)]);
-    setCandidates(candidateData.items);
-    setCandidatePagination({ page: candidateData.page, pageSize: candidateData.pageSize, total: candidateData.total });
-    setSyncJobs(syncJobData.items);
-    setSyncPagination({ page: syncJobData.page, pageSize: syncJobData.pageSize, total: syncJobData.total });
+    setIsLoading(true);
 
-    if (currentImportJob) {
-      await loadImportRows(currentImportJob.importJobId, importPagination.page, importPagination.pageSize);
-    }
+    try {
+      const [candidateData, syncJobData] = await Promise.all([fetchCandidates(candidateFilters), fetchSyncJobs(syncFilters)]);
+      setCandidates(candidateData.items);
+      setCandidatePagination({ page: candidateData.page, pageSize: candidateData.pageSize, total: candidateData.total });
+      setSyncJobs(syncJobData.items);
+      setSyncPagination({ page: syncJobData.page, pageSize: syncJobData.pageSize, total: syncJobData.total });
 
-    if (selectedSyncJobId) {
-      await loadSyncJobDetails(selectedSyncJobId);
+      if (currentImportJob) {
+        await loadImportRows(currentImportJob.importJobId, importPagination.page, importPagination.pageSize);
+      }
+
+      if (selectedSyncJobId) {
+        const syncJob = await apiFetch<SyncJobRecord>(`/api/v1/sync/jobs/${selectedSyncJobId}`);
+        setSelectedSyncJob(syncJob);
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to refresh candidate operations data");
+    } finally {
+      setIsLoading(false);
     }
   }
 
@@ -1136,10 +1158,6 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
           </button>
         </div>
       </section>
-
-      {errorMessage ? <MessageCard tone="error" message={errorMessage} /> : null}
-      {successMessage ? <MessageCard tone="success" message={successMessage} /> : null}
-
       <section className="grid gap-4 md:grid-cols-3">
         <MetricCard icon={<Users className="h-5 w-5" />} label="Candidates in scope" value={candidatePagination.total} />
         <MetricCard icon={<Send className="h-5 w-5" />} label="Queued or processing" value={queuedJobs} />

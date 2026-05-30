@@ -11,6 +11,7 @@ import {
   Save,
   Sparkles,
 } from "lucide-react";
+import { toast } from "sonner";
 
 import { apiFetch, ClientApiError } from "@/lib/client/api";
 
@@ -195,6 +196,18 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
   const selectedProgram = programs.find((program) => program.programId === selectedProgramId) ?? null;
   const selectedScheme = schemes.find((scheme) => scheme.schemeId === selectedSchemeId) ?? null;
   const selectedCourse = courses.find((course) => course.courseId === selectedCourseId) ?? null;
+
+  useEffect(() => {
+    if (errorMessage) {
+      toast.error(errorMessage);
+    }
+  }, [errorMessage]);
+
+  useEffect(() => {
+    if (successMessage) {
+      toast.success(successMessage);
+    }
+  }, [successMessage]);
 
   function resolveSectorName(sectorId: string) {
     return sectors.find((sector) => sector.sectorId === sectorId)?.name ?? sectorId;
@@ -468,10 +481,6 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           />
         </div>
       </section>
-
-      {errorMessage ? <MessageCard tone="error" message={errorMessage} /> : null}
-      {successMessage ? <MessageCard tone="success" message={successMessage} /> : null}
-
       <div className="grid gap-6 xl:grid-cols-2">
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <SectionHeader title={selectedProgram ? "Edit Program" : "Create Program"} description="Backed by GET/POST/PATCH /api/v1/masters/programs" />
@@ -788,14 +797,6 @@ function ListBlock<T>({ emptyMessage, isLoading, items, renderItem }: { emptyMes
       ) : (
         items.map((item) => renderItem(item))
       )}
-    </div>
-  );
-}
-
-function MessageCard({ message, tone }: { message: string; tone: "error" | "success" }) {
-  return (
-    <div className={`rounded-2xl border px-4 py-3 text-sm ${tone === "error" ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
-      {message}
     </div>
   );
 }

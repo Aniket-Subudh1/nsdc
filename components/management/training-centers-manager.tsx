@@ -2,6 +2,7 @@
 
 import { startTransition, useEffect, useState } from "react";
 import { LoaderCircle, MapPinned, PencilLine, PlusCircle, RefreshCw, Save } from "lucide-react";
+import { toast } from "sonner";
 
 import { apiFetch, ClientApiError } from "@/lib/client/api";
 
@@ -81,6 +82,18 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const content = portalContent[portal];
   const selectedCenter = centers.find((center) => center.centerId === selectedCenterId) ?? null;
+
+  useEffect(() => {
+    if (errorMessage) {
+      toast.error(errorMessage);
+    }
+  }, [errorMessage]);
+
+  useEffect(() => {
+    if (successMessage) {
+      toast.success(successMessage);
+    }
+  }, [successMessage]);
 
   function getProgramLabel(programId: string) {
     return programs.find((program) => program.programId === programId)?.name ?? programId;
@@ -229,10 +242,6 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
           </button>
         </div>
       </section>
-
-      {errorMessage ? <MessageCard tone="error" message={errorMessage} /> : null}
-      {successMessage ? <MessageCard tone="success" message={successMessage} /> : null}
-
       <section className="grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex items-center gap-3">
@@ -445,20 +454,6 @@ function CenterMeta({ label, value }: { label: string; value: string }) {
     <div className="rounded-2xl border border-white/80 bg-white px-3 py-3 shadow-sm">
       <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">{label}</div>
       <div className="mt-1 text-sm text-slate-700">{value}</div>
-    </div>
-  );
-}
-
-function MessageCard({ message, tone }: { message: string; tone: "error" | "success" }) {
-  return (
-    <div
-      className={`rounded-2xl border px-4 py-3 text-sm ${
-        tone === "error"
-          ? "border-rose-200 bg-rose-50 text-rose-700"
-          : "border-emerald-200 bg-emerald-50 text-emerald-700"
-      }`}
-    >
-      {message}
     </div>
   );
 }

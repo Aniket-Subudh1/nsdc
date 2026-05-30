@@ -2,6 +2,7 @@
 
 import { startTransition, useEffect, useState } from "react";
 import { Building2, LoaderCircle, RefreshCw, Save, ShieldCheck, UserPlus, Users } from "lucide-react";
+import { toast } from "sonner";
 
 import { apiFetch, ClientApiError } from "@/lib/client/api";
 
@@ -124,6 +125,18 @@ export default function UsersManager({ portal }: UsersManagerProps) {
   const content = portalContent[portal];
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const selectedUser = users.find((user) => user.id === selectedUserId) ?? null;
+
+  useEffect(() => {
+    if (errorMessage) {
+      toast.error(errorMessage);
+    }
+  }, [errorMessage]);
+
+  useEffect(() => {
+    if (successMessage) {
+      toast.success(successMessage);
+    }
+  }, [successMessage]);
 
   function applyUserToEditForm(user: UserRecord | null) {
     if (!user) {
@@ -367,10 +380,6 @@ export default function UsersManager({ portal }: UsersManagerProps) {
           </button>
         </div>
       </section>
-
-      {errorMessage ? <MessageCard tone="error" message={errorMessage} /> : null}
-      {successMessage ? <MessageCard tone="success" message={successMessage} /> : null}
-
       <section className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr_1fr]">
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex items-center gap-3">
@@ -702,20 +711,6 @@ function CenterSelector({
           ))
         )}
       </div>
-    </div>
-  );
-}
-
-function MessageCard({ message, tone }: { message: string; tone: "error" | "success" }) {
-  return (
-    <div
-      className={`rounded-2xl border px-4 py-3 text-sm ${
-        tone === "error"
-          ? "border-rose-200 bg-rose-50 text-rose-700"
-          : "border-emerald-200 bg-emerald-50 text-emerald-700"
-      }`}
-    >
-      {message}
     </div>
   );
 }

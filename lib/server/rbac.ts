@@ -20,6 +20,10 @@ export const PERMISSIONS = [
   "masters:write",
   "centers:read",
   "centers:write",
+  "candidates:read",
+  "candidates:write",
+  "sync:read",
+  "sync:write",
   "reference-data:read",
   "audit:read",
 ] as const;
@@ -40,6 +44,10 @@ export const ROLE_PERMISSIONS: Record<RoleKey, PermissionKey[]> = {
     "masters:write",
     "centers:read",
     "centers:write",
+    "candidates:read",
+    "candidates:write",
+    "sync:read",
+    "sync:write",
     "reference-data:read",
   ],
   center_manager: [
@@ -49,6 +57,9 @@ export const ROLE_PERMISSIONS: Record<RoleKey, PermissionKey[]> = {
     "users:read",
     "masters:read",
     "centers:read",
+    "candidates:read",
+    "candidates:write",
+    "sync:read",
     "reference-data:read",
   ],
   trainer_data_entry: [
@@ -57,6 +68,8 @@ export const ROLE_PERMISSIONS: Record<RoleKey, PermissionKey[]> = {
     "auth:me",
     "masters:read",
     "centers:read",
+    "candidates:read",
+    "candidates:write",
     "reference-data:read",
   ],
   auditor_viewer: [
@@ -66,6 +79,8 @@ export const ROLE_PERMISSIONS: Record<RoleKey, PermissionKey[]> = {
     "users:read",
     "masters:read",
     "centers:read",
+    "candidates:read",
+    "sync:read",
     "reference-data:read",
     "audit:read",
   ],
@@ -112,5 +127,13 @@ export function canManageTrainingCenters(actorRoles: RoleKey[]) {
 }
 
 export function canManageMasters(actorRoles: RoleKey[]) {
+  return hasAnyRole(actorRoles, ["platform_admin", "training_partner_admin"]);
+}
+
+export function canManageCandidates(actorRoles: RoleKey[]) {
+  return hasAnyRole(actorRoles, ["platform_admin", "training_partner_admin", "center_manager", "trainer_data_entry"]);
+}
+
+export function canManageSync(actorRoles: RoleKey[]) {
   return hasAnyRole(actorRoles, ["platform_admin", "training_partner_admin"]);
 }

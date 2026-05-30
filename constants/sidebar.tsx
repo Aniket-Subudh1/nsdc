@@ -4,6 +4,7 @@ import {
   IconBuildingCommunity,
   IconCode,
   IconStack2,
+  IconUserPlus,
   IconUsers,
 } from "@tabler/icons-react";
 
@@ -34,6 +35,13 @@ export const ADMIN_SIDEBAR_LINKS = [
       href: "/admin/master-data",
       icon: (
         <IconStack2 className="h-5 w-5 shrink-0 text-neutral-700" />
+      ),
+    },
+    {
+      label: "Candidates",
+      href: "/admin/candidates",
+      icon: (
+        <IconUserPlus className="h-5 w-5 shrink-0 text-neutral-700" />
       ),
     },
     {
@@ -79,6 +87,13 @@ export const TRAINING_PARTNER_SIDEBAR_LINKS = [
         href: "/training-partner/master-data",
         icon: (
             <IconStack2 className="h-5 w-5 shrink-0 text-neutral-700" />
+          ),
+      },
+      {
+        label: "Candidates",
+        href: "/training-partner/candidates",
+        icon: (
+            <IconUserPlus className="h-5 w-5 shrink-0 text-neutral-700" />
           ),
       },
       {

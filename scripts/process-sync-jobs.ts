@@ -1,9 +1,13 @@
+import { loadEnvConfig } from "@next/env";
+
 import { getEnv } from "@/lib/server/env";
 import { connectToDatabase } from "@/lib/server/mongodb";
 import { UserModel } from "@/lib/server/models/user";
 import { getPermissionsForRoles } from "@/lib/server/rbac";
 import { processQueuedSyncJobs } from "@/lib/server/services/candidate-sync-worker";
 import { serializeUser } from "@/lib/server/services/session";
+
+loadEnvConfig(process.cwd());
 
 function parseLimit() {
   const rawLimit = process.argv[2];

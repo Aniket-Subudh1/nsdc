@@ -1,7 +1,7 @@
 "use client";
 
 import { startTransition, useEffect, useState } from "react";
-import { LoaderCircle, MapPinned, PlusCircle, RefreshCw } from "lucide-react";
+import { LoaderCircle, MapPinned, PencilLine, PlusCircle, RefreshCw, Save } from "lucide-react";
 
 import { apiFetch, ClientApiError } from "@/lib/client/api";
 
@@ -23,8 +23,20 @@ type CenterRecord = {
   updatedAt: string | null;
 };
 
+type ProgramRecord = {
+  name: string;
+  programId: string;
+};
+
 type PagedCenters = {
   items: CenterRecord[];
+  page: number;
+  pageSize: number;
+  total: number;
+};
+
+type PagedPrograms = {
+  items: ProgramRecord[];
   page: number;
   pageSize: number;
   total: number;
@@ -33,18 +45,30 @@ type PagedCenters = {
 const portalContent = {
   admin: {
     description:
-      "Create new training centers and review the centers currently visible to the platform admin scope.",
+      "Create and update training centers with active program links so downstream candidate and batch flows can stay in scope.",
     heading: "Training Centers",
   },
   training_partner: {
     description:
-      "Create and review training centers within your visible scope using the same master-data API.",
+      "Manage the training centers in your current scope using the same sprint 2 master-data APIs and program validations.",
     heading: "Scoped Training Centers",
   },
 } as const;
 
+const emptyForm = {
+  centerCode: "",
+  centerName: "",
+  district: "",
+  programIds: [] as string[],
+  sidhTcId: "",
+  state: "",
+  status: "active" as "active" | "inactive",
+};
+
 export default function TrainingCentersManager({ portal }: TrainingCentersManagerProps) {
   const [centers, setCenters] = useState<CenterRecord[]>([]);
+  const [programs, setPrograms] = useState<ProgramRecord[]>([]);
+  const [selectedCenterId, setSelectedCenterId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(20);
   const [total, setTotal] = useState(0);
@@ -52,21 +76,40 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [form, setForm] = useState({
-    centerCode: "",
-    centerName: "",
-    district: "",
-    programIds: "",
-    sidhTcId: "",
-    state: "",
-    status: "active" as "active" | "inactive",
-  });
+  const [form, setForm] = useState(emptyForm);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const content = portalContent[portal];
+  const selectedCenter = centers.find((center) => center.centerId === selectedCenterId) ?? null;
 
-  async function fetchCenters(targetPage: number) {
-    return apiFetch<PagedCenters>(`/api/v1/masters/training-centers?page=${targetPage}&pageSize=${pageSize}`);
+  function getProgramLabel(programId: string) {
+    return programs.find((program) => program.programId === programId)?.name ?? programId;
+  }
+
+  function applyCenter(center: CenterRecord | null) {
+    if (!center) {
+      setSelectedCenterId(null);
+      setForm(emptyForm);
+      return;
+    }
+
+    setSelectedCenterId(center.centerId);
+    setForm({
+      centerCode: center.centerCode,
+      centerName: center.centerName,
+      district: center.district,
+      programIds: center.programIds,
+      sidhTcId: center.sidhTcId ?? "",
+      state: center.state,
+      status: center.status,
+    });
+  }
+
+  async function fetchCenterData(targetPage: number) {
+    return Promise.all([
+      apiFetch<PagedCenters>(`/api/v1/masters/training-centers?page=${targetPage}&pageSize=${pageSize}`),
+      apiFetch<PagedPrograms>("/api/v1/masters/programs?page=1&pageSize=100&status=active"),
+    ]);
   }
 
   async function loadCenters(targetPage = page) {
@@ -74,9 +117,14 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
     setErrorMessage(null);
 
     try {
-      const data = await fetchCenters(targetPage);
-      setCenters(data.items);
-      setTotal(data.total);
+      const [centerData, programData] = await fetchCenterData(targetPage);
+      setCenters(centerData.items);
+      setPrograms(programData.items);
+      setTotal(centerData.total);
+
+      if (selectedCenterId) {
+        applyCenter(centerData.items.find((item) => item.centerId === selectedCenterId) ?? null);
+      }
     } catch (error) {
       setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to load training centers");
     } finally {
@@ -88,18 +136,20 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
     let isMounted = true;
 
     async function syncPageData() {
-      setIsLoading(true);
-      setErrorMessage(null);
-
       try {
-        const data = await apiFetch<PagedCenters>(`/api/v1/masters/training-centers?page=${page}&pageSize=${pageSize}`);
+        const [centerData, programData] = await fetchCenterData(page);
 
         if (!isMounted) {
           return;
         }
 
-        setCenters(data.items);
-        setTotal(data.total);
+        setCenters(centerData.items);
+        setPrograms(programData.items);
+        setTotal(centerData.total);
+
+        if (selectedCenterId) {
+          applyCenter(centerData.items.find((item) => item.centerId === selectedCenterId) ?? null);
+        }
       } catch (error) {
         if (!isMounted) {
           return;
@@ -113,49 +163,49 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
       }
     }
 
+    setIsLoading(true);
+    setErrorMessage(null);
     void syncPageData();
 
     return () => {
       isMounted = false;
     };
-  }, [page, pageSize]);
+  }, [page]);
 
-  async function handleCreateCenter(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSaveCenter(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsSaving(true);
     setErrorMessage(null);
     setSuccessMessage(null);
 
     try {
-      await apiFetch<CenterRecord>("/api/v1/masters/training-centers", {
-        method: "POST",
-        body: JSON.stringify({
-          centerName: form.centerName,
-          centerCode: form.centerCode,
-          sidhTcId: form.sidhTcId || undefined,
-          district: form.district,
-          state: form.state,
-          status: form.status,
-          programIds: form.programIds
-            .split(",")
-            .map((value) => value.trim())
-            .filter(Boolean),
-        }),
-      });
+      const payload = {
+        centerName: form.centerName,
+        centerCode: form.centerCode,
+        sidhTcId: form.sidhTcId || undefined,
+        district: form.district,
+        state: form.state,
+        status: form.status,
+        programIds: form.programIds,
+      };
 
-      setForm({
-        centerCode: "",
-        centerName: "",
-        district: "",
-        programIds: "",
-        sidhTcId: "",
-        state: "",
-        status: "active",
-      });
-      setSuccessMessage("Training center created successfully");
+      if (selectedCenter) {
+        await apiFetch<CenterRecord>(`/api/v1/masters/training-centers/${selectedCenter.centerId}`, {
+          method: "PATCH",
+          body: JSON.stringify(payload),
+        });
+      } else {
+        await apiFetch<CenterRecord>("/api/v1/masters/training-centers", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+      }
+
+      applyCenter(null);
+      setSuccessMessage(selectedCenter ? "Training center updated successfully" : "Training center created successfully");
       await loadCenters(page);
     } catch (error) {
-      setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to create training center");
+      setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to save training center");
     } finally {
       setIsSaving(false);
     }
@@ -166,7 +216,7 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-sky-600">Sprint 01</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-sky-600">Sprint 02</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-900">{content.heading}</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{content.description}</p>
           </div>
@@ -190,12 +240,12 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
               <PlusCircle className="h-5 w-5" />
             </span>
             <div>
-              <h2 className="text-lg font-semibold text-slate-900">Create Training Center</h2>
-              <p className="text-sm text-slate-500">Backed by POST /api/v1/masters/training-centers.</p>
+              <h2 className="text-lg font-semibold text-slate-900">{selectedCenter ? "Edit Training Center" : "Create Training Center"}</h2>
+              <p className="text-sm text-slate-500">Backed by GET/POST/PATCH /api/v1/masters/training-centers.</p>
             </div>
           </div>
 
-          <form className="mt-6 space-y-4" onSubmit={handleCreateCenter}>
+          <form className="mt-6 space-y-4" onSubmit={handleSaveCenter}>
             <Field label="Center Name">
               <input
                 value={form.centerName}
@@ -242,13 +292,25 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
                 />
               </Field>
             </div>
-            <Field label="Program IDs (comma separated)">
-              <input
+            <Field label="Programs">
+              <select
                 value={form.programIds}
-                onChange={(event) => setForm((current) => ({ ...current, programIds: event.target.value }))}
-                className={inputClassName}
-                placeholder="prg_001, prg_002"
-              />
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    programIds: Array.from(event.target.selectedOptions, (option) => option.value),
+                  }))
+                }
+                className={`${inputClassName} h-32 py-3`}
+                multiple
+                required
+              >
+                {programs.map((program) => (
+                  <option key={program.programId} value={program.programId}>
+                    {program.name}
+                  </option>
+                ))}
+              </select>
             </Field>
             <Field label="Status">
               <select
@@ -270,8 +332,15 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
               disabled={isSaving}
               className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {isSaving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <PlusCircle className="h-4 w-4" />}
-              Create Center
+              {isSaving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : selectedCenter ? <Save className="h-4 w-4" /> : <PlusCircle className="h-4 w-4" />}
+              {selectedCenter ? "Save Center" : "Create Center"}
+            </button>
+            <button
+              type="button"
+              onClick={() => applyCenter(null)}
+              className="inline-flex w-full items-center justify-center rounded-2xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-600"
+            >
+              Clear Form
             </button>
           </form>
         </div>
@@ -304,15 +373,27 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
                       <div className="text-sm font-semibold text-slate-900">{center.centerName}</div>
                       <div className="mt-1 text-sm text-slate-600">{center.centerCode}</div>
                     </div>
-                    <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${badgeClassName[center.status]}`}>
-                      {center.status}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${badgeClassName[center.status]}`}>
+                        {center.status}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => applyCenter(center)}
+                        className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600"
+                      >
+                        <PencilLine className="h-3.5 w-3.5" /> Edit
+                      </button>
+                    </div>
                   </div>
                   <div className="mt-4 grid gap-3 text-sm text-slate-600 md:grid-cols-2 xl:grid-cols-3">
                     <CenterMeta label="District" value={center.district} />
                     <CenterMeta label="State" value={center.state} />
                     <CenterMeta label="SIDH TC ID" value={center.sidhTcId ?? "Not set"} />
-                    <CenterMeta label="Programs" value={center.programIds.length ? center.programIds.join(", ") : "None"} />
+                    <CenterMeta
+                      label="Programs"
+                      value={center.programIds.length ? center.programIds.map((programId) => getProgramLabel(programId)).join(", ") : "None"}
+                    />
                     <CenterMeta label="Created" value={center.createdAt ? new Date(center.createdAt).toLocaleString() : "Unknown"} />
                     <CenterMeta label="Updated" value={center.updatedAt ? new Date(center.updatedAt).toLocaleString() : "Unknown"} />
                   </div>

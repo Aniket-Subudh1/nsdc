@@ -3,6 +3,7 @@ import {
   IconBrandTabler,
   IconBuildingCommunity,
   IconCode,
+  IconStack2,
   IconUsers,
 } from "@tabler/icons-react";
 
@@ -26,6 +27,13 @@ export const ADMIN_SIDEBAR_LINKS = [
       href: "/admin/training-centers",
     icon: (
         <IconBuildingCommunity className="h-5 w-5 shrink-0 text-neutral-700" />
+      ),
+    },
+    {
+      label: "Master Data",
+      href: "/admin/master-data",
+      icon: (
+        <IconStack2 className="h-5 w-5 shrink-0 text-neutral-700" />
       ),
     },
     {
@@ -64,6 +72,13 @@ export const TRAINING_PARTNER_SIDEBAR_LINKS = [
         href: "/training-partner/training-centers",
         icon: (
             <IconBuildingCommunity className="h-5 w-5 shrink-0 text-neutral-700" />
+          ),
+      },
+      {
+        label: "Master Data",
+        href: "/training-partner/master-data",
+        icon: (
+            <IconStack2 className="h-5 w-5 shrink-0 text-neutral-700" />
           ),
       },
       {

@@ -16,8 +16,11 @@ export const PERMISSIONS = [
   "users:write",
   "users:assign_roles",
   "users:assign_centers",
+  "masters:read",
+  "masters:write",
   "centers:read",
   "centers:write",
+  "reference-data:read",
   "audit:read",
 ] as const;
 
@@ -33,12 +36,39 @@ export const ROLE_PERMISSIONS: Record<RoleKey, PermissionKey[]> = {
     "users:write",
     "users:assign_roles",
     "users:assign_centers",
+    "masters:read",
+    "masters:write",
     "centers:read",
     "centers:write",
+    "reference-data:read",
   ],
-  center_manager: ["auth:login", "auth:logout", "auth:me", "users:read", "centers:read"],
-  trainer_data_entry: ["auth:login", "auth:logout", "auth:me", "centers:read"],
-  auditor_viewer: ["auth:login", "auth:logout", "auth:me", "users:read", "centers:read", "audit:read"],
+  center_manager: [
+    "auth:login",
+    "auth:logout",
+    "auth:me",
+    "users:read",
+    "masters:read",
+    "centers:read",
+    "reference-data:read",
+  ],
+  trainer_data_entry: [
+    "auth:login",
+    "auth:logout",
+    "auth:me",
+    "masters:read",
+    "centers:read",
+    "reference-data:read",
+  ],
+  auditor_viewer: [
+    "auth:login",
+    "auth:logout",
+    "auth:me",
+    "users:read",
+    "masters:read",
+    "centers:read",
+    "reference-data:read",
+    "audit:read",
+  ],
 };
 
 export const ADMIN_PORTAL_ROLES: RoleKey[] = ["platform_admin"];
@@ -78,5 +108,9 @@ export function canManageUsers(actorRoles: RoleKey[]) {
 }
 
 export function canManageTrainingCenters(actorRoles: RoleKey[]) {
+  return hasAnyRole(actorRoles, ["platform_admin", "training_partner_admin"]);
+}
+
+export function canManageMasters(actorRoles: RoleKey[]) {
   return hasAnyRole(actorRoles, ["platform_admin", "training_partner_admin"]);
 }

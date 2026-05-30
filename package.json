@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "seed:admin": "tsx scripts/seed-admin.ts"
+    "seed:admin": "tsx scripts/seed-admin.ts",
+    "import:course-master": "tsx scripts/import-course-master.ts"
   },
   "dependencies": {
     "@radix-ui/react-label": "^2.1.8",
@@ -26,15 +27,16 @@
     "react-dom": "19.2.4",
     "swagger-ui-react": "^5.28.1",
     "tailwind-merge": "^3.6.0",
+    "xlsx": "^0.18.5",
     "zod": "^4.1.12"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/swagger-ui-react": "^5.18.0",
-    "@types/nodemailer": "^7.0.1",
     "@types/node": "^20",
+    "@types/nodemailer": "^7.0.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/swagger-ui-react": "^5.18.0",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
     "tailwindcss": "^4",

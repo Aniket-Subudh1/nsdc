@@ -1,3 +1,4 @@
+import { createPrefixedId } from "@/lib/server/ids";
 import { connectToDatabase } from "@/lib/server/mongodb";
 import { ReferenceValueModel } from "@/lib/server/models/reference-value";
 import { RoleModel } from "@/lib/server/models/role";
@@ -39,7 +40,10 @@ let bootstrapPromise: Promise<void> | undefined;
 
 export async function ensureBootstrapData() {
   if (!bootstrapPromise) {
-    bootstrapPromise = seedBootstrapData();
+    bootstrapPromise = seedBootstrapData().catch((error) => {
+      bootstrapPromise = undefined;
+      throw error;
+    });
   }
 
   return bootstrapPromise;
@@ -72,6 +76,9 @@ async function seedBootstrapData() {
             label: entry.label,
             sortOrder: entry.sortOrder,
             status: "active",
+          },
+          $setOnInsert: {
+            referenceValueId: createPrefixedId("ref"),
           },
         },
         { upsert: true },

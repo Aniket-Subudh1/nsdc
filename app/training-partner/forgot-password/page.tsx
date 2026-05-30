@@ -34,7 +34,7 @@ const TrainingPartnerForgotPasswordPage = async () => {
         <div className="relative z-10 flex items-center flex-col h-full w-full px-10 xl:px-12 py-10 justify-between">
           <div className="flex items-center">
             <div className="px-6 py-3 ">
-              <Image src="/logo.png" alt="Logo" height={38} width={120} className="object-contain" />
+              <Image src="/logo.png" alt="Logo" height={38} width={120} className="h-auto w-auto object-contain" />
             </div>
           </div>
 
@@ -49,7 +49,7 @@ const TrainingPartnerForgotPasswordPage = async () => {
           </div>
 
           <div className="bg-[#eff6ff] border border-[#dbeafe] -mb-10 rounded-xl px-5 py-2 shadow-sm">
-            <Image src="/skill.png" alt="Skill India" width={80} height={40} className="object-contain" />
+            <Image src="/skill.png" alt="Skill India" width={80} height={40} className="h-auto w-auto object-contain" />
           </div>
 
           <div className="flex items-center justify-between w-full">

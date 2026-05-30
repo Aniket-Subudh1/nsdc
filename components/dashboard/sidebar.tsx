@@ -12,6 +12,7 @@ export function SidebarDemo({
  children,
 }: SidebarProps & { children?: React.ReactNode }) {
   const [open, setOpen] = useState(false);
+  const avatarInitial = (userName ?? "Signed in user").trim().charAt(0).toUpperCase() || "U";
 
   return (
     <div
@@ -36,13 +37,9 @@ export function SidebarDemo({
                 label: userName ?? "Signed in user",
                 href: "#",
                 icon: (
-                  <Image
-                    src="/avatar-placeholder.png"
-                    className="h-7 w-7 shrink-0 rounded-full"
-                    width={50}
-                    height={50}
-                    alt="Avatar"
-                  />
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sky-100 text-xs font-semibold text-sky-700">
+                    {avatarInitial}
+                  </span>
                 ),
               }}
             />

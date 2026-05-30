@@ -41,7 +41,7 @@ const TrainingPartnerLoginPage = async () => {
                 alt="Logo"
                 height={38}
                 width={120}
-                className="object-contain"
+                className="h-auto w-auto object-contain"
               />
             </div>
           </div>
@@ -67,7 +67,7 @@ const TrainingPartnerLoginPage = async () => {
               alt="Skill India"
               width={80}
               height={40}
-              className="object-contain"
+              className="h-auto w-auto object-contain"
             />
           </div>
 

@@ -14,6 +14,7 @@ export default function LoginPage({
   submitButtonText,
   placeholderMail,
   portal,
+  forgotPasswordUrl,
   RedirectUrl,
   SecondaryButtonText,
 }: LoginPageProps) {
@@ -136,7 +137,7 @@ export default function LoginPage({
 
         <div className="flex justify-end mt-1!">
           <a
-            href="/forgot-password"
+            href={forgotPasswordUrl}
             className="text-[12px] text-[#1a56db] font-medium hover:underline underline-offset-2 transition-colors"
           >
             Forgot password?

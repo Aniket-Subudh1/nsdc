@@ -21,6 +21,8 @@ This repository now includes the Sprint 01 backend foundation on top of the exis
 ## Sprint 01 API Surface
 
 - `/api/v1/auth/login`
+- `/api/v1/auth/forgot-password/request`
+- `/api/v1/auth/forgot-password/reset`
 - `/api/v1/auth/logout`
 - `/api/v1/auth/me`
 - `/api/v1/admin/users`
@@ -35,5 +37,6 @@ This repository now includes the Sprint 01 backend foundation on top of the exis
 ## Notes
 
 - Authentication uses an HttpOnly cookie plus persisted MongoDB sessions.
+- Forgot-password uses 6 digit OTPs delivered through SMTP via Nodemailer.
 - Default RBAC roles are seeded automatically when the backend first initializes.
 - Audit logs are written for login, logout, user creation, role assignment, center assignment, and training-center creation.

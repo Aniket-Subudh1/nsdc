@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { ROLE_KEYS } from "@/lib/server/rbac";
 
+export const authPortalSchema = z.enum(["admin", "training_partner"]);
 const roleSchema = z.enum(ROLE_KEYS);
 const mobileNumberSchema = z
   .string()
@@ -13,7 +14,19 @@ const mobileNumberSchema = z
 export const loginSchema = z.object({
   email: z.string().trim().email(),
   password: z.string().min(8),
-  portal: z.enum(["admin", "training_partner"]).optional(),
+  portal: authPortalSchema.optional(),
+});
+
+export const forgotPasswordRequestSchema = z.object({
+  email: z.string().trim().email(),
+  portal: authPortalSchema,
+});
+
+export const forgotPasswordResetSchema = z.object({
+  email: z.string().trim().email(),
+  portal: authPortalSchema,
+  otp: z.string().trim().regex(/^\d{6}$/, "OTP must be a 6 digit code"),
+  newPassword: z.string().min(8).max(128),
 });
 
 export const createUserSchema = z

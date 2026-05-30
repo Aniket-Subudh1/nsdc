@@ -5,6 +5,7 @@ export const AUTH_CONTENT = {
         SubmitButtonText:"Login as Admin",
         PlaceholderMail:"admin@example.com",
         portal:"admin",
+        ForgotPasswordUrl:"/admin/forgot-password",
         RedirectUrl:"/training-partner/login",
         SecondaryButtonText:"Login as Training Partner"
     },
@@ -14,6 +15,7 @@ export const AUTH_CONTENT = {
         SubmitButtonText:"Login as Training Partner",
         PlaceholderMail:"partner@example.com",
         portal:"training_partner",
+        ForgotPasswordUrl:"/training-partner/forgot-password",
         RedirectUrl:"/admin/login",
         SecondaryButtonText:"Login as Admin"
     },

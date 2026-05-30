@@ -1,4 +1,4 @@
-import Login from "@/components/auth/login";
+import ForgotPasswordForm from "@/components/auth/forgot-password";
 import { AUTH_CONTENT } from "@/constants/auth";
 import Image from "next/image";
 import { ShieldCheck } from "lucide-react";
@@ -10,13 +10,13 @@ import {
   getServerSession,
 } from "@/lib/server/services/session";
 
-const AdminLoginPage = async () => {
+const TrainingPartnerForgotPasswordPage = async () => {
   const session = await getServerSession();
 
   if (session) {
     try {
-      assertPortalAccess(session.user.roles, "admin");
-      redirect("/admin/dashboard");
+      assertPortalAccess(session.user.roles, "training_partner");
+      redirect("/training-partner/dashboard");
     } catch {
       redirect(getDefaultRedirectPath(session.user.roles));
     }
@@ -24,7 +24,6 @@ const AdminLoginPage = async () => {
 
   return (
     <main className="min-h-screen flex bg-[#f8fbff] overflow-hidden">
-
       <section className="hidden lg:flex relative w-[25%] xl:w-[25%] bg-white border-r border-[#051f42] overflow-hidden shrink-0">
         <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(37,99,235,0.05)_1px,transparent_1px),linear-gradient(to_bottom,rgba(37,99,235,0.05)_1px,transparent_1px)] bg-size-[64px_64px]" />
         <div className="absolute top-0 right-0 w-105 h-105 rounded-full bg-[#60a5fa] opacity-20 blur-[120px]" />
@@ -33,61 +32,34 @@ const AdminLoginPage = async () => {
         <div className="absolute -right-15 top-[30%] w-60 h-60 rounded-full border border-[#bfdbfe]" />
         <div className="absolute -left-12.5 bottom-[15%] w-50 h-50 rounded-full border border-[#dbeafe]" />
         <div className="relative z-10 flex items-center flex-col h-full w-full px-10 xl:px-12 py-10 justify-between">
-
           <div className="flex items-center">
             <div className="px-6 py-3 ">
-              <Image
-                src="/logo.png"
-                alt="Logo"
-                height={38}
-                width={120}
-                className="object-contain"
-              />
+              <Image src="/logo.png" alt="Logo" height={38} width={120} className="object-contain" />
             </div>
           </div>
 
           <div className="max-w-85">
             <h1 className="text-[#0f172a] text-[38px] xl:text-[40px] font-black leading-[1.1] tracking-tight mb-6">
-              Gram Tarang{" "}
-              <span className="text-transparent bg-clip-text bg-linear-to-r from-[#2563eb] to-[#60a5fa]">
-                Training
-              </span>{" "}
-              Center
+              Gram Tarang <span className="text-transparent bg-clip-text bg-linear-to-r from-[#2563eb] to-[#60a5fa]">Training</span> Center
             </h1>
 
             <p className="text-[#64748b] text-[14px] leading-[1.85] font-normal">
-              Empowering India through skill development and training,
-              fostering growth and opportunity for all.
+              Reset your training partner access securely with an OTP sent to your registered email.
             </p>
           </div>
 
           <div className="bg-[#eff6ff] border border-[#dbeafe] -mb-10 rounded-xl px-5 py-2 shadow-sm">
-            <Image
-              src="/skill.png"
-              alt="Skill India"
-              width={80}
-              height={40}
-              className="object-contain"
-            />
+            <Image src="/skill.png" alt="Skill India" width={80} height={40} className="object-contain" />
           </div>
 
           <div className="flex items-center justify-between w-full">
             <div className="flex items-center gap-3">
-
               <div className="w-9 h-9 rounded-full border border-[#bfdbfe] bg-[#eff6ff] flex items-center justify-center">
-                <ShieldCheck
-                  size={16}
-                  className="text-[#2563eb]"
-                />
+                <ShieldCheck size={16} className="text-[#2563eb]" />
               </div>
-
-              <span className="text-[#64748b] text-xs tracking-wide">
-                Powered By Skill India
-              </span>
-
+              <span className="text-[#64748b] text-xs tracking-wide">Powered By Skill India</span>
             </div>
           </div>
-
         </div>
       </section>
 
@@ -98,34 +70,25 @@ const AdminLoginPage = async () => {
         </div>
 
         <div className="relative z-10 w-full max-w-110">
-
           <div className="lg:hidden flex justify-center mb-8">
             <div className="bg-[#eff6ff] border border-[#dbeafe] rounded-2xl px-6 py-3 shadow-sm">
-              <Image
-                src="/logo.png"
-                alt="Logo"
-                height={36}
-                width={110}
-                className="object-contain h-auto w-auto"
-              />
+              <Image src="/logo.png" alt="Logo" height={36} width={110} className="object-contain h-auto w-auto" />
             </div>
           </div>
-            <Login
-              heading={AUTH_CONTENT.admin.heading}
-              subHeading={AUTH_CONTENT.admin.subHeading}
-              submitButtonText={
-                AUTH_CONTENT.admin.SubmitButtonText
-              }
-              placeholderMail={AUTH_CONTENT.admin.PlaceholderMail}
-              portal={AUTH_CONTENT.admin.portal}
-              forgotPasswordUrl={AUTH_CONTENT.admin.ForgotPasswordUrl}
-              RedirectUrl={AUTH_CONTENT.admin.RedirectUrl}
-              SecondaryButtonText={AUTH_CONTENT.admin.SecondaryButtonText}
-            />
+
+          <ForgotPasswordForm
+            heading="Forgot your training partner password?"
+            subHeading="Enter your registered training partner email to receive a 6 digit OTP and reset your password."
+            placeholderMail={AUTH_CONTENT.trainingPartner.PlaceholderMail}
+            portal={AUTH_CONTENT.trainingPartner.portal}
+            loginUrl="/training-partner/login"
+            redirectUrl={AUTH_CONTENT.trainingPartner.RedirectUrl}
+            secondaryButtonText={AUTH_CONTENT.trainingPartner.SecondaryButtonText}
+          />
         </div>
       </section>
     </main>
   );
 };
 
-export default AdminLoginPage;
+export default TrainingPartnerForgotPasswordPage;

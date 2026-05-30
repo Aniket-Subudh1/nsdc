@@ -47,6 +47,8 @@ export function getOpenApiDocument() {
     },
     paths: {
       "/auth/login": { post: { summary: "Authenticate a user" } },
+      "/auth/forgot-password/request": { post: { summary: "Send a password reset OTP to the user's email" } },
+      "/auth/forgot-password/reset": { post: { summary: "Reset a password with email, portal, and OTP" } },
       "/auth/logout": { post: { summary: "Logout the current user", security: [{ cookieAuth: [] }] } },
       "/auth/me": { get: { summary: "Get the current authenticated user", security: [{ cookieAuth: [] }] } },
       "/admin/users": {

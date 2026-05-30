@@ -118,6 +118,7 @@ const TrainingPartnerLoginPage = async () => {
               }
               placeholderMail={AUTH_CONTENT.trainingPartner.PlaceholderMail}
               portal={AUTH_CONTENT.trainingPartner.portal}
+              forgotPasswordUrl={AUTH_CONTENT.trainingPartner.ForgotPasswordUrl}
               RedirectUrl={AUTH_CONTENT.trainingPartner.RedirectUrl}
               SecondaryButtonText={AUTH_CONTENT.trainingPartner.SecondaryButtonText}
             />

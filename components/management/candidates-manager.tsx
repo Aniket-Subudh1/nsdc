@@ -5,6 +5,7 @@ import {
   BadgeCheck,
   ChevronLeft,
   ChevronRight,
+  Download,
   Eye,
   FileSpreadsheet,
   Filter,
@@ -395,6 +396,155 @@ const initialSyncFilters: SyncFilters = {
   status: "",
 };
 
+const candidateImportTemplateRows = [
+  {
+    Salutation: "Mr",
+    FullName: "Import Valid Candidate QA",
+    Gender: "Male",
+    DateofBirth: "10/06/2005",
+    MaritalStatus: "Single/Unmarried",
+    FathersName: "Import Parent QA",
+    MothersName: "",
+    GuardianName: "",
+    Religion: "Hinduism",
+    Category: "General",
+    Disability: "No",
+    TypeofDisability: "",
+    EducationLevel: "12th Pass",
+    EmailID: "import.valid.qa@example.com",
+    CountryCode: "91",
+    MobileNo: "9876543212",
+    IDType: "Alternate ID",
+    TypeofAlternateID: "Voter ID Card",
+    AdharReferenceNo: "",
+    IDNo: "IMPV12345",
+    DomicileState: "Odisha",
+    DomicileDistrict: "Khordha",
+    PermanentAddressAddress: "Import Plot 1",
+    PermanentAddressState: "Odisha",
+    PermanentAddressDistrict: "Khordha",
+    PermanentAddressPINCode: "751001",
+    PermanentAddressCity: "Bhubaneswar",
+    PermanentAddressTehsil: "Bhubaneswar",
+    PermanentAddressConstituency: "Bhubaneswar Central",
+    CommunicationSameasPermanentAddress: "Yes",
+    CommunicationAddressAddress: "",
+    CommunicationAddressState: "",
+    CommunicationAddressDistrict: "",
+    CommunicationAddressPINCode: "",
+    CommunicationAddressCity: "",
+    CommunicationAddressTehsil: "",
+    CommunicationAddressConstituency: "",
+    TrainingStatus: "Fresher",
+    PreviousExperienceSector: "",
+    Noofmonthsofpreviousexperience: "",
+    Employed: "",
+    EmploymentStatus: "",
+    EmploymentDetails: "",
+    HeardAboutUs: "Training Provider",
+  },
+  {
+    Salutation: "Ms",
+    FullName: "Import Invalid Candidate QA",
+    Gender: "Female",
+    DateofBirth: "12/07/2005",
+    MaritalStatus: "Single/Unmarried",
+    FathersName: "Import Parent QA",
+    MothersName: "",
+    GuardianName: "",
+    Religion: "Hinduism",
+    Category: "General",
+    Disability: "No",
+    TypeofDisability: "",
+    EducationLevel: "12th Pass",
+    EmailID: "import.invalid.qa@example.com",
+    CountryCode: "91",
+    MobileNo: "",
+    IDType: "Alternate ID",
+    TypeofAlternateID: "Voter ID Card",
+    AdharReferenceNo: "",
+    IDNo: "IMPV12346",
+    DomicileState: "Odisha",
+    DomicileDistrict: "Khordha",
+    PermanentAddressAddress: "Import Plot 2",
+    PermanentAddressState: "Odisha",
+    PermanentAddressDistrict: "Khordha",
+    PermanentAddressPINCode: "751001",
+    PermanentAddressCity: "Bhubaneswar",
+    PermanentAddressTehsil: "Bhubaneswar",
+    PermanentAddressConstituency: "Bhubaneswar Central",
+    CommunicationSameasPermanentAddress: "Yes",
+    CommunicationAddressAddress: "",
+    CommunicationAddressState: "",
+    CommunicationAddressDistrict: "",
+    CommunicationAddressPINCode: "",
+    CommunicationAddressCity: "",
+    CommunicationAddressTehsil: "",
+    CommunicationAddressConstituency: "",
+    TrainingStatus: "Fresher",
+    PreviousExperienceSector: "",
+    Noofmonthsofpreviousexperience: "",
+    Employed: "",
+    EmploymentStatus: "",
+    EmploymentDetails: "",
+    HeardAboutUs: "Training Provider",
+  },
+  {
+    Salutation: "Mr",
+    FullName: "Import Valid Candidate QA",
+    Gender: "Male",
+    DateofBirth: "10/06/2005",
+    MaritalStatus: "Single/Unmarried",
+    FathersName: "Import Parent QA",
+    MothersName: "",
+    GuardianName: "",
+    Religion: "Hinduism",
+    Category: "General",
+    Disability: "No",
+    TypeofDisability: "",
+    EducationLevel: "12th Pass",
+    EmailID: "import.duplicate.qa@example.com",
+    CountryCode: "91",
+    MobileNo: "9876543212",
+    IDType: "Alternate ID",
+    TypeofAlternateID: "Voter ID Card",
+    AdharReferenceNo: "",
+    IDNo: "IMPV12345",
+    DomicileState: "Odisha",
+    DomicileDistrict: "Khordha",
+    PermanentAddressAddress: "Import Plot 1",
+    PermanentAddressState: "Odisha",
+    PermanentAddressDistrict: "Khordha",
+    PermanentAddressPINCode: "751001",
+    PermanentAddressCity: "Bhubaneswar",
+    PermanentAddressTehsil: "Bhubaneswar",
+    PermanentAddressConstituency: "Bhubaneswar Central",
+    CommunicationSameasPermanentAddress: "Yes",
+    CommunicationAddressAddress: "",
+    CommunicationAddressState: "",
+    CommunicationAddressDistrict: "",
+    CommunicationAddressPINCode: "",
+    CommunicationAddressCity: "",
+    CommunicationAddressTehsil: "",
+    CommunicationAddressConstituency: "",
+    TrainingStatus: "Fresher",
+    PreviousExperienceSector: "",
+    Noofmonthsofpreviousexperience: "",
+    Employed: "",
+    EmploymentStatus: "",
+    EmploymentDetails: "",
+    HeardAboutUs: "Training Provider",
+  },
+] as const;
+
+const candidateImportTemplateInstructions = [
+  { Note: "Use the Candidates screen to choose Program, Training Center, and Registration mode before uploading." },
+  { Note: "Sheet 'Candidate Import Template' contains three sample rows: valid, invalid, and duplicate." },
+  { Note: "Keep the header names unchanged. The backend normalizes these headers during import parsing." },
+  { Note: "DateofBirth values in this sample use dd/mm/yyyy to match the existing QA flow." },
+  { Note: "Existing SIDH link imports still use the same workbook columns; Registration mode is selected in the UI, not per row." },
+] as const;
+
 function createApiError(message: string, status = 400) {
   return new ClientApiError(message, status);
 }
@@ -618,6 +768,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   const selectedCandidate = candidates.find((candidate) => candidate.candidateId === selectedCandidateId) ?? null;
   const queuedJobs = syncJobs.filter((job) => job.status === "queued" || job.status === "processing").length;
   const flaggedJobs = syncJobs.filter((job) => job.status === "failed" || job.status === "manual_review" || job.status === "dead_letter").length;
+  const isImportReady = Boolean(importForm.programId && importForm.centerId && importForm.file);
 
   async function loadImportRows(jobId: string, page = importPagination.page, pageSize = importPagination.pageSize) {
     const rowData = await fetchImportRows(jobId, page, pageSize);
@@ -846,6 +997,18 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
     setSuccessMessage(null);
 
     try {
+      if (!importForm.programId) {
+        throw createApiError("Select a program before staging the import");
+      }
+
+      if (!importForm.centerId) {
+        throw createApiError("Select a training center before staging the import");
+      }
+
+      if (!importForm.file) {
+        throw createApiError("Choose an Excel workbook before staging the import");
+      }
+
       const importJob = await uploadCandidateImport(importForm);
       setCurrentImportJob(importJob);
       setImportPagination((current) => ({ ...current, page: 1 }));
@@ -855,6 +1018,26 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
       setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to stage candidate import");
     } finally {
       setIsUploadingImport(false);
+    }
+  }
+
+  async function handleDownloadImportTemplate() {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    try {
+      const XLSX = await import("xlsx");
+      const workbook = XLSX.utils.book_new();
+      const templateSheet = XLSX.utils.json_to_sheet([...candidateImportTemplateRows]);
+      const instructionsSheet = XLSX.utils.json_to_sheet([...candidateImportTemplateInstructions]);
+
+      XLSX.utils.book_append_sheet(workbook, templateSheet, "Candidate Import Template");
+      XLSX.utils.book_append_sheet(workbook, instructionsSheet, "Instructions");
+      XLSX.writeFileXLSX(workbook, "nsdc-candidate-import-template.xlsx");
+
+      setSuccessMessage("Sample candidate import workbook downloaded successfully");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Unable to download sample import workbook");
     }
   }
 
@@ -1264,7 +1447,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
 
             <form className="mt-6 grid gap-4 md:grid-cols-2" onSubmit={handleImportUpload}>
               <Field label="Program">
-                <select value={importForm.programId} onChange={(event) => setImportForm((current) => ({ ...current, programId: event.target.value }))} className={inputClassName}>
+                <select value={importForm.programId} onChange={(event) => setImportForm((current) => ({ ...current, programId: event.target.value }))} className={inputClassName} required>
                   <option value="">Select program</option>
                   {(referenceData?.programs ?? []).map((program) => (
                     <option key={program.programId} value={program.programId}>{program.name}</option>
@@ -1272,7 +1455,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                 </select>
               </Field>
               <Field label="Training center">
-                <select value={importForm.centerId} onChange={(event) => setImportForm((current) => ({ ...current, centerId: event.target.value }))} className={inputClassName}>
+                <select value={importForm.centerId} onChange={(event) => setImportForm((current) => ({ ...current, centerId: event.target.value }))} className={inputClassName} required>
                   <option value="">Select center</option>
                   {(referenceData?.trainingCenters ?? []).map((center) => (
                     <option key={center.centerId} value={center.centerId}>{center.centerName}</option>
@@ -1286,10 +1469,13 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                 </select>
               </Field>
               <Field label="Workbook">
-                <input type="file" accept=".xlsx,.xls" onChange={(event) => setImportForm((current) => ({ ...current, file: event.target.files?.[0] ?? null }))} className={`${inputClassName} py-2`} />
+                <input type="file" accept=".xlsx,.xls" onChange={(event) => setImportForm((current) => ({ ...current, file: event.target.files?.[0] ?? null }))} className={`${inputClassName} py-2`} required />
               </Field>
               <div className="md:col-span-2 flex flex-col gap-3 sm:flex-row">
-                <button type="submit" disabled={isUploadingImport} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
+                <button type="button" onClick={() => void handleDownloadImportTemplate()} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition-colors hover:border-emerald-300 hover:text-emerald-700">
+                  <Download className="h-4 w-4" /> Download sample workbook
+                </button>
+                <button type="submit" disabled={isUploadingImport || !isImportReady} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
                   {isUploadingImport ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Stage import
                 </button>
                 {currentImportJob ? (
@@ -1311,6 +1497,10 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                 </div>
               </div>
             ) : null}
+
+            <p className="mt-4 text-sm text-slate-500">
+              Use the sample workbook to download the expected column layout with valid, invalid, and duplicate example rows before uploading your own file.
+            </p>
           </div>
         </div>
 

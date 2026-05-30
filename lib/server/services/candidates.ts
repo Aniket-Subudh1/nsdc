@@ -1021,7 +1021,7 @@ export async function createCandidateImportJob(
   await Promise.all([ensureProgramExists(input.programId), ensureTrainingCenterExists(input.centerId)]);
 
   const workbook = XLSX.read(workbookBuffer, { type: "array" });
-  const firstSheetName = workbook.SheetNames[0];
+  const firstSheetName = workbook.SheetNames.find((sheetName) => normalizeWhitespace(sheetName).toLowerCase() === "candidate import template") ?? workbook.SheetNames[0];
 
   if (!firstSheetName) {
     throw new ApiError(400, "IMPORT_EMPTY_WORKBOOK", "Workbook does not contain any sheets");

@@ -327,7 +327,11 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
   }
 
   useEffect(() => {
-    void loadData();
+    async function initialize() {
+      await loadData();
+    }
+
+    void initialize();
   }, []);
 
   async function handleProgramSubmit(event: React.FormEvent<HTMLFormElement>) {

@@ -158,6 +158,13 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
     let isMounted = true;
 
     async function syncPageData() {
+      if (!isMounted) {
+        return;
+      }
+
+      setIsLoading(true);
+      setErrorMessage(null);
+
       try {
         const [centerData, programData] = await fetchCenterData(page);
 
@@ -185,8 +192,6 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
       }
     }
 
-    setIsLoading(true);
-    setErrorMessage(null);
     void syncPageData();
 
     return () => {

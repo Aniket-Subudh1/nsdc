@@ -4,7 +4,7 @@ import * as XLSX from "xlsx";
 import { ensureBootstrapData } from "../lib/server/bootstrap";
 import { createPrefixedId } from "../lib/server/ids";
 import { connectToDatabase } from "../lib/server/mongodb";
-import { CourseModel } from "../lib/server/models/course";
+import { CourseModel, type CourseDocument } from "../lib/server/models/course";
 import { CourseVersionModel } from "../lib/server/models/course-version";
 import { SectorModel } from "../lib/server/models/sector";
 
@@ -218,7 +218,27 @@ function serializeSnapshot(course: {
   };
 }
 
-function hasCourseChanged(existingCourse: any, row: ImportedCourseRow, sectorId: string) {
+type ComparableCourse = Pick<
+  CourseDocument,
+  | "approvalDate"
+  | "approvalStatus"
+  | "associatedQpOrJobRole"
+  | "courseName"
+  | "gtUploadedDurationHours"
+  | "internalCourseCode"
+  | "jobRoleMappingType"
+  | "minimumAge"
+  | "nsqfLevel"
+  | "price"
+  | "qpCode"
+  | "sectorId"
+  | "sidhCourseId"
+  | "trainingHours"
+  | "validityEndDate"
+  | "validityStartDate"
+>;
+
+function hasCourseChanged(existingCourse: ComparableCourse | null, row: ImportedCourseRow, sectorId: string) {
   if (!existingCourse) {
     return true;
   }

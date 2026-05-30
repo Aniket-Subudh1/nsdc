@@ -350,7 +350,11 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
   }
 
   useEffect(() => {
-    void loadData();
+    async function initialize() {
+      await loadData();
+    }
+
+    void initialize();
   }, []);
 
   async function handleSaveBatch() {
@@ -897,8 +901,8 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                   </div>
 
                   <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                    {attendanceSummary.dailySessions.map((session) => (
-                      <div key={session.attendanceDate ?? Math.random()} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                    {attendanceSummary.dailySessions.map((session, index) => (
+                      <div key={`${session.attendanceDate ?? "unknown-date"}-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
                         <p className="font-semibold text-slate-950">{session.attendanceDate ?? "Unknown date"}</p>
                         <p className="mt-2">Present: {session.presentCount}</p>
                         <p>Absent: {session.absentCount}</p>

@@ -88,7 +88,7 @@ const syncJobSchema = new mongoose.Schema(
     },
     maxAttempts: {
       type: Number,
-      default: 5,
+      default: 3,
     },
     nextRunAt: {
       type: Date,

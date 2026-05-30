@@ -132,6 +132,34 @@ function buildAuthHeaders(session?: ConnectorSession) {
   };
 }
 
+function parseResponsePayload<T = unknown>(text: string, contentType: string | null): T | string {
+  const trimmed = text.trim();
+
+  if (!trimmed) {
+    return {} as T;
+  }
+
+  const shouldParseJson = contentType?.toLowerCase().includes("json") || /^[\[{]/.test(trimmed);
+
+  if (shouldParseJson) {
+    try {
+      return JSON.parse(trimmed) as T;
+    } catch {
+      return trimmed;
+    }
+  }
+
+  return trimmed;
+}
+
+function extractErrorMessage(responseBody: unknown, fallbackMessage: string) {
+  if (typeof responseBody === "string" && responseBody.trim()) {
+    return responseBody.trim();
+  }
+
+  return extractJsonValue<string>(responseBody, ["message", "error", "errorMessage"]) ?? fallbackMessage;
+}
+
 function extractJsonValue<T = unknown>(payload: unknown, candidates: string[]): T | undefined {
   if (!payload || typeof payload !== "object") {
     return undefined;
@@ -223,6 +251,16 @@ async function logTransaction(input: {
 function classifyError(responseStatus: number, responseBody: unknown, fallbackMessage: string) {
   const remoteCandidateId = extractRemoteCandidateId(responseBody);
 
+  if (responseStatus === 401 || responseStatus === 403) {
+    return new SidhConnectorError({
+      code: "SIDH_AUTH_FAILED",
+      message: fallbackMessage,
+      responseBody,
+      retryable: true,
+      status: responseStatus,
+    });
+  }
+
   if (responseStatus === 409) {
     return new SidhConnectorError({
       code: "SIDH_CONFLICT",
@@ -269,7 +307,7 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
   const credentials = getSidhCredentials(env);
   let cachedSession: ConnectorSession | null = null;
 
-  async function requestJson<T = unknown>(options: RequestOptions): Promise<{ headers: Headers; payload: T; status: number }> {
+  async function requestJson(options: RequestOptions): Promise<{ headers: Headers; payload: unknown; status: number }> {
     const url = new URL(options.path, credentials.baseUrl).toString();
     const requestHeaders = {
       Accept: "application/json",
@@ -286,7 +324,7 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
       });
       const responseHeaders = Object.fromEntries(response.headers.entries());
       const text = await response.text();
-      const payload = text ? (JSON.parse(text) as T) : ({} as T);
+      const payload = parseResponsePayload(text, response.headers.get("content-type"));
 
       await logTransaction({
         attemptId: options.attemptId,
@@ -302,7 +340,8 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
       });
 
       if (!response.ok) {
-        const message = extractJsonValue<string>(payload, ["message", "error", "errorMessage"]) ?? `SIDH ${options.operation} failed`;
+        cachedSession = null;
+        const message = extractErrorMessage(payload, `SIDH ${options.operation} failed`);
         throw classifyError(response.status, payload, message);
       }
 
@@ -372,6 +411,7 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
     }
 
     const csrfToken = csrfResponse.headers.get("x-csrf-token")?.trim();
+    const csrfCookie = csrfResponse.headers.get("set-cookie")?.trim() || null;
 
     if (!csrfToken) {
       throw new SidhConnectorError({
@@ -381,11 +421,17 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
       });
     }
 
-    const keyResponse = await requestJson<Record<string, unknown>>({
+    const bootstrapSession: ConnectorSession = {
+      accessToken: null,
+      cookie: csrfCookie,
+      csrfToken,
+    };
+
+    const keyResponse = await requestJson({
       attemptId,
-      headers: { "x-csrf-token": csrfToken },
       operation: "keys.fetch",
       path: "/api/user/v1/getkey",
+      session: bootstrapSession,
       syncJobId,
     });
     const publicKey = extractJsonValue<string>(keyResponse.payload, ["publicKey", "public_key", "key"]);
@@ -399,20 +445,20 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
       });
     }
 
-    const loginResponse = await requestJson<Record<string, unknown>>({
+    const loginResponse = await requestJson({
       attemptId,
       body: buildLoginPayload(credentials.username, encryptPassword(credentials.password, publicKey, secretKey), credentials.tpId),
-      headers: { "x-csrf-token": csrfToken },
       operation: "auth.login",
       path: "/api/user/v1/login",
+      session: bootstrapSession,
       syncJobId,
     });
     const accessToken = extractJsonValue<string>(loginResponse.payload, ["accessToken", "token", "authToken", "jwt"]);
-    const cookie = loginResponse.headers.get("set-cookie");
+    const cookie = loginResponse.headers.get("set-cookie")?.trim() || bootstrapSession.cookie;
 
     cachedSession = {
       accessToken: accessToken?.trim() || null,
-      cookie: cookie?.trim() || null,
+      cookie,
       csrfToken,
     };
 
@@ -430,7 +476,7 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
   return {
     async registerCandidate(input: RegisterCandidateInput): Promise<RegisterCandidateResult> {
       const runRegistration = async (session: ConnectorSession) => {
-        const response = await requestJson<Record<string, unknown>>({
+        const response = await requestJson({
           attemptId: input.attemptId,
           body: input.payload,
           operation: "candidate.register",
@@ -446,14 +492,20 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
         } satisfies RegisterCandidateResult;
       };
 
-      const firstSession = await ensureSession(input.syncJobId, input.attemptId);
+      const executeRegistration = async (forceRefresh = false) => {
+        const session = await ensureSession(input.syncJobId, input.attemptId, forceRefresh);
+        return runRegistration(session);
+      };
 
       try {
-        return await runRegistration(firstSession);
+        return await executeRegistration();
       } catch (error) {
-        if (error instanceof SidhConnectorError && error.status === 412) {
-          const refreshedSession = await ensureSession(input.syncJobId, input.attemptId, true);
-          return runRegistration(refreshedSession);
+        if (
+          error instanceof SidhConnectorError &&
+          (error.status === 401 || error.status === 403 || error.status === 412 || error.code === "SIDH_AUTH_FAILED")
+        ) {
+          cachedSession = null;
+          return executeRegistration(true);
         }
 
         throw error;

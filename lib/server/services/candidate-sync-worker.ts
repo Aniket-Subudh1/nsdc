@@ -198,8 +198,8 @@ function classifyMessage(error: unknown) {
 }
 
 function calculateNextRunAt(retryCount: number, now: Date) {
-  const delayMinutes = Math.min(2 ** Math.max(retryCount - 1, 0), 60);
-  return new Date(now.getTime() + delayMinutes * 60 * 1000);
+  const delaySeconds = Math.min(5 * 2 ** Math.max(retryCount - 1, 0), 30);
+  return new Date(now.getTime() + delaySeconds * 1000);
 }
 
 async function claimNextSyncJob(now: Date) {
@@ -527,7 +527,8 @@ async function processClaimedJob(actor: SyncActor, job: WorkerSyncJob, connector
     }
 
     const currentRetryCount = job.retryCount ?? 0;
-    const maxAttempts = job.maxAttempts ?? 5;
+    const maxAttempts = Math.max(1, Math.min(job.maxAttempts ?? 3, 3));
+    job.maxAttempts = maxAttempts;
 
     if (connectorError.retryable && currentRetryCount + 1 < maxAttempts) {
       await finalizeRetry(actor, candidate, job, attemptId, new Date(), connectorError, requestId);

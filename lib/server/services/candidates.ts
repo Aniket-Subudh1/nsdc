@@ -612,6 +612,7 @@ async function createQueuedSyncJob(actor: AuthSession, candidate: SerializedCand
     entityType: "candidate",
     entityId: candidate.candidateId,
     candidateId: candidate.candidateId,
+    maxAttempts: 3,
     status: "queued",
     payloadSnapshot: candidate,
     createdByUserId: actor.user.id,

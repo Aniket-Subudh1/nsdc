@@ -111,7 +111,7 @@ function createJob(overrides: Record<string, unknown> = {}) {
     latestRemoteCandidateId: null,
     lockId: "lock_001",
     lockedAt: new Date("2026-01-01T00:00:00.000Z"),
-    maxAttempts: 5,
+    maxAttempts: 3,
     nextRunAt: new Date("2026-01-01T00:00:00.000Z"),
     payloadSnapshot: {},
     retryCount: 0,
@@ -193,6 +193,35 @@ describe("candidate sync worker", () => {
     expect(job.status).toBe("queued");
     expect(job.retryCount).toBe(1);
     expect(candidate.syncState.status).toBe("queued");
+  });
+
+  it("dead-letters retryable failures after the third attempt", async () => {
+    const candidate = createCandidate({
+      syncState: {
+        retryCount: 2,
+        status: "queued",
+      },
+    });
+    const job = createJob({ maxAttempts: 3, retryCount: 2 });
+    const connector = {
+      registerCandidate: vi.fn().mockRejectedValue(
+        new SidhConnectorError({
+          code: "SIDH_AUTH_FAILED",
+          message: "Unauthorized : csrf",
+          retryable: true,
+          status: 401,
+        }),
+      ),
+    };
+
+    mocks.syncJobFindOneAndUpdate.mockResolvedValueOnce(job).mockResolvedValueOnce(null);
+    mocks.candidateFindOne.mockResolvedValue(candidate);
+
+    const result = await processQueuedSyncJobs(actor as never, { limit: 1 }, { connector: connector as never, now: () => new Date("2026-01-01T00:00:00.000Z") });
+
+    expect(result.deadLetterCount).toBe(1);
+    expect(result.jobs[0]?.status).toBe("dead_letter");
+    expect(job.status).toBe("dead_letter");
   });
 
   it("reconciles 409 responses that include an existing remote candidate id", async () => {

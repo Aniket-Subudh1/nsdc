@@ -158,4 +158,85 @@ describe("SIDH connector", () => {
       }),
     ).rejects.toBeInstanceOf(SidhConnectorError);
   });
+
+  it("carries the csrf cookie into key fetch and login", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(null, {
+          headers: {
+            "set-cookie": "csrf-session=abc123",
+            "x-csrf-token": "csrf-token",
+          },
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(createJsonResponse({ publicKey: "test-public-key", secretKey: "test-secret" }))
+      .mockResolvedValueOnce(createJsonResponse({ accessToken: "access-token" }))
+      .mockResolvedValueOnce(createJsonResponse({ candidateId: "CAN_445566" }, { status: 201 }));
+
+    const connector = createSidhConnector({ env, fetchImpl });
+
+    await connector.registerCandidate({
+      attemptId: "syncatt_004",
+      payload: {
+        candidate: { fullName: "Rohit Kumar" },
+        candidateReferenceId: "cand_001",
+        center: { centerId: "tc_001", centerName: "Center One", sidhTcId: "TC164648" },
+        meta: { centerId: "tc_001", programId: "prg_001", registrationMode: "internal_registration" },
+        tpId: "TP_UAT",
+      },
+      syncJobId: "sync_001",
+    });
+
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      2,
+      "https://backend.itrackglobal.com/api/user/v1/getkey",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Cookie: "csrf-session=abc123",
+          "x-csrf-token": "csrf-token",
+        }),
+      }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      3,
+      "https://backend.itrackglobal.com/api/user/v1/login",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Cookie: "csrf-session=abc123",
+          "x-csrf-token": "csrf-token",
+        }),
+      }),
+    );
+  });
+
+  it("preserves plain-text auth errors instead of failing json parsing", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token" }, status: 200 }))
+      .mockResolvedValueOnce(new Response("Unauthorized : csrf", { status: 401 }))
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token-2" }, status: 200 }))
+      .mockResolvedValueOnce(new Response("Unauthorized : csrf", { status: 401 }));
+
+    const connector = createSidhConnector({ env, fetchImpl });
+
+    await expect(
+      connector.registerCandidate({
+        attemptId: "syncatt_005",
+        payload: {
+          candidate: { fullName: "Rohit Kumar" },
+          candidateReferenceId: "cand_001",
+          center: { centerId: "tc_001", centerName: "Center One", sidhTcId: "TC164648" },
+          meta: { centerId: "tc_001", programId: "prg_001", registrationMode: "internal_registration" },
+          tpId: "TP_UAT",
+        },
+        syncJobId: "sync_001",
+      }),
+    ).rejects.toMatchObject({
+      code: "SIDH_AUTH_FAILED",
+      message: "Unauthorized : csrf",
+      status: 401,
+    });
+  });
 });

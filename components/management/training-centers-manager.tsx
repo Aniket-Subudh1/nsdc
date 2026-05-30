@@ -27,6 +27,7 @@ type CenterRecord = {
 type ProgramRecord = {
   name: string;
   programId: string;
+  status: "active" | "inactive";
 };
 
 type PagedCenters = {
@@ -82,6 +83,8 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const content = portalContent[portal];
   const selectedCenter = centers.find((center) => center.centerId === selectedCenterId) ?? null;
+  const hasPrograms = programs.length > 0;
+  const masterDataPath = portal === "admin" ? "/admin/master-data" : "/training-partner/master-data";
 
   useEffect(() => {
     if (errorMessage) {
@@ -96,7 +99,13 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
   }, [successMessage]);
 
   function getProgramLabel(programId: string) {
-    return programs.find((program) => program.programId === programId)?.name ?? programId;
+    const program = programs.find((item) => item.programId === programId);
+
+    if (!program) {
+      return programId;
+    }
+
+    return program.status === "inactive" ? `${program.name} (inactive)` : program.name;
   }
 
   function applyCenter(center: CenterRecord | null) {
@@ -121,7 +130,7 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
   async function fetchCenterData(targetPage: number) {
     return Promise.all([
       apiFetch<PagedCenters>(`/api/v1/masters/training-centers?page=${targetPage}&pageSize=${pageSize}`),
-      apiFetch<PagedPrograms>("/api/v1/masters/programs?page=1&pageSize=100&status=active"),
+      apiFetch<PagedPrograms>("/api/v1/masters/programs?page=1&pageSize=100"),
     ]);
   }
 
@@ -302,24 +311,38 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
               </Field>
             </div>
             <Field label="Programs">
-              <select
-                value={form.programIds}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    programIds: Array.from(event.target.selectedOptions, (option) => option.value),
-                  }))
-                }
-                className={`${inputClassName} h-32 py-3`}
-                multiple
-                required
-              >
-                {programs.map((program) => (
-                  <option key={program.programId} value={program.programId}>
-                    {program.name}
-                  </option>
-                ))}
-              </select>
+              {hasPrograms ? (
+                <>
+                  <select
+                    value={form.programIds}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        programIds: Array.from(event.target.selectedOptions, (option) => option.value),
+                      }))
+                    }
+                    className={`${inputClassName} h-32 py-3`}
+                    multiple
+                    required
+                  >
+                    {programs.map((program) => (
+                      <option key={program.programId} value={program.programId}>
+                        {program.status === "inactive" ? `${program.name} (inactive)` : program.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-slate-500">
+                    Hold Ctrl or Cmd to select multiple programs.
+                  </p>
+                </>
+              ) : (
+                <div className="space-y-3 rounded-2xl border border-dashed border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-800">
+                  <p>No programs are available yet, so a training center cannot be created.</p>
+                  <a href={masterDataPath} className="inline-flex items-center gap-2 rounded-xl border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-900 transition-colors hover:border-amber-400">
+                    Create a program first
+                  </a>
+                </div>
+              )}
             </Field>
             <Field label="Status">
               <select
@@ -338,7 +361,7 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
             </Field>
             <button
               type="submit"
-              disabled={isSaving}
+              disabled={isSaving || !hasPrograms}
               className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isSaving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : selectedCenter ? <Save className="h-4 w-4" /> : <PlusCircle className="h-4 w-4" />}

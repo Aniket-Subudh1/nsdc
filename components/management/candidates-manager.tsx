@@ -3,16 +3,23 @@
 import { startTransition, useEffect, useState } from "react";
 import {
   BadgeCheck,
+  ChevronLeft,
+  ChevronRight,
+  Eye,
   FileSpreadsheet,
+  Filter,
   Link2,
   LoaderCircle,
+  Play,
   RefreshCw,
   RotateCcw,
   Save,
+  Search,
   Send,
   Upload,
   UserPlus,
   Users,
+  Workflow,
 } from "lucide-react";
 
 import { apiFetch, ClientApiError, type ApiEnvelope } from "@/lib/client/api";
@@ -36,6 +43,16 @@ type CandidateReferenceData = {
   programs: ProgramRecord[];
   trainingCenters: TrainingCenterRecord[];
   enums: Record<string, Array<{ code: string; label: string }>>;
+};
+
+type AddressFormState = {
+  address: string;
+  city: string;
+  constituency: string;
+  district: string;
+  pinCode: string;
+  state: string;
+  tehsil: string;
 };
 
 type CandidateRecord = {
@@ -84,7 +101,12 @@ type CandidateRecord = {
   registrationMode: "internal_registration" | "existing_sidh_link";
   sidhCandidateId: string | null;
   syncState: {
+    lastAttemptAt?: string | null;
+    lastFailureCode?: string | null;
+    lastFailureMessage?: string | null;
     lastJobId?: string | null;
+    lastSuccessAt?: string | null;
+    retryCount?: number;
     status?: string | null;
   } | null;
 };
@@ -96,13 +118,41 @@ type PagedCandidates = {
   total: number;
 };
 
+type SyncAttempt = {
+  attemptId?: string;
+  failureCode?: string | null;
+  failureMessage?: string | null;
+  finishedAt?: string | null;
+  remoteCandidateId?: string | null;
+  responseCode?: number | null;
+  retryable?: boolean;
+  startedAt?: string | null;
+  status?: string;
+};
+
+type SyncTransaction = {
+  createdAt: string | null;
+  endpoint: string;
+  operation: string;
+  responseStatus: number | null;
+  success: boolean;
+  transactionId: string;
+};
+
 type SyncJobRecord = {
-  attempts: Array<Record<string, unknown>>;
+  attempts: SyncAttempt[];
   candidateId: string;
+  createdAt?: string | null;
+  entityId: string;
+  entityType: string;
   latestRemoteCandidateId: string | null;
+  nextRunAt?: string | null;
+  payloadSnapshot: Record<string, unknown>;
   retryCount: number;
   status: string;
   syncJobId: string;
+  transactions?: SyncTransaction[];
+  updatedAt?: string | null;
 };
 
 type PagedSyncJobs = {
@@ -140,16 +190,6 @@ type PagedImportRows = {
   page: number;
   pageSize: number;
   total: number;
-};
-
-type AddressFormState = {
-  address: string;
-  city: string;
-  constituency: string;
-  district: string;
-  pinCode: string;
-  state: string;
-  tehsil: string;
 };
 
 type CandidateFormState = {
@@ -199,18 +239,69 @@ type CandidateFormState = {
   registrationMode: "internal_registration" | "existing_sidh_link";
 };
 
+type LinkFormState = {
+  centerId: string;
+  dateOfBirth: string;
+  fullName: string;
+  mobileNumber: string;
+  programId: string;
+  sidhCandidateId: string;
+};
+
+type ImportFormState = {
+  centerId: string;
+  file: File | null;
+  programId: string;
+  registrationMode: "internal_registration" | "existing_sidh_link";
+};
+
+type CandidateFilters = {
+  centerId: string;
+  page: number;
+  pageSize: number;
+  programId: string;
+  registrationMode: string;
+  search: string;
+  syncStatus: string;
+};
+
+type SyncFilters = {
+  page: number;
+  pageSize: number;
+  status: string;
+};
+
+type ProcessSyncJobsResult = {
+  deadLetterCount: number;
+  jobs: Array<{
+    candidateId: string;
+    message: string;
+    remoteCandidateId: string | null;
+    status: string;
+    syncJobId: string;
+  }>;
+  manualReviewCount: number;
+  processedCount: number;
+  retryScheduledCount: number;
+  succeededCount: number;
+};
+
 const portalContent = {
   admin: {
     description:
-      "Create, review, import, and queue candidate registration records without calling SIDH from the browser.",
+      "Create, review, import, and queue candidate registration records through internal APIs, then drive the server-side SIDH worker from the operations screen.",
     heading: "Candidate Operations",
   },
   training_partner: {
     description:
-      "Work inside your scoped center assignments for candidate intake, row review, and sync queue management.",
+      "Work inside your scoped center assignments for candidate intake, row review, queue monitoring, and controlled SIDH sync processing.",
     heading: "Scoped Candidate Operations",
   },
 } as const;
+
+const candidateSyncStatusOptions = ["not_queued", "queued", "processing", "synced", "failed", "manual_review", "linked"];
+const syncJobStatusOptions = ["queued", "processing", "succeeded", "failed", "manual_review", "dead_letter"];
+const pageSizeOptions = [12, 24, 48];
 
 const emptyAddress: AddressFormState = {
   address: "",
@@ -272,15 +363,6 @@ const emptyCandidateForm: CandidateFormState = {
   registrationMode: "internal_registration",
 };
 
-type LinkFormState = {
-  centerId: string;
-  dateOfBirth: string;
-  fullName: string;
-  mobileNumber: string;
-  programId: string;
-  sidhCandidateId: string;
-};
-
 const emptyLinkForm: LinkFormState = {
   centerId: "",
   dateOfBirth: "",
@@ -290,13 +372,6 @@ const emptyLinkForm: LinkFormState = {
   sidhCandidateId: "",
 };
 
-type ImportFormState = {
-  centerId: string;
-  file: File | null;
-  programId: string;
-  registrationMode: "internal_registration" | "existing_sidh_link";
-};
-
 const emptyImportForm: ImportFormState = {
   centerId: "",
   file: null,
@@ -304,8 +379,77 @@ const emptyImportForm: ImportFormState = {
   registrationMode: "internal_registration",
 };
 
+const initialCandidateFilters: CandidateFilters = {
+  centerId: "",
+  page: 1,
+  pageSize: 12,
+  programId: "",
+  registrationMode: "",
+  search: "",
+  syncStatus: "",
+};
+
+const initialSyncFilters: SyncFilters = {
+  page: 1,
+  pageSize: 12,
+  status: "",
+};
+
 function createApiError(message: string, status = 400) {
   return new ClientApiError(message, status);
+}
+
+function buildQueryString(values: Record<string, string | number | undefined>) {
+  const params = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined) {
+      continue;
+    }
+
+    const normalized = String(value).trim();
+
+    if (!normalized) {
+      continue;
+    }
+
+    params.set(key, normalized);
+  }
+
+  return params.toString();
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) {
+    return "Not available";
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+}
+
+function formatJson(value: unknown) {
+  return JSON.stringify(value, null, 2);
+}
+
+function getStatusPillClass(status?: string | null) {
+  if (!status) {
+    return "bg-slate-100 text-slate-700";
+  }
+
+  if (["synced", "succeeded", "linked"].includes(status)) {
+    return "bg-emerald-100 text-emerald-700";
+  }
+
+  if (["failed", "manual_review", "dead_letter"].includes(status)) {
+    return "bg-rose-100 text-rose-700";
+  }
+
+  if (["processing"].includes(status)) {
+    return "bg-amber-100 text-amber-700";
+  }
+
+  return "bg-sky-100 text-sky-700";
 }
 
 function candidateToForm(candidate: CandidateRecord): CandidateFormState {
@@ -366,23 +510,21 @@ function candidateToForm(candidate: CandidateRecord): CandidateFormState {
 
 function buildCandidatePayload(form: CandidateFormState) {
   return {
-    programId: form.programId,
     centerId: form.centerId,
-    registrationMode: form.registrationMode,
-    personalDetails: form.personalDetails,
+    communicationAddress: form.communicationAddress.sameAsPermanent ? { sameAsPermanent: true } : form.communicationAddress,
     contactDetails: form.contactDetails,
-    identity: form.identity,
     domicile: form.domicile,
-    permanentAddress: form.permanentAddress,
-    communicationAddress: form.communicationAddress.sameAsPermanent
-      ? { sameAsPermanent: true }
-      : form.communicationAddress,
     experience: {
       ...form.experience,
       monthsOfPreviousExperience: form.experience.monthsOfPreviousExperience
         ? Number(form.experience.monthsOfPreviousExperience)
         : null,
     },
+    identity: form.identity,
+    permanentAddress: form.permanentAddress,
+    personalDetails: form.personalDetails,
+    programId: form.programId,
+    registrationMode: form.registrationMode,
   };
 }
 
@@ -398,9 +540,9 @@ async function uploadCandidateImport(form: ImportFormState) {
   body.set("registrationMode", form.registrationMode);
 
   const response = await fetch("/api/v1/candidates/imports", {
-    method: "POST",
     body,
     credentials: "include",
+    method: "POST",
   });
   const payload = (await response.json()) as ApiEnvelope<ImportJobRecord>;
 
@@ -411,77 +553,120 @@ async function uploadCandidateImport(form: ImportFormState) {
   return payload.data;
 }
 
-async function fetchDashboardDataResources() {
-  return Promise.all([
-    apiFetch<CandidateReferenceData>("/api/v1/reference-data/candidate"),
-    apiFetch<PagedCandidates>("/api/v1/candidates?page=1&pageSize=12"),
-    apiFetch<PagedSyncJobs>("/api/v1/sync/jobs?page=1&pageSize=12"),
-  ]);
+async function fetchReferenceData() {
+  return apiFetch<CandidateReferenceData>("/api/v1/reference-data/candidate");
+}
+
+async function fetchCandidates(filters: CandidateFilters) {
+  const query = buildQueryString({
+    centerId: filters.centerId || undefined,
+    page: filters.page,
+    pageSize: filters.pageSize,
+    programId: filters.programId || undefined,
+    registrationMode: filters.registrationMode || undefined,
+    search: filters.search || undefined,
+    syncStatus: filters.syncStatus || undefined,
+  });
+
+  return apiFetch<PagedCandidates>(`/api/v1/candidates?${query}`);
+}
+
+async function fetchSyncJobs(filters: SyncFilters) {
+  const query = buildQueryString({
+    page: filters.page,
+    pageSize: filters.pageSize,
+    status: filters.status || undefined,
+  });
+
+  return apiFetch<PagedSyncJobs>(`/api/v1/sync/jobs?${query}`);
+}
+
+async function fetchImportRows(jobId: string, page: number, pageSize: number) {
+  return apiFetch<PagedImportRows>(`/api/v1/candidates/imports/${jobId}/rows?${buildQueryString({ page, pageSize })}`);
 }
 
 export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   const [referenceData, setReferenceData] = useState<CandidateReferenceData | null>(null);
   const [candidates, setCandidates] = useState<CandidateRecord[]>([]);
+  const [candidateFilters, setCandidateFilters] = useState(initialCandidateFilters);
+  const [candidatePagination, setCandidatePagination] = useState({ page: 1, pageSize: 12, total: 0 });
   const [syncJobs, setSyncJobs] = useState<SyncJobRecord[]>([]);
+  const [syncFilters, setSyncFilters] = useState(initialSyncFilters);
+  const [syncPagination, setSyncPagination] = useState({ page: 1, pageSize: 12, total: 0 });
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   const [candidateForm, setCandidateForm] = useState(emptyCandidateForm);
   const [linkForm, setLinkForm] = useState(emptyLinkForm);
   const [importForm, setImportForm] = useState(emptyImportForm);
   const [currentImportJob, setCurrentImportJob] = useState<ImportJobRecord | null>(null);
   const [importRows, setImportRows] = useState<ImportRowRecord[]>([]);
+  const [importPagination, setImportPagination] = useState({ page: 1, pageSize: 12, total: 0 });
+  const [expandedImportRowId, setExpandedImportRowId] = useState<string | null>(null);
+  const [selectedSyncJobId, setSelectedSyncJobId] = useState<string | null>(null);
+  const [selectedSyncJob, setSelectedSyncJob] = useState<SyncJobRecord | null>(null);
+  const [processLimit, setProcessLimit] = useState("5");
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingSyncDetail, setIsLoadingSyncDetail] = useState(false);
   const [isSavingCandidate, setIsSavingCandidate] = useState(false);
   const [isSavingLink, setIsSavingLink] = useState(false);
   const [isUploadingImport, setIsUploadingImport] = useState(false);
   const [isCommittingImport, setIsCommittingImport] = useState(false);
+  const [isProcessingSyncJobs, setIsProcessingSyncJobs] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const content = portalContent[portal];
   const selectedCandidate = candidates.find((candidate) => candidate.candidateId === selectedCandidateId) ?? null;
   const queuedJobs = syncJobs.filter((job) => job.status === "queued" || job.status === "processing").length;
-  const flaggedJobs = syncJobs.filter((job) => job.status === "failed" || job.status === "manual_review").length;
+  const flaggedJobs = syncJobs.filter((job) => job.status === "failed" || job.status === "manual_review" || job.status === "dead_letter").length;
 
-  async function loadDashboardData() {
-    setIsLoading(true);
-    setErrorMessage(null);
+  async function loadImportRows(jobId: string, page = importPagination.page, pageSize = importPagination.pageSize) {
+    const rowData = await fetchImportRows(jobId, page, pageSize);
+    setImportRows(rowData.items);
+    setImportPagination({ page: rowData.page, pageSize: rowData.pageSize, total: rowData.total });
+  }
+
+  async function loadSyncJobDetails(syncJobId: string) {
+    setIsLoadingSyncDetail(true);
 
     try {
-      const [candidateReference, candidateData, syncJobData] = await fetchDashboardDataResources();
-
-      setReferenceData(candidateReference);
-      setCandidates(candidateData.items);
-      setSyncJobs(syncJobData.items);
-
-      if (!candidateForm.programId && candidateReference.programs[0]) {
-        setCandidateForm((current) => ({ ...current, programId: candidateReference.programs[0].programId }));
-        setLinkForm((current) => ({ ...current, programId: candidateReference.programs[0].programId }));
-        setImportForm((current) => ({ ...current, programId: candidateReference.programs[0].programId }));
-      }
-
-      if (!candidateForm.centerId && candidateReference.trainingCenters[0]) {
-        setCandidateForm((current) => ({ ...current, centerId: candidateReference.trainingCenters[0].centerId }));
-        setLinkForm((current) => ({ ...current, centerId: candidateReference.trainingCenters[0].centerId }));
-        setImportForm((current) => ({ ...current, centerId: candidateReference.trainingCenters[0].centerId }));
-      }
+      const job = await apiFetch<SyncJobRecord>(`/api/v1/sync/jobs/${syncJobId}`);
+      setSelectedSyncJobId(syncJobId);
+      setSelectedSyncJob(job);
     } catch (error) {
-      setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to load candidate operations data");
+      setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to load sync job details");
     } finally {
-      setIsLoading(false);
+      setIsLoadingSyncDetail(false);
     }
   }
 
-  async function loadImportRows(jobId: string) {
-    const rowData = await apiFetch<PagedImportRows>(`/api/v1/candidates/imports/${jobId}/rows?page=1&pageSize=12`);
-    setImportRows(rowData.items);
+  async function refreshVisibleData() {
+    const [candidateData, syncJobData] = await Promise.all([fetchCandidates(candidateFilters), fetchSyncJobs(syncFilters)]);
+    setCandidates(candidateData.items);
+    setCandidatePagination({ page: candidateData.page, pageSize: candidateData.pageSize, total: candidateData.total });
+    setSyncJobs(syncJobData.items);
+    setSyncPagination({ page: syncJobData.page, pageSize: syncJobData.pageSize, total: syncJobData.total });
+
+    if (currentImportJob) {
+      await loadImportRows(currentImportJob.importJobId, importPagination.page, importPagination.pageSize);
+    }
+
+    if (selectedSyncJobId) {
+      await loadSyncJobDetails(selectedSyncJobId);
+    }
   }
 
   useEffect(() => {
     let isMounted = true;
 
     async function initialize() {
+      setIsLoading(true);
+
       try {
-        const [candidateReference, candidateData, syncJobData] = await fetchDashboardDataResources();
+        const [candidateReference, candidateData, syncJobData] = await Promise.all([
+          fetchReferenceData(),
+          fetchCandidates(initialCandidateFilters),
+          fetchSyncJobs(initialSyncFilters),
+        ]);
 
         if (!isMounted) {
           return;
@@ -489,7 +674,9 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
 
         setReferenceData(candidateReference);
         setCandidates(candidateData.items);
+        setCandidatePagination({ page: candidateData.page, pageSize: candidateData.pageSize, total: candidateData.total });
         setSyncJobs(syncJobData.items);
+        setSyncPagination({ page: syncJobData.page, pageSize: syncJobData.pageSize, total: syncJobData.total });
 
         if (candidateReference.programs[0]) {
           setCandidateForm((current) => (current.programId ? current : { ...current, programId: candidateReference.programs[0].programId }));
@@ -503,11 +690,9 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
           setImportForm((current) => (current.centerId ? current : { ...current, centerId: candidateReference.trainingCenters[0].centerId }));
         }
       } catch (error) {
-        if (!isMounted) {
-          return;
+        if (isMounted) {
+          setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to load candidate operations data");
         }
-
-        setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to load candidate operations data");
       } finally {
         if (isMounted) {
           setIsLoading(false);
@@ -522,12 +707,82 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
     };
   }, []);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    async function refreshLists() {
+      if (!referenceData) {
+        return;
+      }
+
+      setIsLoading(true);
+
+      try {
+        const [candidateData, syncJobData] = await Promise.all([fetchCandidates(candidateFilters), fetchSyncJobs(syncFilters)]);
+
+        if (!isMounted) {
+          return;
+        }
+
+        setCandidates(candidateData.items);
+        setCandidatePagination({ page: candidateData.page, pageSize: candidateData.pageSize, total: candidateData.total });
+        setSyncJobs(syncJobData.items);
+        setSyncPagination({ page: syncJobData.page, pageSize: syncJobData.pageSize, total: syncJobData.total });
+      } catch (error) {
+        if (isMounted) {
+          setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to refresh candidate operations data");
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    void refreshLists();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [referenceData, candidateFilters, syncFilters]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function refreshImportRows() {
+      if (!currentImportJob) {
+        return;
+      }
+
+      try {
+        const rowData = await fetchImportRows(currentImportJob.importJobId, importPagination.page, importPagination.pageSize);
+
+        if (!isMounted) {
+          return;
+        }
+
+        setImportRows(rowData.items);
+        setImportPagination({ page: rowData.page, pageSize: rowData.pageSize, total: rowData.total });
+      } catch (error) {
+        if (isMounted) {
+          setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to load import row review");
+        }
+      }
+    }
+
+    void refreshImportRows();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentImportJob, importPagination.page, importPagination.pageSize]);
+
   function clearCandidateForm() {
     setSelectedCandidateId(null);
     setCandidateForm((current) => ({
       ...emptyCandidateForm,
-      programId: current.programId,
       centerId: current.centerId,
+      programId: current.programId,
     }));
   }
 
@@ -542,19 +797,19 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
 
       if (selectedCandidate) {
         await apiFetch<CandidateRecord>(`/api/v1/candidates/${selectedCandidate.candidateId}`, {
-          method: "PATCH",
           body: JSON.stringify(payload),
+          method: "PATCH",
         });
       } else {
         await apiFetch<CandidateRecord>("/api/v1/candidates", {
-          method: "POST",
           body: JSON.stringify(payload),
+          method: "POST",
         });
       }
 
       clearCandidateForm();
       setSuccessMessage(selectedCandidate ? "Candidate updated successfully" : "Candidate created successfully");
-      await loadDashboardData();
+      await refreshVisibleData();
     } catch (error) {
       setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to save candidate");
     } finally {
@@ -570,13 +825,13 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
 
     try {
       await apiFetch<CandidateRecord>("/api/v1/candidates/link-existing-sidh", {
-        method: "POST",
         body: JSON.stringify(linkForm),
+        method: "POST",
       });
 
       setLinkForm((current) => ({ ...emptyLinkForm, centerId: current.centerId, programId: current.programId }));
       setSuccessMessage("Existing SIDH candidate linked successfully");
-      await loadDashboardData();
+      await refreshVisibleData();
     } catch (error) {
       setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to link existing SIDH candidate");
     } finally {
@@ -593,7 +848,8 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
     try {
       const importJob = await uploadCandidateImport(importForm);
       setCurrentImportJob(importJob);
-      await loadImportRows(importJob.importJobId);
+      setImportPagination((current) => ({ ...current, page: 1 }));
+      setExpandedImportRowId(null);
       setSuccessMessage("Candidate import staged successfully");
     } catch (error) {
       setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to stage candidate import");
@@ -616,8 +872,8 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
         method: "POST",
       });
       setCurrentImportJob(committedJob);
-      await Promise.all([loadImportRows(committedJob.importJobId), loadDashboardData()]);
       setSuccessMessage("Candidate import committed and sync jobs queued for valid rows");
+      await refreshVisibleData();
     } catch (error) {
       setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to commit candidate import");
     } finally {
@@ -634,7 +890,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
         method: "POST",
       });
       setSuccessMessage("Candidate sync queued successfully");
-      await loadDashboardData();
+      await refreshVisibleData();
     } catch (error) {
       setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to queue candidate sync");
     }
@@ -649,9 +905,33 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
         method: "POST",
       });
       setSuccessMessage("Sync job re-queued successfully");
-      await loadDashboardData();
+      await refreshVisibleData();
     } catch (error) {
       setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to retry sync job");
+    }
+  }
+
+  async function handleProcessQueuedSyncJobs() {
+    setIsProcessingSyncJobs(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    try {
+      const result = await apiFetch<ProcessSyncJobsResult>("/api/v1/sync/jobs/process", {
+        body: JSON.stringify({ limit: Number(processLimit) || 5 }),
+        method: "POST",
+      });
+
+      setSuccessMessage(
+        result.processedCount === 0
+          ? "No queued sync jobs were ready to process"
+          : `Processed ${result.processedCount} jobs: ${result.succeededCount} succeeded, ${result.retryScheduledCount} re-queued, ${result.manualReviewCount} manual review, ${result.deadLetterCount} dead letter`,
+      );
+      await refreshVisibleData();
+    } catch (error) {
+      setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to process queued sync jobs");
+    } finally {
+      setIsProcessingSyncJobs(false);
     }
   }
 
@@ -666,10 +946,10 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
           </div>
           <button
             type="button"
-            onClick={() => startTransition(() => void loadDashboardData())}
+            onClick={() => startTransition(() => void refreshVisibleData())}
             className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:border-sky-300 hover:text-sky-700"
           >
-            <RefreshCw className="h-4 w-4" /> Refresh
+            <RefreshCw className="h-4 w-4" /> Refresh visible data
           </button>
         </div>
       </section>
@@ -678,12 +958,12 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
       {successMessage ? <MessageCard tone="success" message={successMessage} /> : null}
 
       <section className="grid gap-4 md:grid-cols-3">
-        <MetricCard icon={<Users className="h-5 w-5" />} label="Candidates in view" value={candidates.length} />
+        <MetricCard icon={<Users className="h-5 w-5" />} label="Candidates in scope" value={candidatePagination.total} />
         <MetricCard icon={<Send className="h-5 w-5" />} label="Queued or processing" value={queuedJobs} />
-        <MetricCard icon={<RotateCcw className="h-5 w-5" />} label="Failed or manual review" value={flaggedJobs} />
+        <MetricCard icon={<RotateCcw className="h-5 w-5" />} label="Flagged jobs" value={flaggedJobs} />
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+      <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex items-center gap-3">
             <span className="rounded-2xl bg-sky-50 p-2 text-sky-600">
@@ -691,7 +971,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
             </span>
             <div>
               <h2 className="text-lg font-semibold text-slate-900">{selectedCandidate ? "Edit Candidate" : "Create Candidate"}</h2>
-              <p className="text-sm text-slate-500">Backed by GET, POST, PATCH, and POST sync endpoints under /api/v1/candidates</p>
+              <p className="text-sm text-slate-500">Backed by GET, POST, PATCH, and queue-sync endpoints under /api/v1/candidates</p>
             </div>
           </div>
 
@@ -827,40 +1107,98 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
         </div>
 
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-slate-900">Candidate list</h2>
-              <p className="text-sm text-slate-500">Latest created candidates in your visible scope</p>
+              <p className="text-sm text-slate-500">Search, filter, and page through candidate records in your visible scope</p>
             </div>
             {isLoading ? <LoaderCircle className="h-5 w-5 animate-spin text-slate-400" /> : null}
           </div>
 
+          <div className="mt-5 grid gap-3 md:grid-cols-2">
+            <InlineField icon={<Search className="h-4 w-4" />} label="Search">
+              <input value={candidateFilters.search} onChange={(event) => setCandidateFilters((current) => ({ ...current, page: 1, search: event.target.value }))} className={inputClassName} placeholder="Name, mobile, SIDH ID, or candidate ID" />
+            </InlineField>
+            <InlineField icon={<Filter className="h-4 w-4" />} label="Registration mode">
+              <select value={candidateFilters.registrationMode} onChange={(event) => setCandidateFilters((current) => ({ ...current, page: 1, registrationMode: event.target.value }))} className={inputClassName}>
+                <option value="">All modes</option>
+                <option value="internal_registration">Internal registration</option>
+                <option value="existing_sidh_link">Existing SIDH link</option>
+              </select>
+            </InlineField>
+            <InlineField label="Program">
+              <select value={candidateFilters.programId} onChange={(event) => setCandidateFilters((current) => ({ ...current, page: 1, programId: event.target.value }))} className={inputClassName}>
+                <option value="">All programs</option>
+                {(referenceData?.programs ?? []).map((program) => (
+                  <option key={program.programId} value={program.programId}>{program.name}</option>
+                ))}
+              </select>
+            </InlineField>
+            <InlineField label="Center">
+              <select value={candidateFilters.centerId} onChange={(event) => setCandidateFilters((current) => ({ ...current, page: 1, centerId: event.target.value }))} className={inputClassName}>
+                <option value="">All centers</option>
+                {(referenceData?.trainingCenters ?? []).map((center) => (
+                  <option key={center.centerId} value={center.centerId}>{center.centerName}</option>
+                ))}
+              </select>
+            </InlineField>
+            <InlineField label="Sync status">
+              <select value={candidateFilters.syncStatus} onChange={(event) => setCandidateFilters((current) => ({ ...current, page: 1, syncStatus: event.target.value }))} className={inputClassName}>
+                <option value="">All statuses</option>
+                {candidateSyncStatusOptions.map((status) => (
+                  <option key={status} value={status}>{status}</option>
+                ))}
+              </select>
+            </InlineField>
+            <InlineField label="Page size">
+              <select value={candidateFilters.pageSize} onChange={(event) => setCandidateFilters((current) => ({ ...current, page: 1, pageSize: Number(event.target.value) }))} className={inputClassName}>
+                {pageSizeOptions.map((size) => (
+                  <option key={size} value={size}>{size} rows</option>
+                ))}
+              </select>
+            </InlineField>
+          </div>
+
           <div className="mt-6 space-y-3">
             {candidates.length === 0 ? (
-              <EmptyState message={isLoading ? "Loading candidate records..." : "No candidates available yet."} />
+              <EmptyState message={isLoading ? "Loading candidate records..." : "No candidates match the current filters."} />
             ) : (
               candidates.map((candidate) => (
                 <div key={candidate.candidateId} className={`rounded-2xl border p-4 ${selectedCandidateId === candidate.candidateId ? "border-sky-300 bg-sky-50" : "border-slate-200 bg-slate-50"}`}>
-                  <button type="button" className="w-full text-left" onClick={() => {
-                    setSelectedCandidateId(candidate.candidateId);
-                    setCandidateForm(candidateToForm(candidate));
-                  }}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-semibold text-slate-900">{candidate.personalDetails.fullName}</div>
-                        <div className="mt-1 text-sm text-slate-600">{candidate.contactDetails.mobileNumber} • {candidate.programId}</div>
+                  <div className="flex items-start justify-between gap-3">
+                    <button
+                      type="button"
+                      className="flex-1 text-left"
+                      onClick={() => {
+                        setSelectedCandidateId(candidate.candidateId);
+                        setCandidateForm(candidateToForm(candidate));
+                      }}
+                    >
+                      <div className="text-sm font-semibold text-slate-900">{candidate.personalDetails.fullName}</div>
+                      <div className="mt-1 text-sm text-slate-600">{candidate.contactDetails.mobileNumber} • {candidate.programId}</div>
+                      <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+                        <span>Center {candidate.centerId}</span>
+                        <span>Mode {candidate.registrationMode}</span>
+                        {candidate.sidhCandidateId ? <span>SIDH {candidate.sidhCandidateId}</span> : null}
                       </div>
-                      <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-700">{candidate.syncState?.status ?? "not_queued"}</span>
-                    </div>
-                  </button>
+                    </button>
+                    <StatusPill status={candidate.syncState?.status ?? "not_queued"} />
+                  </div>
                   <div className="mt-4 flex flex-wrap gap-2">
                     <button type="button" onClick={() => void handleQueueSync(candidate.candidateId)} disabled={candidate.registrationMode === "existing_sidh_link"} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
                       <Send className="h-3.5 w-3.5" /> Queue sync
                     </button>
+                    {candidate.syncState?.lastFailureMessage ? (
+                      <div className="rounded-2xl bg-rose-50 px-3 py-2 text-xs text-rose-700">Last issue: {candidate.syncState.lastFailureMessage}</div>
+                    ) : null}
                   </div>
                 </div>
               ))
             )}
+          </div>
+
+          <div className="mt-5">
+            <PaginationControls page={candidatePagination.page} pageSize={candidatePagination.pageSize} total={candidatePagination.total} onPageChange={(page) => setCandidateFilters((current) => ({ ...current, page }))} />
           </div>
         </div>
       </section>
@@ -978,9 +1316,20 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
 
         <div className="space-y-6">
           <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div>
-              <h2 className="text-lg font-semibold text-slate-900">Import Row Review</h2>
-              <p className="text-sm text-slate-500">Backed by GET /api/v1/candidates/imports/{'{jobId}'}/rows</p>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Import Row Review</h2>
+                <p className="text-sm text-slate-500">Inspect row-level validation, duplicate signals, and the normalized payload ready for commit</p>
+              </div>
+              {currentImportJob ? (
+                <div className="w-full sm:w-44">
+                  <select value={importPagination.pageSize} onChange={(event) => setImportPagination((current) => ({ ...current, page: 1, pageSize: Number(event.target.value) }))} className={inputClassName}>
+                    {pageSizeOptions.map((size) => (
+                      <option key={size} value={size}>{size} rows</option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
             </div>
             <div className="mt-6 space-y-3">
               {importRows.length === 0 ? (
@@ -991,9 +1340,15 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <div className="text-sm font-semibold text-slate-900">Row {row.rowNumber}</div>
-                        <div className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-400">{row.status}</div>
+                        <div className="mt-1 flex flex-wrap gap-2 text-xs uppercase tracking-[0.16em] text-slate-400">
+                          <span>{row.status}</span>
+                          {row.duplicateOfCandidateId ? <span>Duplicate of {row.duplicateOfCandidateId}</span> : null}
+                          {row.candidateId ? <span>Candidate {row.candidateId}</span> : null}
+                        </div>
                       </div>
-                      {row.candidateId ? <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-700">{row.candidateId}</span> : null}
+                      <button type="button" onClick={() => setExpandedImportRowId((current) => (current === row.rowId ? null : row.rowId))} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700">
+                        <Eye className="h-3.5 w-3.5" /> {expandedImportRowId === row.rowId ? "Hide row payload" : "Show row payload"}
+                      </button>
                     </div>
                     {row.errors.length > 0 ? (
                       <div className="mt-3 space-y-2 text-sm text-rose-700">
@@ -1004,39 +1359,171 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                     ) : (
                       <div className="mt-3 text-sm text-slate-600">Row is ready for commit.</div>
                     )}
+                    {expandedImportRowId === row.rowId ? <JsonPanel className="mt-4" title="Normalized row payload" value={row.normalized} /> : null}
                   </div>
                 ))
               )}
             </div>
+            {currentImportJob ? (
+              <div className="mt-5">
+                <PaginationControls page={importPagination.page} pageSize={importPagination.pageSize} total={importPagination.total} onPageChange={(page) => setImportPagination((current) => ({ ...current, page }))} />
+              </div>
+            ) : null}
           </div>
 
           <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div>
-              <h2 className="text-lg font-semibold text-slate-900">Sync Queue</h2>
-              <p className="text-sm text-slate-500">Backed by GET /api/v1/sync/jobs and POST /api/v1/sync/jobs/{'{jobId}'}/retry</p>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Sync Queue</h2>
+                <p className="text-sm text-slate-500">Filter queue state, process queued jobs, retry individual jobs, and inspect attempts plus transaction history</p>
+              </div>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <select value={syncFilters.status} onChange={(event) => setSyncFilters((current) => ({ ...current, page: 1, status: event.target.value }))} className="h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition-colors focus:border-sky-300">
+                  <option value="">All sync statuses</option>
+                  {syncJobStatusOptions.map((status) => (
+                    <option key={status} value={status}>{status}</option>
+                  ))}
+                </select>
+                <select value={syncFilters.pageSize} onChange={(event) => setSyncFilters((current) => ({ ...current, page: 1, pageSize: Number(event.target.value) }))} className="h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition-colors focus:border-sky-300">
+                  {pageSizeOptions.map((size) => (
+                    <option key={size} value={size}>{size} rows</option>
+                  ))}
+                </select>
+              </div>
             </div>
-            <div className="mt-6 space-y-3">
-              {syncJobs.length === 0 ? (
-                <EmptyState message={isLoading ? "Loading sync jobs..." : "No sync jobs available yet."} />
-              ) : (
-                syncJobs.map((job) => (
-                  <div key={job.syncJobId} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-semibold text-slate-900">{job.syncJobId}</div>
-                        <div className="mt-1 text-sm text-slate-600">Candidate {job.candidateId}</div>
+
+            <div className="mt-5 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-sm font-semibold text-slate-900">Process queued sync jobs</div>
+                <div className="mt-1 text-sm text-slate-500">Server-side worker execution: POST /api/v1/sync/jobs/process</div>
+              </div>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <select value={processLimit} onChange={(event) => setProcessLimit(event.target.value)} className="h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition-colors focus:border-sky-300">
+                  {[1, 5, 10, 25].map((limit) => (
+                    <option key={limit} value={limit}>{limit} jobs</option>
+                  ))}
+                </select>
+                <button type="button" onClick={() => void handleProcessQueuedSyncJobs()} disabled={isProcessingSyncJobs} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
+                  {isProcessingSyncJobs ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />} Process queued jobs
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-6 grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+              <div className="space-y-3">
+                {syncJobs.length === 0 ? (
+                  <EmptyState message={isLoading ? "Loading sync jobs..." : "No sync jobs match the current filters."} />
+                ) : (
+                  syncJobs.map((job) => (
+                    <div key={job.syncJobId} className={`rounded-2xl border p-4 ${selectedSyncJobId === job.syncJobId ? "border-sky-300 bg-sky-50" : "border-slate-200 bg-slate-50"}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold text-slate-900">{job.syncJobId}</div>
+                          <div className="mt-1 text-sm text-slate-600">Candidate {job.candidateId}</div>
+                          <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+                            <span>Retries {job.retryCount}</span>
+                            {job.nextRunAt ? <span>Next run {formatDateTime(job.nextRunAt)}</span> : null}
+                            {job.latestRemoteCandidateId ? <span>SIDH {job.latestRemoteCandidateId}</span> : null}
+                          </div>
+                        </div>
+                        <StatusPill status={job.status} />
                       </div>
-                      <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-700">{job.status}</span>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <button type="button" onClick={() => void loadSyncJobDetails(job.syncJobId)} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700">
+                          <Workflow className="h-3.5 w-3.5" /> Inspect history
+                        </button>
+                        <button type="button" onClick={() => void handleRetrySyncJob(job.syncJobId)} disabled={job.status === "processing"} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+                          <RotateCcw className="h-3.5 w-3.5" /> Retry job
+                        </button>
+                      </div>
                     </div>
-                    <div className="mt-3 text-sm text-slate-600">Retries: {job.retryCount} {job.latestRemoteCandidateId ? `• SIDH ${job.latestRemoteCandidateId}` : ""}</div>
-                    <div className="mt-4">
-                      <button type="button" onClick={() => void handleRetrySyncJob(job.syncJobId)} disabled={job.status === "processing"} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
-                        <RotateCcw className="h-3.5 w-3.5" /> Retry job
-                      </button>
-                    </div>
+                  ))
+                )}
+                <PaginationControls page={syncPagination.page} pageSize={syncPagination.pageSize} total={syncPagination.total} onPageChange={(page) => setSyncFilters((current) => ({ ...current, page }))} />
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900">Sync job detail</div>
+                    <div className="mt-1 text-sm text-slate-500">Attempts, transaction history, and the payload snapshot used by the worker</div>
                   </div>
-                ))
-              )}
+                  {isLoadingSyncDetail ? <LoaderCircle className="h-5 w-5 animate-spin text-slate-400" /> : null}
+                </div>
+
+                {!selectedSyncJob ? (
+                  <EmptyState message="Select a sync job to inspect attempts and SIDH transaction history." />
+                ) : (
+                  <div className="mt-5 space-y-5">
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold text-slate-900">{selectedSyncJob.syncJobId}</div>
+                          <div className="mt-1 text-sm text-slate-600">Candidate {selectedSyncJob.candidateId}</div>
+                        </div>
+                        <StatusPill status={selectedSyncJob.status} />
+                      </div>
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        <DetailMeta label="Created" value={formatDateTime(selectedSyncJob.createdAt)} />
+                        <DetailMeta label="Updated" value={formatDateTime(selectedSyncJob.updatedAt)} />
+                        <DetailMeta label="Retry count" value={String(selectedSyncJob.retryCount)} />
+                        <DetailMeta label="Latest SIDH candidate" value={selectedSyncJob.latestRemoteCandidateId ?? "Not available"} />
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="text-sm font-semibold text-slate-900">Attempt history</div>
+                      <div className="mt-4 space-y-3">
+                        {selectedSyncJob.attempts.length === 0 ? (
+                          <EmptyState message="No attempts have been recorded yet." />
+                        ) : (
+                          selectedSyncJob.attempts.map((attempt, index) => (
+                            <div key={attempt.attemptId ?? `${selectedSyncJob.syncJobId}-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <div className="text-sm font-semibold text-slate-900">{attempt.attemptId ?? `Attempt ${index + 1}`}</div>
+                                  <div className="mt-1 text-xs text-slate-500">Started {formatDateTime(attempt.startedAt)} • Finished {formatDateTime(attempt.finishedAt)}</div>
+                                </div>
+                                <StatusPill status={attempt.status ?? "processing"} />
+                              </div>
+                              <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
+                                <span>Response code: {attempt.responseCode ?? "Not available"}</span>
+                                <span>Retryable: {attempt.retryable ? "Yes" : "No"}</span>
+                                <span>Failure code: {attempt.failureCode ?? "Not available"}</span>
+                                <span>Remote candidate: {attempt.remoteCandidateId ?? "Not available"}</span>
+                              </div>
+                              {attempt.failureMessage ? <div className="mt-3 rounded-2xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{attempt.failureMessage}</div> : null}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="text-sm font-semibold text-slate-900">SIDH transactions</div>
+                      <div className="mt-4 space-y-3">
+                        {(selectedSyncJob.transactions ?? []).length === 0 ? (
+                          <EmptyState message="No SIDH transaction logs are available for this job yet." />
+                        ) : (
+                          (selectedSyncJob.transactions ?? []).map((transaction) => (
+                            <div key={transaction.transactionId} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <div className="text-sm font-semibold text-slate-900">{transaction.operation}</div>
+                                  <div className="mt-1 text-xs text-slate-500">{transaction.endpoint} • {formatDateTime(transaction.createdAt)}</div>
+                                </div>
+                                <StatusPill status={transaction.success ? "succeeded" : "failed"} label={transaction.responseStatus ? `${transaction.responseStatus}` : transaction.success ? "ok" : "failed"} />
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    <JsonPanel title="Payload snapshot" value={selectedSyncJob.payloadSnapshot} />
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -1049,6 +1536,18 @@ function Field({ children, label }: { children: React.ReactNode; label: string }
   return (
     <label className="block space-y-2">
       <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function InlineField({ children, icon, label }: { children: React.ReactNode; icon?: React.ReactNode; label: string }) {
+  return (
+    <label className="block space-y-2">
+      <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+        {icon}
+        {label}
+      </span>
       {children}
     </label>
   );
@@ -1095,6 +1594,46 @@ function MessageCard({ message, tone }: { message: string; tone: "error" | "succ
   return (
     <div className={`rounded-2xl border px-4 py-3 text-sm ${tone === "error" ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
       {message}
+    </div>
+  );
+}
+
+function PaginationControls({ onPageChange, page, pageSize, total }: { onPageChange: (page: number) => void; page: number; pageSize: number; total: number }) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  return (
+    <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="text-sm text-slate-600">Page {page} of {totalPages} • {total} total records</div>
+      <div className="flex items-center gap-2">
+        <button type="button" onClick={() => onPageChange(Math.max(1, page - 1))} disabled={page <= 1} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+          <ChevronLeft className="h-4 w-4" /> Previous
+        </button>
+        <button type="button" onClick={() => onPageChange(Math.min(totalPages, page + 1))} disabled={page >= totalPages} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+          Next <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function StatusPill({ label, status }: { label?: string; status?: string | null }) {
+  return <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${getStatusPillClass(status)}`}>{label ?? status ?? "unknown"}</span>;
+}
+
+function DetailMeta({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</div>
+      <div className="mt-1 text-sm text-slate-700">{value}</div>
+    </div>
+  );
+}
+
+function JsonPanel({ className = "", title, value }: { className?: string; title: string; value: unknown }) {
+  return (
+    <div className={`rounded-2xl border border-slate-200 bg-white p-4 ${className}`.trim()}>
+      <div className="text-sm font-semibold text-slate-900">{title}</div>
+      <pre className="mt-3 overflow-x-auto rounded-2xl bg-slate-950 px-4 py-4 text-xs text-slate-100">{formatJson(value)}</pre>
     </div>
   );
 }

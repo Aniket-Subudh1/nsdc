@@ -34,9 +34,9 @@ export function getOpenApiDocument() {
     openapi: "3.0.3",
     info: {
       title: "NSDC Training Management Portal API",
-      version: "0.4.0",
+      version: "0.5.0",
       description:
-        "Sprint 01 foundation, Sprint 02 master-data modules, and Sprint 03 candidate intake, import staging, dedupe, sync queue, and OpenAPI delivery.",
+        "Sprint 01 foundation, Sprint 02 master-data modules, and Sprint 03 candidate intake, import staging, dedupe, sync queue, worker processing, and OpenAPI delivery.",
     },
     servers: [{ url: "/api/v1" }],
     tags: [
@@ -941,6 +941,59 @@ export function getOpenApiDocument() {
             updatedAt: { type: "string", nullable: true, format: "date-time" },
           },
         },
+        SyncJobTransaction: {
+          type: "object",
+          required: ["transactionId", "operation", "endpoint", "responseStatus", "success", "createdAt"],
+          properties: {
+            transactionId: { type: "string" },
+            operation: { type: "string" },
+            endpoint: { type: "string" },
+            responseStatus: { type: "integer", nullable: true },
+            success: { type: "boolean" },
+            createdAt: { type: "string", nullable: true, format: "date-time" },
+          },
+        },
+        SyncJobDetail: {
+          allOf: [
+            ref("SyncJob"),
+            {
+              type: "object",
+              required: ["transactions"],
+              properties: {
+                transactions: { type: "array", items: ref("SyncJobTransaction") },
+              },
+            },
+          ],
+        },
+        ProcessedSyncJob: {
+          type: "object",
+          required: ["syncJobId", "candidateId", "status", "message", "remoteCandidateId"],
+          properties: {
+            syncJobId: { type: "string" },
+            candidateId: { type: "string" },
+            status: { type: "string", enum: ["queued", "succeeded", "manual_review", "dead_letter"] },
+            message: { type: "string" },
+            remoteCandidateId: { type: "string", nullable: true },
+          },
+        },
+        ProcessSyncJobsRequest: {
+          type: "object",
+          properties: {
+            limit: { type: "integer", minimum: 1, maximum: 25, default: 5 },
+          },
+        },
+        ProcessSyncJobsResult: {
+          type: "object",
+          required: ["processedCount", "succeededCount", "retryScheduledCount", "manualReviewCount", "deadLetterCount", "jobs"],
+          properties: {
+            processedCount: { type: "integer", minimum: 0 },
+            succeededCount: { type: "integer", minimum: 0 },
+            retryScheduledCount: { type: "integer", minimum: 0 },
+            manualReviewCount: { type: "integer", minimum: 0 },
+            deadLetterCount: { type: "integer", minimum: 0 },
+            jobs: { type: "array", items: ref("ProcessedSyncJob") },
+          },
+        },
         SyncJobListData: {
           type: "object",
           required: ["items", "page", "pageSize", "total"],
@@ -1584,6 +1637,23 @@ export function getOpenApiDocument() {
           },
         },
       },
+      "/sync/jobs/process": {
+        post: {
+          tags: ["Sync Jobs"],
+          summary: "Process queued sync jobs",
+          security: [{ cookieAuth: [] }],
+          requestBody: {
+            required: false,
+            content: jsonContent(ref("ProcessSyncJobsRequest")),
+          },
+          responses: {
+            200: successResponse("Sync jobs processed", ref("ProcessSyncJobsResult")),
+            400: errorResponse("Validation failed"),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+          },
+        },
+      },
       "/sync/jobs/{jobId}": {
         get: {
           tags: ["Sync Jobs"],
@@ -1591,7 +1661,7 @@ export function getOpenApiDocument() {
           security: [{ cookieAuth: [] }],
           parameters: [{ $ref: "#/components/parameters/SyncJobId" }],
           responses: {
-            200: successResponse("Sync job loaded", ref("SyncJob")),
+            200: successResponse("Sync job loaded", ref("SyncJobDetail")),
             401: errorResponse("Authentication required"),
             403: errorResponse("Forbidden"),
             404: errorResponse("Sync job not found"),

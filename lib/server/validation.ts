@@ -480,9 +480,14 @@ export const syncJobsQuerySchema = paginationQuerySchema.extend({
   status: syncJobStatusSchema.optional(),
 });
 
+export const processSyncJobsSchema = z.object({
+  limit: z.coerce.number().int().positive().max(25).default(5),
+});
+
 export type CreateCandidateInput = z.infer<typeof createCandidateSchema>;
 export type UpdateCandidateInput = z.infer<typeof updateCandidateSchema>;
 export type LinkExistingSidhCandidateInput = z.infer<typeof linkExistingSidhCandidateSchema>;
 export type CandidateListQuery = z.infer<typeof candidateListQuerySchema>;
 export type CandidateImportInput = z.infer<typeof candidateImportSchema>;
 export type SyncJobsQuery = z.infer<typeof syncJobsQuerySchema>;
+export type ProcessSyncJobsInput = z.infer<typeof processSyncJobsSchema>;

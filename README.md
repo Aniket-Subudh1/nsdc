@@ -34,6 +34,11 @@ This repository now includes the Sprint 01 backend foundation on top of the exis
 - `/api/v1/health/ready`
 - `/api/v1/openapi`
 
+## API Documentation
+
+- Machine-readable OpenAPI JSON: `/api/v1/openapi`
+- Interactive Swagger UI: `/api-docs`
+
 ## Notes
 
 - Authentication uses an HttpOnly cookie plus persisted MongoDB sessions.

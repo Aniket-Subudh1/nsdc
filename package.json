@@ -24,11 +24,13 @@
     "nodemailer": "^7.0.13",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "swagger-ui-react": "^5.28.1",
     "tailwind-merge": "^3.6.0",
     "zod": "^4.1.12"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/swagger-ui-react": "^5.18.0",
     "@types/nodemailer": "^7.0.1",
     "@types/node": "^20",
     "@types/react": "^19",

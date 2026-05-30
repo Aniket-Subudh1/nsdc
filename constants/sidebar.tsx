@@ -45,6 +45,13 @@ export const ADMIN_SIDEBAR_LINKS = [
       ),
     },
     {
+      label: "Batches",
+      href: "/admin/batches",
+      icon: (
+        <IconStack2 className="h-5 w-5 shrink-0 text-neutral-700" />
+      ),
+    },
+    {
       label: "API Docs",
       href: "/api-docs",
       icon: (
@@ -94,6 +101,13 @@ export const TRAINING_PARTNER_SIDEBAR_LINKS = [
         href: "/training-partner/candidates",
         icon: (
             <IconUserPlus className="h-5 w-5 shrink-0 text-neutral-700" />
+          ),
+      },
+      {
+        label: "Batches",
+        href: "/training-partner/batches",
+        icon: (
+            <IconStack2 className="h-5 w-5 shrink-0 text-neutral-700" />
           ),
       },
       {

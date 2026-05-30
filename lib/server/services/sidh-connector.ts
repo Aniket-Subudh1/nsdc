@@ -21,9 +21,72 @@ export type CandidateRegistrationPayload = {
   tpId: string;
 };
 
+export type BatchCreationPayload = {
+  assessmentDate: string | null;
+  batchCode: string;
+  batchName: string;
+  batchReferenceId: string;
+  center: {
+    centerId: string;
+    centerName: string;
+    sidhTcId: string | null;
+  };
+  course: {
+    courseId: string;
+    courseName: string;
+    nsqfLevel: number;
+    qpCode: string;
+    sidhCourseId: string;
+    trainingHours: number;
+  };
+  dates: {
+    endDate: string | null;
+    startDate: string | null;
+  };
+  meta: {
+    candidateCount: number;
+    centerId: string;
+    courseId: string;
+    schemeId: string;
+  };
+  scheme: {
+    beneficiaryType: string | null;
+    fundingType: string | null;
+    schemeId: string;
+    schemeName: string;
+    sidhSchemeId: string | null;
+  };
+};
+
+export type EnrollmentPayload = {
+  batchId: string | null | undefined;
+  batchReferenceId: string;
+  candidateId: string | null | undefined;
+  candidateReferenceId: string;
+  enrollmentReferenceId: string;
+  meta: {
+    batchCode: string;
+    centerId: string;
+    courseId: string;
+    schemeId: string;
+  };
+};
+
 export type RegisterCandidateInput = {
   attemptId: string;
   payload: CandidateRegistrationPayload;
+  syncJobId: string;
+};
+
+export type CreateBatchInput = {
+  attemptId: string;
+  payload: BatchCreationPayload;
+  syncJobId: string;
+};
+
+export type EnrollCandidateInput = {
+  attemptId: string;
+  payload: EnrollmentPayload;
   syncJobId: string;
 };
 
@@ -33,9 +96,22 @@ export type RegisterCandidateResult = {
   responseStatus: number;
 };
 
+export type CreateBatchResult = {
+  remoteBatchId: string | null;
+  responseBody: unknown;
+  responseStatus: number;
+};
+
+export type EnrollCandidateResult = {
+  remoteEnrollmentId: string | null;
+  responseBody: unknown;
+  responseStatus: number;
+};
+
 export class SidhConnectorError extends Error {
   code: string;
   manualReview: boolean;
+  remoteBatchId: string | null;
   remoteCandidateId: string | null;
   responseBody: unknown;
   retryable: boolean;
@@ -45,6 +121,7 @@ export class SidhConnectorError extends Error {
     code: string;
     manualReview?: boolean;
     message: string;
+    remoteBatchId?: string | null;
     remoteCandidateId?: string | null;
     responseBody?: unknown;
     retryable?: boolean;
@@ -53,6 +130,7 @@ export class SidhConnectorError extends Error {
     super(input.message);
     this.code = input.code;
     this.manualReview = input.manualReview ?? false;
+    this.remoteBatchId = input.remoteBatchId ?? null;
     this.remoteCandidateId = input.remoteCandidateId ?? null;
     this.responseBody = input.responseBody ?? null;
     this.retryable = input.retryable ?? false;
@@ -231,6 +309,30 @@ export function extractRemoteCandidateId(payload: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+export function extractRemoteBatchId(payload: unknown) {
+  const value = extractJsonValue<string>(payload, [
+    "batchId",
+    "batchID",
+    "sidhBatchId",
+    "BatchId",
+    "BatchID",
+  ]);
+
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+export function extractRemoteEnrollmentId(payload: unknown) {
+  const value = extractJsonValue<string>(payload, [
+    "enrollmentId",
+    "enrollmentID",
+    "candidateBatchId",
+    "candidateBatchID",
+    "batchCandidateId",
+  ]);
+
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
 function encryptPassword(password: string, publicKey: string, secretKey: string) {
   const normalizedSecret = secretKey.trim();
 
@@ -276,6 +378,7 @@ async function logTransaction(input: {
 
 function classifyError(responseStatus: number, responseBody: unknown, fallbackMessage: string, operation?: string) {
   const remoteCandidateId = extractRemoteCandidateId(responseBody);
+  const remoteBatchId = extractRemoteBatchId(responseBody);
 
   if (responseStatus === 401) {
     return new SidhConnectorError({
@@ -304,8 +407,9 @@ function classifyError(responseStatus: number, responseBody: unknown, fallbackMe
   if (responseStatus === 409) {
     return new SidhConnectorError({
       code: "SIDH_CONFLICT",
-      manualReview: remoteCandidateId === null,
+      manualReview: remoteCandidateId === null && remoteBatchId === null,
       message: fallbackMessage,
+      remoteBatchId,
       remoteCandidateId,
       responseBody,
       status: responseStatus,
@@ -318,6 +422,16 @@ function classifyError(responseStatus: number, responseBody: unknown, fallbackMe
       message: fallbackMessage,
       responseBody,
       retryable: true,
+      status: responseStatus,
+    });
+  }
+
+  if (responseStatus === 406) {
+    return new SidhConnectorError({
+      code: "SIDH_REMOTE_BATCH_CANCELLED",
+      manualReview: true,
+      message: fallbackMessage,
+      responseBody,
       status: responseStatus,
     });
   }
@@ -547,6 +661,82 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
         ) {
           cachedSession = null;
           return executeRegistration(true);
+        }
+
+        throw error;
+      }
+    },
+
+    async createBatch(input: CreateBatchInput): Promise<CreateBatchResult> {
+      const runCreateBatch = async (session: ConnectorSession) => {
+        const response = await requestJson({
+          attemptId: input.attemptId,
+          body: input.payload,
+          operation: "batch.create",
+          path: "/api/tpApi/tp/v1/batch/create",
+          session,
+          syncJobId: input.syncJobId,
+        });
+
+        return {
+          remoteBatchId: extractRemoteBatchId(response.payload),
+          responseBody: response.payload,
+          responseStatus: response.status,
+        } satisfies CreateBatchResult;
+      };
+
+      const executeCreateBatch = async (forceRefresh = false) => {
+        const session = await ensureSession(input.syncJobId, input.attemptId, forceRefresh);
+        return runCreateBatch(session);
+      };
+
+      try {
+        return await executeCreateBatch();
+      } catch (error) {
+        if (
+          error instanceof SidhConnectorError &&
+          (error.status === 401 || error.status === 412 || error.code === "SIDH_AUTH_FAILED")
+        ) {
+          cachedSession = null;
+          return executeCreateBatch(true);
+        }
+
+        throw error;
+      }
+    },
+
+    async enrollCandidate(input: EnrollCandidateInput): Promise<EnrollCandidateResult> {
+      const runEnrollment = async (session: ConnectorSession) => {
+        const response = await requestJson({
+          attemptId: input.attemptId,
+          body: input.payload,
+          operation: "batch.enroll_candidate",
+          path: "/api/tpApi/tp/v1/batch/enrollment",
+          session,
+          syncJobId: input.syncJobId,
+        });
+
+        return {
+          remoteEnrollmentId: extractRemoteEnrollmentId(response.payload),
+          responseBody: response.payload,
+          responseStatus: response.status,
+        } satisfies EnrollCandidateResult;
+      };
+
+      const executeEnrollment = async (forceRefresh = false) => {
+        const session = await ensureSession(input.syncJobId, input.attemptId, forceRefresh);
+        return runEnrollment(session);
+      };
+
+      try {
+        return await executeEnrollment();
+      } catch (error) {
+        if (
+          error instanceof SidhConnectorError &&
+          (error.status === 401 || error.status === 412 || error.code === "SIDH_AUTH_FAILED")
+        ) {
+          cachedSession = null;
+          return executeEnrollment(true);
         }
 
         throw error;

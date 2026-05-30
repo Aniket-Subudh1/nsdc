@@ -254,6 +254,11 @@ const pinCodeSchema = z.string().trim().regex(/^\d{6}$/, "PIN code must be a 6 d
 const registrationModeSchema = z.enum(["internal_registration", "existing_sidh_link"]);
 const candidateSyncStatusSchema = z.enum(["not_queued", "queued", "processing", "synced", "failed", "manual_review", "linked"]);
 const syncJobStatusSchema = z.enum(["queued", "processing", "succeeded", "failed", "manual_review", "dead_letter"]);
+const batchStatusSchema = z.enum(["draft", "ready", "active", "completed", "cancelled"]);
+const batchSyncStatusSchema = z.enum(["not_synced", "queued", "processing", "synced", "failed", "manual_review", "cancelled"]);
+const attendanceUploadStatusSchema = z.enum(["staged", "validated", "committed", "failed"]);
+const attendanceStatusSchema = z.enum(["present", "absent"]);
+const candidateTrainingStatusSchema = z.enum(["ongoing", "completed", "dropout"]);
 const yesNoSchema = z.enum(["Yes", "No"]).optional().or(z.literal(""));
 const nullableTrimmedStringSchema = z.string().trim().optional().or(z.literal(""));
 
@@ -484,6 +489,142 @@ export const processSyncJobsSchema = z.object({
   limit: z.coerce.number().int().positive().max(25).default(5),
 });
 
+const batchCandidateIdsSchema = z
+  .array(z.string().trim().min(1))
+  .max(80, "Batch size must never exceed 80 candidates")
+  .superRefine((value, ctx) => {
+    const seen = new Set<string>();
+
+    value.forEach((candidateId, index) => {
+      const normalized = candidateId.trim();
+
+      if (seen.has(normalized)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Candidate can only be added to a batch once",
+          path: [index],
+        });
+      }
+
+      seen.add(normalized);
+    });
+  });
+
+export const createBatchSchema = z
+  .object({
+    batchCode: z.string().trim().min(2).max(80),
+    batchName: z.string().trim().min(2).max(160).optional().or(z.literal("")),
+    courseId: z.string().trim().min(1),
+    schemeId: z.string().trim().min(1),
+    centerId: z.string().trim().min(1),
+    startDate: z.string().date(),
+    endDate: z.string().date(),
+    assessmentDate: z.string().date().optional(),
+    status: batchStatusSchema.default("draft"),
+    syncEnabled: z.boolean().default(true),
+    allowAssessmentBeforeBatchEnd: z.boolean().default(false),
+    allowCandidateOverlap: z.boolean().default(false),
+    assessmentEligibilityThreshold: z.coerce.number().int().min(0).max(100).default(70),
+    candidateIds: batchCandidateIdsSchema.default([]),
+  })
+  .superRefine((value, ctx) => {
+    if (value.endDate < value.startDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Batch start date must be before end date",
+        path: ["endDate"],
+      });
+    }
+
+    if (value.assessmentDate && !value.allowAssessmentBeforeBatchEnd && value.assessmentDate < value.endDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Assessment date cannot be before batch end date unless explicitly configured",
+        path: ["assessmentDate"],
+      });
+    }
+  });
+
+export const updateBatchSchema = z
+  .object({
+    batchCode: z.string().trim().min(2).max(80).optional(),
+    batchName: z.string().trim().min(2).max(160).optional().or(z.literal("")),
+    courseId: z.string().trim().min(1).optional(),
+    schemeId: z.string().trim().min(1).optional(),
+    centerId: z.string().trim().min(1).optional(),
+    startDate: z.string().date().optional(),
+    endDate: z.string().date().optional(),
+    assessmentDate: z.string().date().optional(),
+    status: batchStatusSchema.optional(),
+    syncEnabled: z.boolean().optional(),
+    allowAssessmentBeforeBatchEnd: z.boolean().optional(),
+    allowCandidateOverlap: z.boolean().optional(),
+    assessmentEligibilityThreshold: z.coerce.number().int().min(0).max(100).optional(),
+  })
+  .refine((value) => Object.values(value).some((entry) => entry !== undefined), {
+    message: "At least one field is required",
+  })
+  .superRefine((value, ctx) => {
+    if (value.startDate && value.endDate && value.endDate < value.startDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Batch start date must be before end date",
+        path: ["endDate"],
+      });
+    }
+
+    if (
+      value.assessmentDate &&
+      value.endDate &&
+      value.allowAssessmentBeforeBatchEnd !== true &&
+      value.assessmentDate < value.endDate
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Assessment date cannot be before batch end date unless explicitly configured",
+        path: ["assessmentDate"],
+      });
+    }
+  });
+
+export const batchListQuerySchema = paginationQuerySchema.extend({
+  search: z.string().trim().optional(),
+  courseId: z.string().trim().optional(),
+  schemeId: z.string().trim().optional(),
+  centerId: z.string().trim().optional(),
+  status: batchStatusSchema.optional(),
+  syncStatus: batchSyncStatusSchema.optional(),
+  syncEnabled: optionalQueryBooleanSchema,
+});
+
+export const addCandidatesToBatchSchema = z.object({
+  candidateIds: z.array(z.string().trim().min(1)).min(1).max(80),
+});
+
+export const batchSyncRequestSchema = z.object({
+  forceResync: z.boolean().default(false),
+});
+
+export const enrollmentSyncRequestSchema = z.object({
+  candidateIds: z.array(z.string().trim().min(1)).optional(),
+  forceResync: z.boolean().default(false),
+});
+
+export const attendanceImportFormSchema = z.object({
+  batchId: z.string().trim().min(1),
+});
+
+export const attendanceImportRowSchema = z.object({
+  candidateId: z.string().trim().min(1),
+  attendanceDate: z.string().date(),
+  attendanceStatus: attendanceStatusSchema,
+  trainingStatus: candidateTrainingStatusSchema.optional(),
+});
+
+export const attendanceCommitSchema = z.object({
+  overwriteExisting: z.boolean().default(false),
+});
+
 export type CreateCandidateInput = z.infer<typeof createCandidateSchema>;
 export type UpdateCandidateInput = z.infer<typeof updateCandidateSchema>;
 export type LinkExistingSidhCandidateInput = z.infer<typeof linkExistingSidhCandidateSchema>;
@@ -491,3 +632,17 @@ export type CandidateListQuery = z.infer<typeof candidateListQuerySchema>;
 export type CandidateImportInput = z.infer<typeof candidateImportSchema>;
 export type SyncJobsQuery = z.infer<typeof syncJobsQuerySchema>;
 export type ProcessSyncJobsInput = z.infer<typeof processSyncJobsSchema>;
+export type BatchStatus = z.infer<typeof batchStatusSchema>;
+export type BatchSyncStatus = z.infer<typeof batchSyncStatusSchema>;
+export type AttendanceUploadStatus = z.infer<typeof attendanceUploadStatusSchema>;
+export type AttendanceStatus = z.infer<typeof attendanceStatusSchema>;
+export type CandidateTrainingStatus = z.infer<typeof candidateTrainingStatusSchema>;
+export type CreateBatchInput = z.infer<typeof createBatchSchema>;
+export type UpdateBatchInput = z.infer<typeof updateBatchSchema>;
+export type BatchListQuery = z.infer<typeof batchListQuerySchema>;
+export type AddCandidatesToBatchInput = z.infer<typeof addCandidatesToBatchSchema>;
+export type BatchSyncRequestInput = z.infer<typeof batchSyncRequestSchema>;
+export type EnrollmentSyncRequestInput = z.infer<typeof enrollmentSyncRequestSchema>;
+export type AttendanceImportFormInput = z.infer<typeof attendanceImportFormSchema>;
+export type AttendanceImportRowInput = z.infer<typeof attendanceImportRowSchema>;
+export type AttendanceCommitInput = z.infer<typeof attendanceCommitSchema>;

@@ -22,6 +22,11 @@ export const PERMISSIONS = [
   "centers:write",
   "candidates:read",
   "candidates:write",
+  "batches:read",
+  "batches:write",
+  "batches:sync",
+  "attendance:read",
+  "attendance:write",
   "sync:read",
   "sync:write",
   "reference-data:read",
@@ -46,6 +51,11 @@ export const ROLE_PERMISSIONS: Record<RoleKey, PermissionKey[]> = {
     "centers:write",
     "candidates:read",
     "candidates:write",
+    "batches:read",
+    "batches:write",
+    "batches:sync",
+    "attendance:read",
+    "attendance:write",
     "sync:read",
     "sync:write",
     "reference-data:read",
@@ -59,6 +69,15 @@ export const ROLE_PERMISSIONS: Record<RoleKey, PermissionKey[]> = {
     "centers:read",
     "candidates:read",
     "candidates:write",
+    "batches:read",
+    "batches:write",
+    "batches:sync",
+    "attendance:read",
+    "attendance:write",
+    "batches:read",
+    "batches:write",
+    "attendance:read",
+    "attendance:write",
     "sync:read",
     "reference-data:read",
   ],
@@ -70,6 +89,10 @@ export const ROLE_PERMISSIONS: Record<RoleKey, PermissionKey[]> = {
     "centers:read",
     "candidates:read",
     "candidates:write",
+    "batches:read",
+    "batches:write",
+    "attendance:read",
+    "attendance:write",
     "reference-data:read",
   ],
   auditor_viewer: [
@@ -80,6 +103,8 @@ export const ROLE_PERMISSIONS: Record<RoleKey, PermissionKey[]> = {
     "masters:read",
     "centers:read",
     "candidates:read",
+    "batches:read",
+    "attendance:read",
     "sync:read",
     "reference-data:read",
     "audit:read",
@@ -134,6 +159,18 @@ export function canManageCandidates(actorRoles: RoleKey[]) {
   return hasAnyRole(actorRoles, ["platform_admin", "training_partner_admin", "center_manager", "trainer_data_entry"]);
 }
 
+export function canManageBatches(actorRoles: RoleKey[]) {
+  return hasAnyRole(actorRoles, ["platform_admin", "training_partner_admin", "center_manager", "trainer_data_entry"]);
+}
+
+export function canManageAttendance(actorRoles: RoleKey[]) {
+  return hasAnyRole(actorRoles, ["platform_admin", "training_partner_admin", "center_manager", "trainer_data_entry"]);
+}
+
 export function canManageSync(actorRoles: RoleKey[]) {
+  return hasAnyRole(actorRoles, ["platform_admin", "training_partner_admin"]);
+}
+
+export function canManageBatchSync(actorRoles: RoleKey[]) {
   return hasAnyRole(actorRoles, ["platform_admin", "training_partner_admin"]);
 }

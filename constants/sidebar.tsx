@@ -1,8 +1,9 @@
 import {
   IconArrowLeft,
   IconBrandTabler,
-  IconSettings,
-  IconUserBolt,
+  IconBuildingCommunity,
+  IconCode,
+  IconUsers,
 } from "@tabler/icons-react";
 
 export const ADMIN_SIDEBAR_LINKS = [
@@ -14,17 +15,24 @@ export const ADMIN_SIDEBAR_LINKS = [
           ),
   },
   {
-    label: "Profile",
-    href: "/admin/profile",
+      label: "Users",
+      href: "/admin/users",
     icon: (
-            <IconUserBolt className="h-5 w-5 shrink-0 text-neutral-700" />
+        <IconUsers className="h-5 w-5 shrink-0 text-neutral-700" />
           ),
   },
   {
-    label: "Settings",
-    href: "/admin/settings",
+      label: "Training Centers",
+      href: "/admin/training-centers",
     icon: (
-            <IconSettings className="h-5 w-5 shrink-0 text-neutral-700" />
+        <IconBuildingCommunity className="h-5 w-5 shrink-0 text-neutral-700" />
+      ),
+    },
+    {
+      label: "API Docs",
+      href: "/api-docs",
+      icon: (
+        <IconCode className="h-5 w-5 shrink-0 text-neutral-700" />
           ),
   },
   {
@@ -45,17 +53,24 @@ export const TRAINING_PARTNER_SIDEBAR_LINKS = [
           ),
       },
       {
-        label: "Profile",
-        href: "/training-partner/profile",
+        label: "Users",
+        href: "/training-partner/users",
         icon: (
-            <IconUserBolt className="h-5 w-5 shrink-0 text-neutral-700" />
+            <IconUsers className="h-5 w-5 shrink-0 text-neutral-700" />
           ),
       },
       {
-        label: "Settings",
-        href: "/training-partner/settings",
+        label: "Training Centers",
+        href: "/training-partner/training-centers",
         icon: (
-            <IconSettings className="h-5 w-5 shrink-0 text-neutral-700" />
+            <IconBuildingCommunity className="h-5 w-5 shrink-0 text-neutral-700" />
+          ),
+      },
+      {
+        label: "API Docs",
+        href: "/api-docs",
+        icon: (
+            <IconCode className="h-5 w-5 shrink-0 text-neutral-700" />
           ),
       },
       {

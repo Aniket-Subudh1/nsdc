@@ -39,6 +39,15 @@ This repository now includes the Sprint 01 backend foundation on top of the exis
 - Machine-readable OpenAPI JSON: `/api/v1/openapi`
 - Interactive Swagger UI: `/api-docs`
 
+## Sprint 01 UI Surface
+
+- `/admin/dashboard`
+- `/admin/users`
+- `/admin/training-centers`
+- `/training-partner/dashboard`
+- `/training-partner/users`
+- `/training-partner/training-centers`
+
 ## Notes
 
 - Authentication uses an HttpOnly cookie plus persisted MongoDB sessions.

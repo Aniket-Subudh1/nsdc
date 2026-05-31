@@ -142,8 +142,6 @@ describe("candidate sync worker", () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
-    mocks.trainingCenterFindOne.mockReturnValue(createSelectQuery({ centerId: "tc_001", centerName: "Center One", sidhTcId: "TC164648", status: "active" }));
-    mocks.programFindOne.mockReturnValue(createSelectQuery({ name: "Program One", programId: "prg_001", status: "active", syncToSidh: true }));
   });
 
   it("processes a queued sync job and stores the remote candidate id", async () => {
@@ -162,6 +160,23 @@ describe("candidate sync worker", () => {
 
     const result = await processQueuedSyncJobs(actor as never, { limit: 1 }, { connector: connector as never });
 
+    expect(connector.registerCandidate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: {
+          ContactDetails: {
+            CountryCode: "+91",
+            Email: "rohit@example.com",
+            Phone: "9876543210",
+          },
+          PersonalDetails: {
+            DOB: "2005-06-10",
+            FatherName: "Suresh Kumar",
+            FirstName: "Rohit Kumar",
+            Gender: "Male",
+          },
+        },
+      }),
+    );
     expect(result.processedCount).toBe(1);
     expect(result.succeededCount).toBe(1);
     expect(result.jobs[0]?.remoteCandidateId).toBe("CAN_998877");

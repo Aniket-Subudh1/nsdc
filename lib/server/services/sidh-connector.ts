@@ -6,19 +6,19 @@ import { createPrefixedId } from "@/lib/server/ids";
 import { SidhApiTransactionModel } from "@/lib/server/models/sidh-api-transaction";
 
 export type CandidateRegistrationPayload = {
-  candidateReferenceId: string;
-  candidate: Record<string, unknown>;
-  center: {
-    centerId: string;
-    centerName: string | null;
-    sidhTcId: string | null;
+  PersonalDetails: {
+    DOB: string;
+    FatherName?: string;
+    FirstName: string;
+    Gender?: string;
+    GuardianName?: string;
+    NamePrefix?: string;
   };
-  meta: {
-    centerId: string;
-    programId: string;
-    registrationMode: string;
+  ContactDetails: {
+    CountryCode: string;
+    Email?: string;
+    Phone: string;
   };
-  tpId: string;
 };
 
 export type BatchCreationPayload = {

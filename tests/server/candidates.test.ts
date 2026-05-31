@@ -76,6 +76,7 @@ import {
   commitCandidateImportJob,
   createCandidateImportJob,
   linkExistingSidhCandidate,
+  queueCandidateSyncBulk,
   queueCandidateSync,
 } from "@/lib/server/services/candidates";
 import { createCandidateSchema } from "@/lib/server/validation";
@@ -176,50 +177,30 @@ describe("candidate services", () => {
 
     const workbook = await buildWorkbook([
       {
-        FullName: "Rohit Kumar",
+        "Name Prefix": "Mr",
+        "First Name": "Rohit Kumar",
         Gender: "Male",
-        DateofBirth: "10/06/2005",
-        FathersName: "Suresh Kumar",
-        IDType: "Alternate ID",
-        TypeofAlternateID: "Voter ID Card",
-        IDNo: "ABC1234567",
-        CountryCode: "91",
-        MobileNo: "9876543210",
-        DomicileState: "Odisha",
-        DomicileDistrict: "Khordha",
-        PermanentAddressAddress: "Plot 1",
-        PermanentAddressState: "Odisha",
-        PermanentAddressDistrict: "Khordha",
-        PermanentAddressPINCode: "751001",
-        PermanentAddressCity: "Bhubaneswar",
-        PermanentAddressTehsil: "Bhubaneswar",
-        PermanentAddressConstituency: "Central",
-        CommunicationSameasPermanentAddress: "Yes",
-        TrainingStatus: "Fresher",
-        HeardAboutUs: "Training Provider",
+        DOB: "10/06/2005",
+        "Father's Name": "Suresh Kumar",
+        Email: "rohit@example.com",
+        "Country Code": "91",
+        Phone: "9876543210",
+        State: "Odisha",
+        City: "Bhubaneswar",
+        "Center Name": "Center One",
       },
       {
-        FullName: "Missing Mobile",
+        "Name Prefix": "Mr",
+        "First Name": "Missing Mobile",
         Gender: "Male",
-        DateofBirth: "10/06/2005",
-        FathersName: "Parent",
-        IDType: "Alternate ID",
-        TypeofAlternateID: "Voter ID Card",
-        IDNo: "BAD123",
-        CountryCode: "91",
-        MobileNo: "",
-        DomicileState: "Odisha",
-        DomicileDistrict: "Khordha",
-        PermanentAddressAddress: "Plot 2",
-        PermanentAddressState: "Odisha",
-        PermanentAddressDistrict: "Khordha",
-        PermanentAddressPINCode: "751001",
-        PermanentAddressCity: "Bhubaneswar",
-        PermanentAddressTehsil: "Bhubaneswar",
-        PermanentAddressConstituency: "Central",
-        CommunicationSameasPermanentAddress: "Yes",
-        TrainingStatus: "Fresher",
-        HeardAboutUs: "Training Provider",
+        DOB: "10/06/2005",
+        "Father's Name": "Parent",
+        Email: "missing.mobile@example.com",
+        "Country Code": "91",
+        Phone: "",
+        State: "Odisha",
+        City: "Bhubaneswar",
+        "Center Name": "Center One",
       },
     ]);
 
@@ -301,7 +282,7 @@ describe("candidate services", () => {
     expect(mocks.candidateUpdateOne).toHaveBeenCalledTimes(1);
   });
 
-  it("commits valid import rows into candidates and queues sync", async () => {
+  it("commits valid import rows into candidates without queueing delivery", async () => {
     const save = vi.fn().mockResolvedValue(undefined);
     mocks.importJobFindOne.mockResolvedValue({
       importJobId: "imp_001",
@@ -376,12 +357,45 @@ describe("candidate services", () => {
     });
     mocks.candidateFindOne.mockReturnValue(createSelectQuery(null));
     mocks.candidateCreate.mockImplementation(async (value: Record<string, unknown>) => value);
-    mocks.syncJobCreate.mockImplementation(async (value: Record<string, unknown>) => value);
-
     const result = await commitCandidateImportJob(actor as never, "imp_001");
 
     expect(result.committedRows).toBe(1);
     expect(save).toHaveBeenCalledTimes(1);
+    expect(mocks.syncJobCreate).not.toHaveBeenCalled();
+  });
+
+  it("queues selected candidates in bulk", async () => {
+    mocks.candidateFindOne
+      .mockResolvedValueOnce({
+        candidateId: "cand_001",
+        centerId: "tc_001",
+        registrationMode: "internal_registration",
+        programId: "prg_001",
+        fullName: "Rohit Kumar",
+        salutation: "Mr",
+        gender: "Male",
+        dateOfBirth: new Date("2005-06-10T00:00:00.000Z"),
+        disability: false,
+        idType: "UNSPECIFIED",
+        mobileNumber: "9876543210",
+        permanentAddress: {},
+        communicationAddress: { sameAsPermanent: true },
+        syncState: { status: "not_queued", retryCount: 0 },
+      })
+      .mockResolvedValueOnce({
+        candidateId: "cand_002",
+        centerId: "tc_001",
+        registrationMode: "existing_sidh_link",
+        sidhCandidateId: "CAN_24883828",
+      });
+    mocks.syncJobCreate.mockImplementation(async (value: Record<string, unknown>) => value);
+
+    const result = await queueCandidateSyncBulk(actor as never, {
+      candidateIds: ["cand_001", "cand_002"],
+    });
+
+    expect(result.queuedCount).toBe(1);
+    expect(result.skippedCount).toBe(1);
     expect(mocks.syncJobCreate).toHaveBeenCalledTimes(1);
   });
 });

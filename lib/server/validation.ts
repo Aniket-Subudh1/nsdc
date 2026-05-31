@@ -280,13 +280,13 @@ const yesNoSchema = z.enum(["Yes", "No"]).optional().or(z.literal(""));
 const nullableTrimmedStringSchema = z.string().trim().optional().or(z.literal(""));
 
 const candidateAddressSchema = z.object({
-  address: z.string().trim().min(2),
-  state: z.string().trim().min(2),
-  district: z.string().trim().min(2),
-  pinCode: pinCodeSchema,
-  city: z.string().trim().min(2),
-  tehsil: z.string().trim().min(2),
-  constituency: z.string().trim().min(2),
+  address: nullableTrimmedStringSchema.default(""),
+  state: nullableTrimmedStringSchema.default(""),
+  district: nullableTrimmedStringSchema.default(""),
+  pinCode: z.string().trim().optional().or(z.literal("")).default(""),
+  city: nullableTrimmedStringSchema.default(""),
+  tehsil: nullableTrimmedStringSchema.default(""),
+  constituency: nullableTrimmedStringSchema.default(""),
 });
 
 const candidateCommunicationAddressBaseSchema = z.object({
@@ -374,14 +374,48 @@ const candidateContactDetailsSchema = z.object({
   mobileNumber: z.string().trim().regex(/^\d{10}$/, "Mobile number must be a 10 digit value"),
 });
 
+const candidateRegistrationPersonalDetailsSchema = z.object({
+  namePrefix: nullableTrimmedStringSchema,
+  firstName: z.string().trim().min(2).max(160),
+  gender: z.string().trim().min(1).max(80),
+  dob: z.string().date(),
+  fatherName: nullableTrimmedStringSchema,
+  guardianName: nullableTrimmedStringSchema,
+});
+
+const candidateRegistrationContactDetailsSchema = z.object({
+  email: z.string().trim().email().optional().or(z.literal("")),
+  phone: z.string().trim().regex(/^\d{10}$/, "Mobile number must be a 10 digit value"),
+  countryCode: z.string().trim().min(1).default("91"),
+});
+
+export const createCandidateRegistrationSchema = z
+  .object({
+    personalDetails: candidateRegistrationPersonalDetailsSchema,
+    contactDetails: candidateRegistrationContactDetailsSchema,
+  })
+  .superRefine((value, ctx) => {
+    if (!value.personalDetails.fatherName?.trim() && !value.personalDetails.guardianName?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Father name or guardian name is required",
+        path: ["personalDetails", "fatherName"],
+      });
+    }
+  });
+
 const candidateIdentityBaseSchema = z.object({
-    idType: z.string().trim().min(1).max(120),
+    idType: z.string().trim().max(120).default("UNSPECIFIED"),
     typeOfAlternateId: nullableTrimmedStringSchema,
     aadhaarReferenceNo: nullableTrimmedStringSchema,
     idNumber: nullableTrimmedStringSchema,
   });
 
 const candidateIdentitySchema = candidateIdentityBaseSchema.superRefine((value, ctx) => {
+    if ((!value.idType.trim() || /^unspecified$/i.test(value.idType)) && !value.idNumber?.trim() && !value.aadhaarReferenceNo?.trim()) {
+      return;
+    }
+
     const usesAadhaar = /aadhaar|adhar/i.test(value.idType);
 
     if (usesAadhaar && !value.aadhaarReferenceNo?.trim() && !value.idNumber?.trim()) {
@@ -410,12 +444,12 @@ const candidateIdentitySchema = candidateIdentityBaseSchema.superRefine((value, 
   });
 
 const candidateDomicileSchema = z.object({
-  state: z.string().trim().min(2).max(120),
-  district: z.string().trim().min(2).max(120),
+  state: nullableTrimmedStringSchema.default(""),
+  district: nullableTrimmedStringSchema.default(""),
 });
 
 const candidateExperienceBaseSchema = z.object({
-    trainingStatus: z.string().trim().min(1).max(80),
+    trainingStatus: nullableTrimmedStringSchema.default(""),
     previousExperienceSector: nullableTrimmedStringSchema,
     monthsOfPreviousExperience: z.coerce.number().int().min(0).optional().nullable(),
     employed: yesNoSchema,
@@ -492,9 +526,13 @@ export const candidateListQuerySchema = paginationQuerySchema.extend({
 });
 
 export const candidateImportSchema = z.object({
-  programId: z.string().trim().min(1),
-  centerId: z.string().trim().min(1),
-  registrationMode: registrationModeSchema.default("internal_registration"),
+  programId: z.string().trim().min(1).optional(),
+  centerId: z.string().trim().min(1).optional(),
+  registrationMode: registrationModeSchema.default("internal_registration").optional(),
+});
+
+export const bulkQueueCandidateSyncSchema = z.object({
+  candidateIds: z.array(z.string().trim().min(1)).min(1).max(100),
 });
 
 export const syncJobsQuerySchema = paginationQuerySchema.extend({
@@ -698,10 +736,12 @@ export const attendanceCommitSchema = z.object({
 });
 
 export type CreateCandidateInput = z.infer<typeof createCandidateSchema>;
+export type CreateCandidateRegistrationInput = z.infer<typeof createCandidateRegistrationSchema>;
 export type UpdateCandidateInput = z.infer<typeof updateCandidateSchema>;
 export type LinkExistingSidhCandidateInput = z.infer<typeof linkExistingSidhCandidateSchema>;
 export type CandidateListQuery = z.infer<typeof candidateListQuerySchema>;
 export type CandidateImportInput = z.infer<typeof candidateImportSchema>;
+export type BulkQueueCandidateSyncInput = z.infer<typeof bulkQueueCandidateSyncSchema>;
 export type SyncJobsQuery = z.infer<typeof syncJobsQuerySchema>;
 export type ProcessSyncJobsInput = z.infer<typeof processSyncJobsSchema>;
 export type BatchStatus = z.infer<typeof batchStatusSchema>;

@@ -748,6 +748,27 @@ export function getOpenApiDocument() {
             mobileNumber: { type: "string" },
           },
         },
+        CandidateRegistrationPersonalDetails: {
+          type: "object",
+          required: ["firstName", "gender", "dob"],
+          properties: {
+            namePrefix: { type: "string", nullable: true },
+            firstName: { type: "string" },
+            gender: { type: "string" },
+            dob: { type: "string", format: "date" },
+            fatherName: { type: "string", nullable: true },
+            guardianName: { type: "string", nullable: true },
+          },
+        },
+        CandidateRegistrationContactDetails: {
+          type: "object",
+          required: ["phone"],
+          properties: {
+            email: { type: "string", format: "email", nullable: true },
+            phone: { type: "string" },
+            countryCode: { type: "string", nullable: true },
+          },
+        },
         CandidateIdentity: {
           type: "object",
           required: ["idType"],
@@ -835,28 +856,12 @@ export function getOpenApiDocument() {
         CreateCandidateRequest: {
           type: "object",
           required: [
-            "programId",
-            "centerId",
-            "registrationMode",
             "personalDetails",
-            "contactDetails",
-            "identity",
-            "domicile",
-            "permanentAddress",
-            "communicationAddress",
-            "experience"
+            "contactDetails"
           ],
           properties: {
-            programId: { type: "string" },
-            centerId: { type: "string" },
-            registrationMode: ref("CandidateRegistrationMode"),
-            personalDetails: ref("CandidatePersonalDetails"),
-            contactDetails: ref("CandidateContactDetails"),
-            identity: ref("CandidateIdentity"),
-            domicile: ref("CandidateDomicile"),
-            permanentAddress: ref("CandidateAddress"),
-            communicationAddress: ref("CandidateCommunicationAddress"),
-            experience: ref("CandidateExperience"),
+            personalDetails: ref("CandidateRegistrationPersonalDetails"),
+            contactDetails: ref("CandidateRegistrationContactDetails"),
           },
         },
         UpdateCandidateRequest: {
@@ -898,12 +903,21 @@ export function getOpenApiDocument() {
         },
         CandidateImportRequest: {
           type: "object",
-          required: ["programId", "centerId", "file"],
+          required: ["file"],
           properties: {
-            programId: { type: "string" },
-            centerId: { type: "string" },
-            registrationMode: ref("CandidateRegistrationMode"),
             file: { type: "string", format: "binary" },
+          },
+        },
+        BulkQueueCandidateSyncRequest: {
+          type: "object",
+          required: ["candidateIds"],
+          properties: {
+            candidateIds: {
+              type: "array",
+              minItems: 1,
+              maxItems: 100,
+              items: { type: "string" },
+            },
           },
         },
         CandidateImportJob: {
@@ -2020,6 +2034,43 @@ export function getOpenApiDocument() {
             401: errorResponse("Authentication required"),
             403: errorResponse("Forbidden"),
             409: errorResponse("SIDH candidate already linked or duplicate found"),
+          },
+        },
+      },
+      "/candidates/sync/bulk": {
+        post: {
+          tags: ["Candidates"],
+          summary: "Queue multiple saved candidates for Skill India delivery",
+          security: [{ cookieAuth: [] }],
+          requestBody: {
+            required: true,
+            content: jsonContent(ref("BulkQueueCandidateSyncRequest")),
+          },
+          responses: {
+            201: successResponse("Candidates queued for Skill India delivery", {
+              type: "object",
+              required: ["requestedCount", "queuedCount", "skippedCount", "items"],
+              properties: {
+                requestedCount: { type: "integer", minimum: 0 },
+                queuedCount: { type: "integer", minimum: 0 },
+                skippedCount: { type: "integer", minimum: 0 },
+                items: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    required: ["candidateId", "status", "message"],
+                    properties: {
+                      candidateId: { type: "string" },
+                      status: { type: "string", enum: ["queued", "skipped"] },
+                      message: { type: "string" },
+                    },
+                  },
+                },
+              },
+            }),
+            400: errorResponse("Validation failed"),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
           },
         },
       },

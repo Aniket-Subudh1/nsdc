@@ -2,9 +2,7 @@ import { ApiError } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
 import { connectToDatabase } from "@/lib/server/mongodb";
 import { CandidateModel } from "@/lib/server/models/candidate";
-import { ProgramModel } from "@/lib/server/models/program";
 import { SyncJobModel } from "@/lib/server/models/sync-job";
-import { TrainingCenterModel } from "@/lib/server/models/training-center";
 import { canManageSync } from "@/lib/server/rbac";
 import { createSidhConnector, type CandidateRegistrationPayload, SidhConnectorError } from "@/lib/server/services/sidh-connector";
 import { writeAuditLog } from "@/lib/server/services/audit";
@@ -71,21 +69,6 @@ type WorkerSyncJob = {
   syncJobId: string;
 };
 
-type WorkerTrainingCenter = {
-  centerId: string;
-  centerName?: string | null;
-  sidhTcId?: string | null;
-  status?: string;
-  verifiedForSidh?: boolean;
-};
-
-type WorkerProgram = {
-  name?: string | null;
-  programId: string;
-  status?: string;
-  syncToSidh?: boolean;
-};
-
 type ProcessDependencies = {
   connector?: ReturnType<typeof createSidhConnector>;
   now?: () => Date;
@@ -128,69 +111,37 @@ function buildCandidateSnapshot(candidate: WorkerCandidate) {
     countryCode: candidate.countryCode ?? "91",
     dateOfBirth: toIsoDate(candidate.dateOfBirth)?.slice(0, 10) ?? null,
     fullName: candidate.fullName,
+    fathersName: candidate.fathersName ?? null,
+    guardiansName: candidate.guardiansName ?? null,
     mobileNumber: candidate.mobileNumber,
     programId: candidate.programId,
     registrationMode: candidate.registrationMode,
+    salutation: candidate.salutation ?? null,
     sidhCandidateId: candidate.sidhCandidateId ?? null,
     syncState: candidate.syncState ?? null,
   };
 }
 
-function buildRegistrationPayload(candidate: WorkerCandidate, center: WorkerTrainingCenter, program: WorkerProgram): CandidateRegistrationPayload {
+function normalizeCountryCode(value?: string | null) {
+  const digits = (value ?? "91").replace(/\D/g, "");
+  return digits ? `+${digits}` : "+91";
+}
+
+function buildRegistrationPayload(candidate: WorkerCandidate): CandidateRegistrationPayload {
   return {
-    candidate: {
-      communicationAddress: candidate.communicationAddress,
-      contactDetails: {
-        countryCode: candidate.countryCode ?? "91",
-        email: candidate.email ?? null,
-        mobileNumber: candidate.mobileNumber,
-      },
-      domicile: {
-        district: candidate.domicileDistrict ?? null,
-        state: candidate.domicileState ?? null,
-      },
-      experience: {
-        employed: candidate.employed ?? null,
-        employmentDetails: candidate.employmentDetails ?? null,
-        employmentStatus: candidate.employmentStatus ?? null,
-        heardAboutUs: candidate.heardAboutUs ?? null,
-        monthsOfPreviousExperience: candidate.monthsOfPreviousExperience ?? null,
-        previousExperienceSector: candidate.previousExperienceSector ?? null,
-        trainingStatus: candidate.trainingStatus ?? null,
-      },
-      identity: {
-        idNumber: candidate.idNumber ?? null,
-        idType: candidate.idType,
-        typeOfAlternateId: candidate.typeOfAlternateId ?? null,
-      },
-      permanentAddress: candidate.permanentAddress,
-      personalDetails: {
-        category: candidate.category ?? null,
-        dateOfBirth: toIsoDate(candidate.dateOfBirth)?.slice(0, 10) ?? null,
-        disability: candidate.disability,
-        fathersName: candidate.fathersName ?? null,
-        fullName: candidate.fullName,
-        gender: candidate.gender ?? null,
-        guardiansName: candidate.guardiansName ?? null,
-        maritalStatus: candidate.maritalStatus ?? null,
-        mothersName: candidate.mothersName ?? null,
-        religion: candidate.religion ?? null,
-        salutation: candidate.salutation ?? null,
-        typeOfDisability: candidate.typeOfDisability ?? null,
-      },
+    ContactDetails: {
+      CountryCode: normalizeCountryCode(candidate.countryCode),
+      ...(candidate.email?.trim() ? { Email: candidate.email.trim().toLowerCase() } : {}),
+      Phone: candidate.mobileNumber,
     },
-    candidateReferenceId: candidate.candidateId,
-    center: {
-      centerId: center.centerId,
-      centerName: center.centerName ?? null,
-      sidhTcId: center.sidhTcId ?? null,
+    PersonalDetails: {
+      DOB: toIsoDate(candidate.dateOfBirth)?.slice(0, 10) ?? "",
+      ...(candidate.fathersName?.trim() ? { FatherName: candidate.fathersName.trim() } : {}),
+      FirstName: candidate.fullName,
+      ...(candidate.gender?.trim() ? { Gender: candidate.gender.trim() } : {}),
+      ...(candidate.guardiansName?.trim() ? { GuardianName: candidate.guardiansName.trim() } : {}),
+      ...(candidate.salutation?.trim() ? { NamePrefix: candidate.salutation.trim() } : {}),
     },
-    meta: {
-      centerId: candidate.centerId,
-      programId: candidate.programId,
-      registrationMode: candidate.registrationMode,
-    },
-    tpId: program.syncToSidh === false ? "" : "configured-via-connector",
   };
 }
 
@@ -229,21 +180,7 @@ async function claimNextSyncJob(now: Date) {
 
 async function loadCandidateContext(candidateId: string) {
   const candidate = (await CandidateModel.findOne({ candidateId })) as WorkerCandidate | null;
-
-  if (!candidate) {
-    return { candidate: null, center: null, program: null };
-  }
-
-  const [center, program] = await Promise.all([
-    TrainingCenterModel.findOne({ centerId: candidate.centerId }).select({ centerId: 1, centerName: 1, sidhTcId: 1, status: 1, verifiedForSidh: 1 }),
-    ProgramModel.findOne({ programId: candidate.programId }).select({ name: 1, programId: 1, status: 1, syncToSidh: 1 }),
-  ]);
-
-  return {
-    candidate,
-    center: center as WorkerTrainingCenter | null,
-    program: program as WorkerProgram | null,
-  };
+  return { candidate };
 }
 
 function setAttempt(job: WorkerSyncJob, attempt: Record<string, unknown>) {
@@ -415,7 +352,7 @@ async function processClaimedJob(actor: SyncActor, job: WorkerSyncJob, connector
     status: "processing",
   });
 
-  const { candidate, center, program } = await loadCandidateContext(job.candidateId);
+  const { candidate } = await loadCandidateContext(job.candidateId);
 
   if (!candidate) {
     const error = new SidhConnectorError({
@@ -449,58 +386,9 @@ async function processClaimedJob(actor: SyncActor, job: WorkerSyncJob, connector
     };
   }
 
-  if (!center?.sidhTcId) {
-    const error = new SidhConnectorError({
-      code: "CENTER_SIDH_TC_ID_MISSING",
-      manualReview: true,
-      message: "Training center is missing SIDH TC metadata",
-    });
-    await finalizeManualReview(actor, candidate, job, attemptId, now, error, requestId);
-    return {
-      candidateId: candidate.candidateId,
-      message: error.message,
-      remoteCandidateId: null,
-      status: "manual_review",
-      syncJobId: job.syncJobId,
-    };
-  }
-
-  if (!center?.verifiedForSidh) {
-    const error = new SidhConnectorError({
-      code: "CENTER_NOT_VERIFIED",
-      manualReview: true,
-      message: "Training center must be verified before SIDH registration sync",
-    });
-    await finalizeManualReview(actor, candidate, job, attemptId, now, error, requestId);
-    return {
-      candidateId: candidate.candidateId,
-      message: error.message,
-      remoteCandidateId: null,
-      status: "manual_review",
-      syncJobId: job.syncJobId,
-    };
-  }
-
-  if (!program) {
-    const error = new SidhConnectorError({
-      code: "PROGRAM_NOT_FOUND",
-      manualReview: true,
-      message: "Program not found for sync job",
-    });
-    await finalizeManualReview(actor, candidate, job, attemptId, now, error, requestId, "dead_letter");
-    return {
-      candidateId: candidate.candidateId,
-      message: error.message,
-      remoteCandidateId: null,
-      status: "dead_letter",
-      syncJobId: job.syncJobId,
-    };
-  }
-
   await persistProcessingState(candidate, job, now);
 
-  const payload = buildRegistrationPayload(candidate, center, program);
-  payload.tpId = payload.tpId || "configured-via-connector";
+  const payload = buildRegistrationPayload(candidate);
   job.payloadSnapshot = {
     candidate: buildCandidateSnapshot(candidate),
     registrationPayload: payload,

@@ -20,10 +20,14 @@ import {
 import { writeAuditLog } from "@/lib/server/services/audit";
 import { type AuthSession } from "@/lib/server/services/session";
 import {
+  bulkQueueCandidateSyncSchema,
   createCandidateSchema,
+  createCandidateRegistrationSchema,
   type CandidateImportInput,
   type CandidateListQuery,
+  type BulkQueueCandidateSyncInput,
   type CreateCandidateInput,
+  type CreateCandidateRegistrationInput,
   type LinkExistingSidhCandidateInput,
   type SyncJobsQuery,
   type UpdateCandidateInput,
@@ -291,6 +295,125 @@ async function ensureTrainingCenterExists(centerId: string) {
   return center;
 }
 
+async function resolveDefaultCandidateContext(actor: AuthSession, overrides?: Partial<CandidateImportInput>) {
+  const scopedCenterFilter = actor.user.roles.includes("platform_admin")
+    ? { status: "active" }
+    : { centerId: { $in: actor.user.centerIds }, status: "active" };
+
+  const center = overrides?.centerId
+    ? await TrainingCenterModel.findOne({ centerId: overrides.centerId }).select({ centerId: 1, centerName: 1, status: 1, programIds: 1 })
+    : await TrainingCenterModel.findOne(scopedCenterFilter).sort({ centerName: 1 }).select({ centerId: 1, centerName: 1, status: 1, programIds: 1 });
+
+  if (!center) {
+    throw new ApiError(400, "CANDIDATE_CONTEXT_CENTER_NOT_FOUND", "No active training center is available for candidate registration");
+  }
+
+  resolveScopedCenterFilter(actor, center.centerId);
+
+  const programFilter = Array.isArray(center.programIds) && center.programIds.length > 0
+    ? { programId: { $in: center.programIds }, status: "active" }
+    : { status: "active" };
+
+  const program = overrides?.programId
+    ? await ProgramModel.findOne({ programId: overrides.programId }).select({ programId: 1, name: 1, status: 1 })
+    : await ProgramModel.findOne(programFilter).sort({ name: 1 }).select({ programId: 1, name: 1, status: 1 });
+
+  if (!program) {
+    throw new ApiError(400, "CANDIDATE_CONTEXT_PROGRAM_NOT_FOUND", "No active program is available for candidate registration");
+  }
+
+  return {
+    centerId: center.centerId,
+    programId: program.programId,
+    registrationMode: overrides?.registrationMode ?? "internal_registration",
+  } as const;
+}
+
+function expandCandidateRegistrationInput(
+  registrationInput: CreateCandidateRegistrationInput,
+  context: { centerId: string; programId: string; registrationMode: "internal_registration" | "existing_sidh_link" },
+): CreateCandidateInput {
+  return {
+    programId: context.programId,
+    centerId: context.centerId,
+    registrationMode: context.registrationMode,
+    personalDetails: {
+      salutation: registrationInput.personalDetails.namePrefix,
+      fullName: registrationInput.personalDetails.firstName,
+      gender: registrationInput.personalDetails.gender,
+      dateOfBirth: registrationInput.personalDetails.dob,
+      maritalStatus: "",
+      fathersName: registrationInput.personalDetails.fatherName,
+      mothersName: "",
+      guardiansName: registrationInput.personalDetails.guardianName,
+      religion: "",
+      category: "",
+      disability: false,
+      typeOfDisability: "",
+      educationLevel: "",
+    },
+    contactDetails: {
+      email: registrationInput.contactDetails.email,
+      countryCode: registrationInput.contactDetails.countryCode,
+      mobileNumber: registrationInput.contactDetails.phone,
+    },
+    identity: {
+      idType: "UNSPECIFIED",
+      typeOfAlternateId: "",
+      aadhaarReferenceNo: "",
+      idNumber: "",
+    },
+    domicile: {
+      state: "",
+      district: "",
+    },
+    permanentAddress: {
+      address: "",
+      state: "",
+      district: "",
+      pinCode: "",
+      city: "",
+      tehsil: "",
+      constituency: "",
+    },
+    communicationAddress: {
+      sameAsPermanent: true,
+      address: "",
+      state: "",
+      district: "",
+      pinCode: "",
+      city: "",
+      tehsil: "",
+      constituency: "",
+    },
+    experience: {
+      trainingStatus: "Fresher",
+      previousExperienceSector: "",
+      monthsOfPreviousExperience: null,
+      employed: "",
+      employmentStatus: "",
+      employmentDetails: "",
+      heardAboutUs: "",
+    },
+  };
+}
+
+function normalizeImportedRowToCandidateInput(
+  row: Record<string, unknown>,
+  context: { centerId: string; programId: string; registrationMode: "internal_registration" | "existing_sidh_link" },
+) {
+  const contactDetails =
+    row.contactDetails && typeof row.contactDetails === "object"
+      ? (row.contactDetails as Record<string, unknown>)
+      : null;
+
+  if (contactDetails && (typeof contactDetails.phone === "string" || typeof contactDetails.phone === "number")) {
+    return expandCandidateRegistrationInput(createCandidateRegistrationSchema.parse(row), context);
+  }
+
+  return createCandidateSchema.parse(row);
+}
+
 function serializeCandidate(candidate: CandidateLike) {
   return {
     id: candidate.candidateId,
@@ -512,13 +635,13 @@ function buildCandidateRecord(input: CreateCandidateInput) {
     mobileNumber: input.contactDetails.mobileNumber,
   });
   const permanentAddress = {
-    address: normalizeWhitespace(input.permanentAddress.address),
-    state: normalizeWhitespace(input.permanentAddress.state),
-    district: normalizeWhitespace(input.permanentAddress.district),
-    pinCode: normalizeWhitespace(input.permanentAddress.pinCode),
-    city: normalizeWhitespace(input.permanentAddress.city),
-    tehsil: normalizeWhitespace(input.permanentAddress.tehsil),
-    constituency: normalizeWhitespace(input.permanentAddress.constituency),
+    address: normalizeWhitespace(input.permanentAddress.address) || null,
+    state: normalizeWhitespace(input.permanentAddress.state) || null,
+    district: normalizeWhitespace(input.permanentAddress.district) || null,
+    pinCode: normalizeWhitespace(input.permanentAddress.pinCode) || null,
+    city: normalizeWhitespace(input.permanentAddress.city) || null,
+    tehsil: normalizeWhitespace(input.permanentAddress.tehsil) || null,
+    constituency: normalizeWhitespace(input.permanentAddress.constituency) || null,
   };
   const communicationAddress = input.communicationAddress.sameAsPermanent
     ? {
@@ -527,13 +650,13 @@ function buildCandidateRecord(input: CreateCandidateInput) {
       }
     : {
         sameAsPermanent: false,
-        address: normalizeWhitespace(input.communicationAddress.address),
-        state: normalizeWhitespace(input.communicationAddress.state),
-        district: normalizeWhitespace(input.communicationAddress.district),
-        pinCode: normalizeWhitespace(input.communicationAddress.pinCode),
-        city: normalizeWhitespace(input.communicationAddress.city),
-        tehsil: normalizeWhitespace(input.communicationAddress.tehsil),
-        constituency: normalizeWhitespace(input.communicationAddress.constituency),
+        address: normalizeWhitespace(input.communicationAddress.address) || null,
+        state: normalizeWhitespace(input.communicationAddress.state) || null,
+        district: normalizeWhitespace(input.communicationAddress.district) || null,
+        pinCode: normalizeWhitespace(input.communicationAddress.pinCode) || null,
+        city: normalizeWhitespace(input.communicationAddress.city) || null,
+        tehsil: normalizeWhitespace(input.communicationAddress.tehsil) || null,
+        constituency: normalizeWhitespace(input.communicationAddress.constituency) || null,
       };
 
   return {
@@ -730,78 +853,28 @@ function getCellValue(row: Record<string, unknown>, keys: string[]) {
   return "";
 }
 
-function mapImportRowToCandidateInput(row: Record<string, unknown>, input: CandidateImportInput): CreateCandidateInput {
+function mapImportRowToCandidateInput(row: Record<string, unknown>): CreateCandidateRegistrationInput {
   return {
-    programId: input.programId,
-    centerId: input.centerId,
-    registrationMode: input.registrationMode,
     personalDetails: {
-      salutation: String(getCellValue(row, ["Salutation"])),
-      fullName: String(getCellValue(row, ["FullName", "Full Name"])),
+      namePrefix: String(getCellValue(row, ["Name Prefix", "NamePrefix", "Salutation"])),
+      firstName: String(getCellValue(row, ["First Name", "FirstName", "FullName", "Full Name"])),
       gender: String(getCellValue(row, ["Gender"])),
-      dateOfBirth: parseTemplateDate(getCellValue(row, ["DateofBirth", "Date of Birth"])),
-      maritalStatus: String(getCellValue(row, ["MaritalStatus", "Marital Status"])),
-      fathersName: String(getCellValue(row, ["FathersName", "Father Name"])),
-      mothersName: String(getCellValue(row, ["MothersName", "Mother Name"])),
-      guardiansName: String(getCellValue(row, ["GuardianName", "Guardian Name"])),
-      religion: String(getCellValue(row, ["Religion"])),
-      category: String(getCellValue(row, ["Category"])),
-      disability: /^yes$/i.test(String(getCellValue(row, ["Disability"])).trim()),
-      typeOfDisability: String(getCellValue(row, ["TypeofDisability", "Type of Disability"])),
-      educationLevel: String(getCellValue(row, ["EducationLevel", "Education Level"])),
+      dob: parseTemplateDate(getCellValue(row, ["DOB", "DateofBirth", "Date of Birth"])),
+      fatherName: String(getCellValue(row, ["Father's Name", "FathersName", "Father Name", "FatherName"])),
+      guardianName: String(getCellValue(row, ["Guardian Name", "GuardianName", "Guardian's Name"])),
     },
     contactDetails: {
-      email: String(getCellValue(row, ["EmailID", "Email Id"])),
-      countryCode: String(getCellValue(row, ["CountryCode", "Country Code"])) || "91",
-      mobileNumber: String(getCellValue(row, ["MobileNo", "Mobile Number"])),
-    },
-    identity: {
-      idType: String(getCellValue(row, ["IDType", "ID Type"])),
-      typeOfAlternateId: String(getCellValue(row, ["TypeofAlternateID", "Type of Alternate ID"])),
-      aadhaarReferenceNo: String(getCellValue(row, ["AdharReferenceNo", "AadhaarReferenceNo"])),
-      idNumber: String(getCellValue(row, ["IDNo", "ID Number"])),
-    },
-    domicile: {
-      state: String(getCellValue(row, ["DomicileState", "Domicile State"])),
-      district: String(getCellValue(row, ["DomicileDistrict", "Domicile District"])),
-    },
-    permanentAddress: {
-      address: String(getCellValue(row, ["PermanentAddressAddress", "Permanent Address Address"])),
-      state: String(getCellValue(row, ["PermanentAddressState", "Permanent Address State"])),
-      district: String(getCellValue(row, ["PermanentAddressDistrict", "Permanent Address District"])),
-      pinCode: String(getCellValue(row, ["PermanentAddressPINCode", "Permanent Address PIN Code"])),
-      city: String(getCellValue(row, ["PermanentAddressCity", "Permanent Address City"])),
-      tehsil: String(getCellValue(row, ["PermanentAddressTehsil", "Permanent Address Tehsil"])),
-      constituency: String(getCellValue(row, ["PermanentAddressConstituency", "Permanent Address Constituency"])),
-    },
-    communicationAddress: {
-      sameAsPermanent: !/^no$/i.test(String(getCellValue(row, ["CommunicationSameasPermanentAddress", "Communication Same as Permanent Address"])).trim()),
-      address: String(getCellValue(row, ["CommunicationAddressAddress", "Communication Address Address"])),
-      state: String(getCellValue(row, ["CommunicationAddressState", "Communication Address State"])),
-      district: String(getCellValue(row, ["CommunicationAddressDistrict", "Communication Address District"])),
-      pinCode: String(getCellValue(row, ["CommunicationAddressPINCode", "Communication Address PIN Code"])),
-      city: String(getCellValue(row, ["CommunicationAddressCity", "Communication Address City"])),
-      tehsil: String(getCellValue(row, ["CommunicationAddressTehsil", "Communication Address Tehsil"])),
-      constituency: String(getCellValue(row, ["CommunicationAddressPermanentConstituency", "Communication Address Constituency"])),
-    },
-    experience: {
-      trainingStatus: String(getCellValue(row, ["TrainingStatus", "Training Status"])) || "Fresher",
-      previousExperienceSector: String(getCellValue(row, ["PreviousExperienceSector", "Previous Experience Sector"])),
-      monthsOfPreviousExperience: (() => {
-        const raw = String(getCellValue(row, ["Noofmonthsofpreviousexperience", "No of months of previous experience"])).trim();
-        return raw ? Number(raw) : null;
-      })(),
-      employed: normalizeYesNo(getCellValue(row, ["Employed"])),
-      employmentStatus: String(getCellValue(row, ["EmploymentStatus", "Employment Status"])),
-      employmentDetails: String(getCellValue(row, ["EmploymentDetails", "Employment Details"])),
-      heardAboutUs: String(getCellValue(row, ["HeardAboutUs", "Heard About Us"])),
+      email: String(getCellValue(row, ["Email", "EmailID", "Email Id"])),
+      countryCode: String(getCellValue(row, ["Country Code", "CountryCode"])) || "91",
+      phone: String(getCellValue(row, ["Phone", "MobileNo", "Mobile Number"])),
     },
   };
 }
 
-export async function createCandidate(actor: AuthSession, input: CreateCandidateInput, options?: CandidateCreateOptions) {
+export async function createCandidate(actor: AuthSession, input: CreateCandidateRegistrationInput, options?: CandidateCreateOptions) {
   await connectToDatabase();
-  return createCandidateRecord(actor, input, options);
+  const context = await resolveDefaultCandidateContext(actor);
+  return createCandidateRecord(actor, expandCandidateRegistrationInput(createCandidateRegistrationSchema.parse(input), context), options);
 }
 
 export async function updateCandidate(actor: AuthSession, candidateId: string, patch: UpdateCandidateInput, requestId?: string) {
@@ -1010,15 +1083,15 @@ export async function linkExistingSidhCandidate(actor: AuthSession, input: LinkE
 
 export async function createCandidateImportJob(
   actor: AuthSession,
-  input: CandidateImportInput,
+  input: CandidateImportInput | undefined,
   fileName: string,
   workbookBuffer: ArrayBuffer,
   requestId?: string,
 ) {
   await connectToDatabase();
   ensureCanWriteCandidates(actor);
-  resolveScopedCenterFilter(actor, input.centerId);
-  await Promise.all([ensureProgramExists(input.programId), ensureTrainingCenterExists(input.centerId)]);
+  const context = await resolveDefaultCandidateContext(actor, input);
+  await Promise.all([ensureProgramExists(context.programId), ensureTrainingCenterExists(context.centerId)]);
 
   const workbookSheets = await readWorkbookSheetsFromArrayBuffer(workbookBuffer, { defaultValue: "" });
   const firstSheet = workbookSheets.find((sheet) => normalizeWhitespace(sheet.name).toLowerCase() === "candidate import template") ?? workbookSheets[0];
@@ -1036,10 +1109,12 @@ export async function createCandidateImportJob(
 
   for (const [index, rawRow] of rawRows.entries()) {
     const rowNumber = index + 2;
-    const candidateInput = mapImportRowToCandidateInput(rawRow, input);
     const rowId = createPrefixedId("impr");
+    const registrationInput = mapImportRowToCandidateInput(rawRow);
 
     try {
+      const parsedRegistrationInput = createCandidateRegistrationSchema.parse(registrationInput);
+      const candidateInput = expandCandidateRegistrationInput(parsedRegistrationInput, context);
       const parsed = createCandidateSchema.parse(candidateInput);
       const normalized = buildCandidateRecord(parsed);
       const duplicateIdentityValue = parsed.identity.idNumber || parsed.identity.aadhaarReferenceNo || parsed.contactDetails.mobileNumber;
@@ -1058,7 +1133,7 @@ export async function createCandidateImportJob(
           rowId,
           rowNumber,
           raw: rawRow,
-          normalized: candidateInput,
+          normalized: parsedRegistrationInput,
           status: "duplicate",
           errors: [{ field: "duplicateHash", message: existing ? `Matches existing candidate ${existing.candidateId}` : "Matches another row in this import" }],
           duplicateOfCandidateId: existing?.candidateId ?? null,
@@ -1074,7 +1149,7 @@ export async function createCandidateImportJob(
         rowNumber,
         raw: rawRow,
         normalized: {
-          ...candidateInput,
+            ...parsedRegistrationInput,
           _duplicateHash: normalized.duplicateHash,
         },
         status: "valid",
@@ -1089,7 +1164,7 @@ export async function createCandidateImportJob(
         rowId,
         rowNumber,
         raw: rawRow,
-        normalized: candidateInput,
+          normalized: registrationInput,
         status: "invalid",
         errors: Array.isArray(issues)
           ? issues.map((issue) => ({ field: "path" in issue && Array.isArray(issue.path) ? issue.path.join(".") : "field" in issue ? issue.field : undefined, message: issue.message }))
@@ -1104,9 +1179,9 @@ export async function createCandidateImportJob(
     importJobId: createPrefixedId("imp"),
     fileName,
     status: "staged",
-    programId: input.programId,
-    centerId: input.centerId,
-    registrationMode: input.registrationMode,
+    programId: context.programId,
+    centerId: context.centerId,
+    registrationMode: context.registrationMode,
     totalRows: rawRows.length,
     validRows,
     invalidRows,
@@ -1192,9 +1267,13 @@ export async function commitCandidateImportJob(actor: AuthSession, importJobId: 
     }
 
     try {
-      const candidateInput = createCandidateSchema.parse(row.normalized);
+      const candidateInput = normalizeImportedRowToCandidateInput(row.normalized as Record<string, unknown>, {
+        centerId: job.centerId,
+        programId: job.programId,
+        registrationMode: job.registrationMode as "internal_registration" | "existing_sidh_link",
+      });
       const createdCandidate = await createCandidateRecord(actor, candidateInput, {
-        queueSync: candidateInput.registrationMode === "internal_registration",
+        queueSync: false,
         requestId,
         skipAudit: true,
         sourceImportJobId: importJobId,
@@ -1255,6 +1334,49 @@ export async function queueCandidateSync(actor: AuthSession, candidateId: string
   }
 
   return createQueuedSyncJob(actor, serializeCandidate(candidate), requestId);
+}
+
+export async function queueCandidateSyncBulk(actor: AuthSession, input: BulkQueueCandidateSyncInput, requestId?: string) {
+  await connectToDatabase();
+  ensureCanWriteCandidates(actor);
+
+  const candidateIds = Array.from(new Set(bulkQueueCandidateSyncSchema.parse(input).candidateIds));
+  const items: Array<{ candidateId: string; message: string; status: "queued" | "skipped" }> = [];
+
+  for (const candidateId of candidateIds) {
+    const candidate = await CandidateModel.findOne({ candidateId });
+
+    if (!candidate) {
+      items.push({ candidateId, message: "Candidate not found", status: "skipped" });
+      continue;
+    }
+
+    resolveScopedCenterFilter(actor, candidate.centerId);
+
+    if (candidate.registrationMode === "existing_sidh_link" || candidate.sidhCandidateId) {
+      items.push({ candidateId, message: "Already linked with Skill India", status: "skipped" });
+      continue;
+    }
+
+    try {
+      await createQueuedSyncJob(actor, serializeCandidate(candidate), requestId);
+      items.push({ candidateId, message: "Queued for Skill India registration", status: "queued" });
+    } catch (error) {
+      if (error instanceof ApiError && error.errorCode === "SYNC_ALREADY_QUEUED") {
+        items.push({ candidateId, message: "Already queued for delivery", status: "skipped" });
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  return {
+    items,
+    queuedCount: items.filter((item) => item.status === "queued").length,
+    requestedCount: candidateIds.length,
+    skippedCount: items.filter((item) => item.status === "skipped").length,
+  };
 }
 
 export async function listSyncJobs(actor: AuthSession, query: SyncJobsQuery) {

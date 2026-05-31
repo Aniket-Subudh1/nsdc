@@ -23,6 +23,23 @@ function createJsonResponse(body: unknown, init: ResponseInit = {}) {
   });
 }
 
+function createCandidatePayload() {
+  return {
+    ContactDetails: {
+      CountryCode: "+91",
+      Email: "rohit@example.com",
+      Phone: "9876543210",
+    },
+    PersonalDetails: {
+      DOB: "2005-06-10",
+      FatherName: "Suresh Kumar",
+      FirstName: "Rohit Kumar",
+      Gender: "Male",
+      NamePrefix: "Mr",
+    },
+  };
+}
+
 describe("SIDH connector", () => {
   const env = createEnv({
     ACCESS_TOKEN_TTL_MINUTES: "60",
@@ -90,13 +107,7 @@ describe("SIDH connector", () => {
     const connector = createSidhConnector({ env, fetchImpl });
     const result = await connector.registerCandidate({
       attemptId: "syncatt_001",
-      payload: {
-        candidate: { fullName: "Rohit Kumar" },
-        candidateReferenceId: "cand_001",
-        center: { centerId: "tc_001", centerName: "Center One", sidhTcId: "TC164648" },
-        meta: { centerId: "tc_001", programId: "prg_001", registrationMode: "internal_registration" },
-        tpId: "TP_UAT",
-      },
+      payload: createCandidatePayload(),
       syncJobId: "sync_001",
     });
 
@@ -320,13 +331,7 @@ describe("SIDH connector", () => {
     const connector = createSidhConnector({ env, fetchImpl });
     const result = await connector.registerCandidate({
       attemptId: "syncatt_002",
-      payload: {
-        candidate: { fullName: "Rohit Kumar" },
-        candidateReferenceId: "cand_001",
-        center: { centerId: "tc_001", centerName: "Center One", sidhTcId: "TC164648" },
-        meta: { centerId: "tc_001", programId: "prg_001", registrationMode: "internal_registration" },
-        tpId: "TP_UAT",
-      },
+      payload: createCandidatePayload(),
       syncJobId: "sync_001",
     });
 
@@ -347,13 +352,7 @@ describe("SIDH connector", () => {
     await expect(
       connector.registerCandidate({
         attemptId: "syncatt_003",
-        payload: {
-          candidate: { fullName: "Rohit Kumar" },
-          candidateReferenceId: "cand_001",
-          center: { centerId: "tc_001", centerName: "Center One", sidhTcId: "TC164648" },
-          meta: { centerId: "tc_001", programId: "prg_001", registrationMode: "internal_registration" },
-          tpId: "TP_UAT",
-        },
+        payload: createCandidatePayload(),
         syncJobId: "sync_001",
       }),
     ).rejects.toBeInstanceOf(SidhConnectorError);
@@ -379,13 +378,7 @@ describe("SIDH connector", () => {
 
     await connector.registerCandidate({
       attemptId: "syncatt_004",
-      payload: {
-        candidate: { fullName: "Rohit Kumar" },
-        candidateReferenceId: "cand_001",
-        center: { centerId: "tc_001", centerName: "Center One", sidhTcId: "TC164648" },
-        meta: { centerId: "tc_001", programId: "prg_001", registrationMode: "internal_registration" },
-        tpId: "TP_UAT",
-      },
+      payload: createCandidatePayload(),
       syncJobId: "sync_001",
     });
 
@@ -440,13 +433,7 @@ describe("SIDH connector", () => {
 
     await connector.registerCandidate({
       attemptId: "syncatt_006",
-      payload: {
-        candidate: { fullName: "Rohit Kumar" },
-        candidateReferenceId: "cand_001",
-        center: { centerId: "tc_001", centerName: "Center One", sidhTcId: "TC164648" },
-        meta: { centerId: "tc_001", programId: "prg_001", registrationMode: "internal_registration" },
-        tpId: "TP_UAT",
-      },
+      payload: createCandidatePayload(),
       syncJobId: "sync_001",
     });
 
@@ -471,13 +458,7 @@ describe("SIDH connector", () => {
     await expect(
       connector.registerCandidate({
         attemptId: "syncatt_005",
-        payload: {
-          candidate: { fullName: "Rohit Kumar" },
-          candidateReferenceId: "cand_001",
-          center: { centerId: "tc_001", centerName: "Center One", sidhTcId: "TC164648" },
-          meta: { centerId: "tc_001", programId: "prg_001", registrationMode: "internal_registration" },
-          tpId: "TP_UAT",
-        },
+        payload: createCandidatePayload(),
         syncJobId: "sync_001",
       }),
     ).rejects.toMatchObject({
@@ -499,13 +480,7 @@ describe("SIDH connector", () => {
     await expect(
       connector.registerCandidate({
         attemptId: "syncatt_007",
-        payload: {
-          candidate: { fullName: "Rohit Kumar" },
-          candidateReferenceId: "cand_001",
-          center: { centerId: "tc_001", centerName: "Center One", sidhTcId: "TC164648" },
-          meta: { centerId: "tc_001", programId: "prg_001", registrationMode: "internal_registration" },
-          tpId: "TP_UAT",
-        },
+        payload: createCandidatePayload(),
         syncJobId: "sync_001",
       }),
     ).rejects.toMatchObject({

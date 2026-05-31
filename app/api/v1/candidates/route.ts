@@ -1,7 +1,7 @@
 import { handleRoute } from "@/lib/server/http";
 import { requireAuth } from "@/lib/server/services/session";
 import { createCandidate, listCandidates } from "@/lib/server/services/candidates";
-import { candidateListQuerySchema, createCandidateSchema } from "@/lib/server/validation";
+import { candidateListQuerySchema, createCandidateRegistrationSchema } from "@/lib/server/validation";
 
 export const runtime = "nodejs";
 
@@ -34,7 +34,7 @@ export async function POST(request: Request) {
     request,
     async () => {
       const session = await requireAuth(request);
-      const body = createCandidateSchema.parse(await request.json());
+      const body = createCandidateRegistrationSchema.parse(await request.json());
 
       return createCandidate(session, body, {
         requestId: request.headers.get("x-request-id") ?? undefined,

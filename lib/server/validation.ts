@@ -3,6 +3,12 @@ import { z } from "zod";
 import { ROLE_KEYS } from "@/lib/server/rbac";
 
 export const authPortalSchema = z.enum(["admin", "training_partner"]);
+const loginTextSchema = z.preprocess((value) => (typeof value === "string" ? value.trim() : ""), z.string());
+const loginPasswordSchema = z.preprocess((value) => (typeof value === "string" ? value : ""), z.string());
+const loginPortalSchema = z.preprocess(
+  (value) => (value === "admin" || value === "training_partner" ? value : undefined),
+  authPortalSchema.optional(),
+);
 const roleSchema = z.enum(ROLE_KEYS);
 const statusSchema = z.enum(["active", "inactive"]);
 const approvalStatusSchema = z.enum(["approved", "pending", "rejected", "expired"]);
@@ -19,9 +25,9 @@ const mobileNumberSchema = z
   .or(z.literal(""));
 
 export const loginSchema = z.object({
-  email: z.string().trim().email(),
-  password: z.string().min(8),
-  portal: authPortalSchema.optional(),
+  email: loginTextSchema,
+  password: loginPasswordSchema,
+  portal: loginPortalSchema,
 });
 
 export const forgotPasswordRequestSchema = z.object({
@@ -147,6 +153,17 @@ export const createSectorSchema = z.object({
   status: statusSchema.default("active"),
 });
 
+const optionalDateStringSchema = z.preprocess(
+  (value) => {
+    if (typeof value !== "string") {
+      return value;
+    }
+
+    return value.trim() === "" ? undefined : value;
+  },
+  z.string().date().optional(),
+);
+
 export const createSchemeSchema = z
   .object({
     name: z.string().trim().min(2).max(160),
@@ -157,17 +174,14 @@ export const createSchemeSchema = z
     sidhSchemeId: z.string().trim().optional(),
     fundingType: z.string().trim().optional(),
     beneficiaryType: z.string().trim().optional(),
-    validFrom: z.string().date().optional(),
-    validTo: z.string().date().optional(),
+    validFrom: optionalDateStringSchema,
+    validTo: optionalDateStringSchema,
   })
   .superRefine((value, ctx) => {
-    if (
-      value.syncEnabled &&
-      (!value.sidhSchemeId || !value.fundingType || !value.beneficiaryType || !value.validFrom || !value.validTo)
-    ) {
+    if (value.syncEnabled && !value.sidhSchemeId) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Sync-enabled schemes require SIDH metadata and validity dates",
+        message: "Sync-enabled schemes require a SIDH Scheme ID",
         path: ["syncEnabled"],
       });
     }
@@ -183,8 +197,8 @@ export const updateSchemeSchema = z
     sidhSchemeId: z.string().trim().optional(),
     fundingType: z.string().trim().optional(),
     beneficiaryType: z.string().trim().optional(),
-    validFrom: z.string().date().optional(),
-    validTo: z.string().date().optional(),
+    validFrom: optionalDateStringSchema,
+    validTo: optionalDateStringSchema,
   })
   .refine((value) => Object.values(value).some((entry) => entry !== undefined), {
     message: "At least one field is required",

@@ -1,6 +1,6 @@
 import { handleRoute } from "@/lib/server/http";
 import { requireAuth } from "@/lib/server/services/session";
-import { updateTrainingCenter } from "@/lib/server/services/training-centers";
+import { deleteTrainingCenter, updateTrainingCenter } from "@/lib/server/services/training-centers";
 import { updateTrainingCenterSchema } from "@/lib/server/validation";
 
 export const runtime = "nodejs";
@@ -27,6 +27,21 @@ export async function PATCH(request: Request, context: RouteContext) {
     },
     {
       message: "Training center updated successfully",
+    },
+  );
+}
+
+export async function DELETE(request: Request, context: RouteContext) {
+  return handleRoute(
+    request,
+    async () => {
+      const session = await requireAuth(request);
+      const { centerId } = await context.params;
+
+      return deleteTrainingCenter(session, centerId, request.headers.get("x-request-id") ?? undefined);
+    },
+    {
+      message: "Training center deleted successfully",
     },
   );
 }

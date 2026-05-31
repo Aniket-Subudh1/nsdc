@@ -1,6 +1,6 @@
 import { handleRoute } from "@/lib/server/http";
 import { requireAuth } from "@/lib/server/services/session";
-import { updateScheme } from "@/lib/server/services/masters";
+import { deleteScheme, updateScheme } from "@/lib/server/services/masters";
 import { updateSchemeSchema } from "@/lib/server/validation";
 
 export const runtime = "nodejs";
@@ -30,6 +30,21 @@ export async function PATCH(request: Request, context: RouteContext) {
     },
     {
       message: "Scheme updated successfully",
+    },
+  );
+}
+
+export async function DELETE(request: Request, context: RouteContext) {
+  return handleRoute(
+    request,
+    async () => {
+      const session = await requireAuth(request);
+      const { schemeId } = await context.params;
+
+      return deleteScheme(session, schemeId, request.headers.get("x-request-id") ?? undefined);
+    },
+    {
+      message: "Scheme deleted successfully",
     },
   );
 }

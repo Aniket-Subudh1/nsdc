@@ -9,7 +9,8 @@ export async function POST(request: Request) {
   const requestId = getRequestId(request.headers);
 
   try {
-    const body = loginSchema.parse(await request.json());
+    const requestBody = await request.json().catch(() => ({}));
+    const body = loginSchema.parse(requestBody && typeof requestBody === "object" && !Array.isArray(requestBody) ? requestBody : {});
     const result = await loginUser({
       email: body.email,
       password: body.password,

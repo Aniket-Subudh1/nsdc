@@ -1,6 +1,7 @@
 import { ApiError } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
 import { connectToDatabase } from "@/lib/server/mongodb";
+import { BatchModel } from "@/lib/server/models/batch";
 import { CourseModel, type CourseDocument } from "@/lib/server/models/course";
 import { CourseVersionModel } from "@/lib/server/models/course-version";
 import { ProgramModel } from "@/lib/server/models/program";
@@ -146,6 +147,8 @@ function serializeProgram(program: {
   programId: string;
   status: "active" | "inactive";
   syncToSidh: boolean;
+  verifiedAt?: Date | null;
+  verifiedForSidh: boolean;
   updatedAt?: Date;
 }) {
   return {
@@ -155,6 +158,8 @@ function serializeProgram(program: {
     code: program.code,
     description: program.description ?? null,
     syncToSidh: program.syncToSidh,
+    verifiedForSidh: program.verifiedForSidh,
+    verifiedAt: toIsoDate(program.verifiedAt),
     status: program.status,
     createdAt: toIsoDate(program.createdAt),
     updatedAt: toIsoDate(program.updatedAt),
@@ -196,6 +201,8 @@ function serializeScheme(scheme: {
   updatedAt?: Date;
   validFrom?: Date | null;
   validTo?: Date | null;
+  verifiedAt?: Date | null;
+  verifiedForSidh: boolean;
 }) {
   return {
     id: scheme.schemeId,
@@ -205,6 +212,8 @@ function serializeScheme(scheme: {
     description: scheme.description ?? null,
     status: scheme.status,
     syncEnabled: scheme.syncEnabled,
+    verifiedForSidh: scheme.verifiedForSidh,
+    verifiedAt: toIsoDate(scheme.verifiedAt),
     sidhSchemeId: scheme.sidhSchemeId ?? null,
     fundingType: scheme.fundingType ?? null,
     beneficiaryType: scheme.beneficiaryType ?? null,
@@ -340,12 +349,9 @@ async function ensureNoCourseValidityOverlap(input: {
   }
 }
 
-async function ensureSchemeSyncMetadata(input: Pick<SchemeInput, "beneficiaryType" | "fundingType" | "sidhSchemeId" | "syncEnabled" | "validFrom" | "validTo">) {
-  if (
-    input.syncEnabled &&
-    (!input.sidhSchemeId || !input.fundingType || !input.beneficiaryType || !input.validFrom || !input.validTo)
-  ) {
-    throw new ApiError(400, "SCHEME_METADATA_INCOMPLETE", "Sync-enabled schemes require complete SIDH metadata");
+async function ensureSchemeSyncMetadata(input: Pick<SchemeInput, "sidhSchemeId" | "syncEnabled" | "validFrom" | "validTo">) {
+  if (input.syncEnabled && !input.sidhSchemeId) {
+    throw new ApiError(400, "SCHEME_METADATA_INCOMPLETE", "Sync-enabled schemes require a SIDH Scheme ID");
   }
 
   if (input.validFrom && input.validTo) {
@@ -429,6 +435,9 @@ export async function createProgram(actor: AuthSession, input: ProgramInput) {
     code: normalizeString(input.code),
     description: input.description?.trim() || null,
     syncToSidh: input.syncToSidh,
+    verifiedForSidh: false,
+    verifiedAt: null,
+    verifiedByUserId: null,
     status: input.status,
     createdByUserId: actor.user.id,
     updatedByUserId: actor.user.id,
@@ -483,6 +492,17 @@ export async function updateProgram(
     program.status = input.status;
   }
 
+  const touchedFields = [input.name, input.code, input.description, input.status].some(
+    (value) => value !== undefined,
+  );
+
+  if (touchedFields) {
+    program.verifiedForSidh = false;
+    program.verifiedAt = null;
+    program.verifiedByUserId = null;
+    program.syncToSidh = false;
+  }
+
   program.updatedByUserId = actor.user.id;
   await program.save();
 
@@ -493,6 +513,120 @@ export async function updateProgram(
     entityType: "program",
     metadata: input,
     requestId: input.requestId,
+  });
+
+  return serializeProgram(program);
+}
+
+export async function verifyProgramForSidh(actor: AuthSession, programId: string, requestId?: string) {
+  await connectToDatabase();
+  ensureCanWriteMasters(actor);
+
+  const program = await ProgramModel.findOne({ programId: normalizeString(programId) });
+
+  if (!program) {
+    throw new ApiError(404, "PROGRAM_NOT_FOUND", "Program not found");
+  }
+
+  if (program.status !== "active") {
+    throw new ApiError(400, "PROGRAM_NOT_ACTIVE", "Only active programs can be verified for SIDH readiness");
+  }
+
+  program.verifiedForSidh = true;
+  program.verifiedAt = new Date();
+  program.verifiedByUserId = actor.user.id;
+  program.updatedByUserId = actor.user.id;
+  await program.save();
+
+  await writeAuditLog({
+    action: "masters.program.verified",
+    actorUserId: actor.user.id,
+    entityId: program.programId,
+    entityType: "program",
+    metadata: { code: program.code },
+    requestId,
+  });
+
+  return serializeProgram(program);
+}
+
+export async function deleteProgram(actor: AuthSession, programId: string, requestId?: string) {
+  await connectToDatabase();
+  ensureCanWriteMasters(actor);
+
+  const normalizedProgramId = normalizeString(programId);
+  const program = await ProgramModel.findOne({ programId: normalizedProgramId });
+
+  if (!program) {
+    throw new ApiError(404, "PROGRAM_NOT_FOUND", "Program not found");
+  }
+
+  const [linkedCenter, linkedCourse] = await Promise.all([
+    TrainingCenterModel.findOne({ programIds: normalizedProgramId }).select("centerId centerName"),
+    CourseModel.findOne({ programIds: normalizedProgramId }).select("courseId courseName"),
+  ]);
+
+  if (linkedCenter) {
+    throw new ApiError(
+      409,
+      "PROGRAM_IN_USE",
+      `Program is linked to training center ${linkedCenter.centerName ?? linkedCenter.centerId}`,
+    );
+  }
+
+  if (linkedCourse) {
+    throw new ApiError(
+      409,
+      "PROGRAM_IN_USE",
+      `Program is linked to course ${linkedCourse.courseName ?? linkedCourse.courseId}`,
+    );
+  }
+
+  await program.deleteOne();
+
+  await writeAuditLog({
+    action: "masters.program.deleted",
+    actorUserId: actor.user.id,
+    entityId: program.programId,
+    entityType: "program",
+    metadata: { code: program.code, name: program.name },
+    requestId,
+  });
+
+  return serializeProgram(program);
+}
+
+export async function syncProgramToSidh(actor: AuthSession, programId: string, requestId?: string) {
+  await connectToDatabase();
+  ensureCanWriteMasters(actor);
+
+  const program = await ProgramModel.findOne({ programId: normalizeString(programId) });
+
+  if (!program) {
+    throw new ApiError(404, "PROGRAM_NOT_FOUND", "Program not found");
+  }
+
+  if (program.status !== "active") {
+    throw new ApiError(400, "PROGRAM_NOT_ACTIVE", "Only active programs can be marked ready for SIDH sync");
+  }
+
+  if (!program.verifiedForSidh) {
+    throw new ApiError(400, "PROGRAM_NOT_VERIFIED", "Verify the program before marking it ready for SIDH");
+  }
+
+  if (!program.syncToSidh) {
+    program.syncToSidh = true;
+    program.updatedByUserId = actor.user.id;
+    await program.save();
+  }
+
+  await writeAuditLog({
+    action: "masters.program.sync_requested",
+    actorUserId: actor.user.id,
+    entityId: program.programId,
+    entityType: "program",
+    metadata: { code: program.code, syncToSidh: program.syncToSidh },
+    requestId,
   });
 
   return serializeProgram(program);
@@ -558,6 +692,41 @@ export async function createSector(actor: AuthSession, input: SectorInput) {
   return serializeSector(sector);
 }
 
+export async function deleteSector(actor: AuthSession, sectorId: string, requestId?: string) {
+  await connectToDatabase();
+  ensureCanWriteMasters(actor);
+
+  const normalizedSectorId = normalizeString(sectorId);
+  const sector = await SectorModel.findOne({ sectorId: normalizedSectorId });
+
+  if (!sector) {
+    throw new ApiError(404, "SECTOR_NOT_FOUND", "Sector not found");
+  }
+
+  const linkedCourse = await CourseModel.findOne({ sectorId: normalizedSectorId }).select("courseId courseName");
+
+  if (linkedCourse) {
+    throw new ApiError(
+      409,
+      "SECTOR_IN_USE",
+      `Sector is linked to course ${linkedCourse.courseName ?? linkedCourse.courseId}`,
+    );
+  }
+
+  await sector.deleteOne();
+
+  await writeAuditLog({
+    action: "masters.sector.deleted",
+    actorUserId: actor.user.id,
+    entityId: sector.sectorId,
+    entityType: "sector",
+    metadata: { code: sector.code, name: sector.name },
+    requestId,
+  });
+
+  return serializeSector(sector);
+}
+
 export async function listSchemes(
   actor: AuthSession,
   input: ListMastersInput & { syncEnabled?: boolean },
@@ -611,6 +780,9 @@ export async function createScheme(actor: AuthSession, input: SchemeInput) {
     description: input.description?.trim() || null,
     status: input.status,
     syncEnabled: input.syncEnabled,
+    verifiedForSidh: false,
+    verifiedAt: null,
+    verifiedByUserId: null,
     sidhSchemeId: input.sidhSchemeId?.trim() || null,
     fundingType: input.fundingType?.trim() || null,
     beneficiaryType: input.beneficiaryType?.trim() || null,
@@ -645,8 +817,6 @@ export async function updateScheme(actor: AuthSession, schemeId: string, input: 
   await ensureSchemeSyncMetadata({
     syncEnabled: input.syncEnabled ?? scheme.syncEnabled,
     sidhSchemeId: input.sidhSchemeId ?? scheme.sidhSchemeId ?? undefined,
-    fundingType: input.fundingType ?? scheme.fundingType ?? undefined,
-    beneficiaryType: input.beneficiaryType ?? scheme.beneficiaryType ?? undefined,
     validFrom: input.validFrom ?? (scheme.validFrom ? scheme.validFrom.toISOString().slice(0, 10) : undefined),
     validTo: input.validTo ?? (scheme.validTo ? scheme.validTo.toISOString().slice(0, 10) : undefined),
   });
@@ -682,6 +852,25 @@ export async function updateScheme(actor: AuthSession, schemeId: string, input: 
     scheme.validTo = input.validTo ? new Date(input.validTo) : null;
   }
 
+  const touchedFields = [
+    input.name,
+    input.code,
+    input.description,
+    input.status,
+    input.sidhSchemeId,
+    input.fundingType,
+    input.beneficiaryType,
+    input.validFrom,
+    input.validTo,
+  ].some((value) => value !== undefined);
+
+  if (touchedFields) {
+    scheme.verifiedForSidh = false;
+    scheme.verifiedAt = null;
+    scheme.verifiedByUserId = null;
+    scheme.syncEnabled = false;
+  }
+
   scheme.updatedByUserId = actor.user.id;
   await scheme.save();
 
@@ -692,6 +881,127 @@ export async function updateScheme(actor: AuthSession, schemeId: string, input: 
     entityType: "scheme",
     metadata: input,
     requestId: input.requestId,
+  });
+
+  return serializeScheme(scheme);
+}
+
+export async function verifySchemeForSidh(actor: AuthSession, schemeId: string, requestId?: string) {
+  await connectToDatabase();
+  ensureCanWriteMasters(actor);
+
+  const scheme = await SchemeModel.findOne({ schemeId: normalizeString(schemeId) });
+
+  if (!scheme) {
+    throw new ApiError(404, "SCHEME_NOT_FOUND", "Scheme not found");
+  }
+
+  if (scheme.status !== "active") {
+    throw new ApiError(400, "SCHEME_NOT_ACTIVE", "Only active schemes can be verified for SIDH readiness");
+  }
+
+  scheme.verifiedForSidh = true;
+  scheme.verifiedAt = new Date();
+  scheme.verifiedByUserId = actor.user.id;
+  scheme.updatedByUserId = actor.user.id;
+  await scheme.save();
+
+  await writeAuditLog({
+    action: "masters.scheme.verified",
+    actorUserId: actor.user.id,
+    entityId: scheme.schemeId,
+    entityType: "scheme",
+    metadata: { code: scheme.code },
+    requestId,
+  });
+
+  return serializeScheme(scheme);
+}
+
+export async function deleteScheme(actor: AuthSession, schemeId: string, requestId?: string) {
+  await connectToDatabase();
+  ensureCanWriteMasters(actor);
+
+  const normalizedSchemeId = normalizeString(schemeId);
+  const scheme = await SchemeModel.findOne({ schemeId: normalizedSchemeId });
+
+  if (!scheme) {
+    throw new ApiError(404, "SCHEME_NOT_FOUND", "Scheme not found");
+  }
+
+  const [linkedCourse, linkedBatch] = await Promise.all([
+    CourseModel.findOne({ schemeIds: normalizedSchemeId }).select("courseId courseName"),
+    BatchModel.findOne({ schemeId: normalizedSchemeId }).select("batchId batchName batchCode"),
+  ]);
+
+  if (linkedCourse) {
+    throw new ApiError(
+      409,
+      "SCHEME_IN_USE",
+      `Scheme is linked to course ${linkedCourse.courseName ?? linkedCourse.courseId}`,
+    );
+  }
+
+  if (linkedBatch) {
+    throw new ApiError(
+      409,
+      "SCHEME_IN_USE",
+      `Scheme is linked to batch ${linkedBatch.batchName ?? linkedBatch.batchCode ?? linkedBatch.batchId}`,
+    );
+  }
+
+  await scheme.deleteOne();
+
+  await writeAuditLog({
+    action: "masters.scheme.deleted",
+    actorUserId: actor.user.id,
+    entityId: scheme.schemeId,
+    entityType: "scheme",
+    metadata: { code: scheme.code, name: scheme.name },
+    requestId,
+  });
+
+  return serializeScheme(scheme);
+}
+
+export async function syncSchemeToSidh(actor: AuthSession, schemeId: string, requestId?: string) {
+  await connectToDatabase();
+  ensureCanWriteMasters(actor);
+
+  const scheme = await SchemeModel.findOne({ schemeId: normalizeString(schemeId) });
+
+  if (!scheme) {
+    throw new ApiError(404, "SCHEME_NOT_FOUND", "Scheme not found");
+  }
+
+  if (scheme.status !== "active") {
+    throw new ApiError(400, "SCHEME_NOT_ACTIVE", "Only active schemes can be marked ready for SIDH sync");
+  }
+
+  if (!scheme.verifiedForSidh) {
+    throw new ApiError(400, "SCHEME_NOT_VERIFIED", "Verify the scheme before marking it ready for SIDH");
+  }
+
+  await ensureSchemeSyncMetadata({
+    syncEnabled: true,
+    sidhSchemeId: scheme.sidhSchemeId ?? undefined,
+    validFrom: scheme.validFrom ? scheme.validFrom.toISOString().slice(0, 10) : undefined,
+    validTo: scheme.validTo ? scheme.validTo.toISOString().slice(0, 10) : undefined,
+  });
+
+  if (!scheme.syncEnabled) {
+    scheme.syncEnabled = true;
+    scheme.updatedByUserId = actor.user.id;
+    await scheme.save();
+  }
+
+  await writeAuditLog({
+    action: "masters.scheme.sync_requested",
+    actorUserId: actor.user.id,
+    entityId: scheme.schemeId,
+    entityType: "scheme",
+    metadata: { code: scheme.code, syncEnabled: scheme.syncEnabled },
+    requestId,
   });
 
   return serializeScheme(scheme);
@@ -919,6 +1229,45 @@ export async function updateCourse(actor: AuthSession, courseId: string, input: 
     entityType: "course",
     metadata: { version: course.version, input },
     requestId: input.requestId,
+  });
+
+  return serializeCourse(course);
+}
+
+export async function deleteCourse(actor: AuthSession, courseId: string, requestId?: string) {
+  await connectToDatabase();
+  ensureCanWriteMasters(actor);
+
+  const normalizedCourseId = normalizeString(courseId);
+  const course = await CourseModel.findOne({ courseId: normalizedCourseId });
+
+  if (!course) {
+    throw new ApiError(404, "COURSE_NOT_FOUND", "Course not found");
+  }
+
+  const linkedBatch = await BatchModel.findOne({ courseId: normalizedCourseId }).select("batchId batchName batchCode");
+
+  if (linkedBatch) {
+    throw new ApiError(
+      409,
+      "COURSE_IN_USE",
+      `Course is linked to batch ${linkedBatch.batchName ?? linkedBatch.batchCode ?? linkedBatch.batchId}`,
+    );
+  }
+
+  await Promise.all([course.deleteOne(), CourseVersionModel.deleteMany({ courseId: normalizedCourseId })]);
+
+  await writeAuditLog({
+    action: "masters.course.deleted",
+    actorUserId: actor.user.id,
+    entityId: course.courseId,
+    entityType: "course",
+    metadata: {
+      internalCourseCode: course.internalCourseCode,
+      sidhCourseId: course.sidhCourseId,
+      version: course.version,
+    },
+    requestId,
   });
 
   return serializeCourse(course);

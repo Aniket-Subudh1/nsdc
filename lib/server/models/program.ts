@@ -29,6 +29,18 @@ const programSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    verifiedForSidh: {
+      type: Boolean,
+      default: false,
+    },
+    verifiedAt: {
+      type: Date,
+      default: null,
+    },
+    verifiedByUserId: {
+      type: String,
+      default: null,
+    },
     status: {
       type: String,
       enum: ["active", "inactive"],

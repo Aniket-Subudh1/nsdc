@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   attendanceImportRowSchema,
   createBatchSchema,
+  createSchemeSchema,
   updateBatchSchema,
+  updateSchemeSchema,
 } from "@/lib/server/validation";
 
 describe("batch validation", () => {
@@ -78,6 +80,40 @@ describe("attendance validation", () => {
     ).toMatchObject({
       attendanceStatus: "present",
       candidateId: "cand_001",
+    });
+  });
+});
+
+describe("scheme validation", () => {
+  it("accepts blank optional dates on create", () => {
+    expect(
+      createSchemeSchema.parse({
+        code: "Scheme_2",
+        name: "Fee Based",
+        status: "active",
+        syncEnabled: false,
+        validFrom: "",
+        validTo: "",
+      }),
+    ).toMatchObject({
+      code: "Scheme_2",
+      name: "Fee Based",
+      validFrom: undefined,
+      validTo: undefined,
+    });
+  });
+
+  it("accepts blank optional dates on update", () => {
+    expect(
+      updateSchemeSchema.parse({
+        code: "Scheme_2_Updated",
+        validFrom: "",
+        validTo: "",
+      }),
+    ).toMatchObject({
+      code: "Scheme_2_Updated",
+      validFrom: undefined,
+      validTo: undefined,
     });
   });
 });

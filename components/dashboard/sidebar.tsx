@@ -17,8 +17,8 @@ export function SidebarDemo({
   return (
     <div
       className={cn(
-        "flex w-full flex-1 flex-col overflow-hidden bg-gray-100 md:flex-row",
-        "h-screen",
+        "flex w-full flex-col md:flex-row bg-slate-50",
+        "h-screen overflow-hidden",
       )}
     >
       <Sidebar open={open} setOpen={setOpen}>
@@ -46,7 +46,7 @@ export function SidebarDemo({
           </div>
         </SidebarBody>
       </Sidebar>
-      <main className="flex flex-1 flex-col overflow-y-auto">
+      <main className="flex flex-1 flex-col overflow-y-auto min-h-0">
         {children}
       </main>
     </div>

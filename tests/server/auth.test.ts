@@ -7,6 +7,7 @@ import {
   verifyPassword,
 } from "@/lib/server/auth";
 import { resetEnvCache } from "@/lib/server/env";
+import { loginSchema } from "@/lib/server/validation";
 
 describe("auth", () => {
   const originalEnv = process.env;
@@ -44,6 +45,48 @@ describe("auth", () => {
 
     await expect(verifyPassword("StrongPass@123", hash)).resolves.toBe(true);
     await expect(verifyPassword("WrongPass@123", hash)).resolves.toBe(false);
+  });
+
+  it("lets login attempts reach credential verification even when the password is short", () => {
+    expect(
+      loginSchema.parse({
+        email: "admin@example.com",
+        password: "short",
+        portal: "admin",
+      }),
+    ).toMatchObject({
+      email: "admin@example.com",
+      password: "short",
+      portal: "admin",
+    });
+  });
+
+  it("lets empty login passwords reach credential verification", () => {
+    expect(
+      loginSchema.parse({
+        email: "admin@example.com",
+        password: "",
+        portal: "admin",
+      }),
+    ).toMatchObject({
+      email: "admin@example.com",
+      password: "",
+      portal: "admin",
+    });
+  });
+
+  it("normalizes malformed login fields instead of rejecting the request body", () => {
+    expect(
+      loginSchema.parse({
+        email: "not-an-email",
+        password: null,
+        portal: "unexpected",
+      }),
+    ).toEqual({
+      email: "not-an-email",
+      password: "",
+      portal: undefined,
+    });
   });
 
   it("signs and verifies access tokens", async () => {

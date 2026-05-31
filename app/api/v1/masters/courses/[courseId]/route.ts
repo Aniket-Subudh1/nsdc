@@ -1,6 +1,6 @@
 import { handleRoute } from "@/lib/server/http";
 import { requireAuth } from "@/lib/server/services/session";
-import { updateCourse } from "@/lib/server/services/masters";
+import { deleteCourse, updateCourse } from "@/lib/server/services/masters";
 import { updateCourseSchema } from "@/lib/server/validation";
 
 export const runtime = "nodejs";
@@ -27,6 +27,21 @@ export async function PATCH(request: Request, context: RouteContext) {
     },
     {
       message: "Course updated successfully",
+    },
+  );
+}
+
+export async function DELETE(request: Request, context: RouteContext) {
+  return handleRoute(
+    request,
+    async () => {
+      const session = await requireAuth(request);
+      const { courseId } = await context.params;
+
+      return deleteCourse(session, courseId, request.headers.get("x-request-id") ?? undefined);
+    },
+    {
+      message: "Course deleted successfully",
     },
   );
 }

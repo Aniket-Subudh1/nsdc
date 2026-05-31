@@ -1,6 +1,8 @@
 import { ApiError } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
 import { connectToDatabase } from "@/lib/server/mongodb";
+import { BatchModel } from "@/lib/server/models/batch";
+import { CandidateModel } from "@/lib/server/models/candidate";
 import { ProgramModel } from "@/lib/server/models/program";
 import { TrainingCenterModel } from "@/lib/server/models/training-center";
 import { TrainingCenterProgramModel } from "@/lib/server/models/training-center-program";
@@ -45,6 +47,8 @@ function serializeTrainingCenter(center: {
   state: string;
   status: "active" | "inactive";
   updatedAt?: Date;
+  verifiedAt?: Date | null;
+  verifiedForSidh?: boolean;
 }) {
   return {
     id: center.centerId,
@@ -55,6 +59,8 @@ function serializeTrainingCenter(center: {
     district: center.district,
     state: center.state,
     programIds: center.programIds ?? [],
+    verifiedForSidh: center.verifiedForSidh ?? false,
+    verifiedAt: center.verifiedAt?.toISOString() ?? null,
     status: center.status,
     createdAt: center.createdAt?.toISOString() ?? null,
     updatedAt: center.updatedAt?.toISOString() ?? null,
@@ -173,6 +179,9 @@ export async function createTrainingCenter(actor: AuthSession, input: CreateTrai
     district: input.district.trim(),
     state: input.state.trim(),
     programIds: normalizedProgramIds,
+    verifiedForSidh: false,
+    verifiedAt: null,
+    verifiedByUserId: null,
     status: input.status,
     createdByUserId: actor.user.id,
   });
@@ -246,6 +255,9 @@ export async function updateTrainingCenter(
   }
 
   center.programIds = nextProgramIds;
+  center.verifiedForSidh = false;
+  center.verifiedAt = null;
+  center.verifiedByUserId = null;
   await center.save();
   await syncTrainingCenterPrograms(center.centerId, nextProgramIds, actor.user.id);
 
@@ -256,6 +268,88 @@ export async function updateTrainingCenter(
     entityType: "training_center",
     metadata: input,
     requestId: input.requestId,
+  });
+
+  return serializeTrainingCenter(center);
+}
+
+export async function verifyTrainingCenterForSidh(actor: AuthSession, centerId: string, requestId?: string) {
+  await connectToDatabase();
+  ensureCanWriteCenters(actor);
+
+  const center = await getScopedCenter(actor, centerId);
+
+  if (center.status !== "active") {
+    throw new ApiError(400, "CENTER_NOT_ACTIVE", "Only active training centers can be verified for SIDH readiness");
+  }
+
+  await ensureActiveProgramsExist(center.programIds ?? []);
+
+  center.verifiedForSidh = true;
+  center.verifiedAt = new Date();
+  center.verifiedByUserId = actor.user.id;
+  await center.save();
+
+  await writeAuditLog({
+    action: "masters.training_center.verified",
+    actorUserId: actor.user.id,
+    entityId: center.centerId,
+    entityType: "training_center",
+    metadata: { centerCode: center.centerCode, sidhTcId: center.sidhTcId ?? null },
+    requestId,
+  });
+
+  return serializeTrainingCenter(center);
+}
+
+export async function deleteTrainingCenter(actor: AuthSession, centerId: string, requestId?: string) {
+  await connectToDatabase();
+  ensureCanWriteCenters(actor);
+
+  const center = await getScopedCenter(actor, centerId);
+
+  const [linkedBatch, linkedCandidate, linkedUser] = await Promise.all([
+    BatchModel.findOne({ centerId: center.centerId }).select("batchId batchName batchCode"),
+    CandidateModel.findOne({ centerId: center.centerId }).select("candidateId fullName"),
+    UserModel.findOne({ centerIds: center.centerId }).select("userId name"),
+  ]);
+
+  if (linkedBatch) {
+    throw new ApiError(
+      409,
+      "CENTER_IN_USE",
+      `Training center is linked to batch ${linkedBatch.batchName ?? linkedBatch.batchCode ?? linkedBatch.batchId}`,
+    );
+  }
+
+  if (linkedCandidate) {
+    throw new ApiError(
+      409,
+      "CENTER_IN_USE",
+      `Training center is linked to candidate ${linkedCandidate.fullName ?? linkedCandidate.candidateId}`,
+    );
+  }
+
+  if (linkedUser) {
+    throw new ApiError(
+      409,
+      "CENTER_IN_USE",
+      `Training center is assigned to user ${linkedUser.name ?? linkedUser.userId}`,
+    );
+  }
+
+  await Promise.all([
+    TrainingCenterProgramModel.deleteMany({ centerId: center.centerId }),
+    center.deleteOne(),
+  ]);
+
+  await writeAuditLog({
+    action: "masters.training_center.deleted",
+    actorUserId: actor.user.id,
+    entityId: center.centerId,
+    entityType: "training_center",
+    metadata: { centerCode: center.centerCode, centerName: center.centerName },
+    requestId,
   });
 
   return serializeTrainingCenter(center);

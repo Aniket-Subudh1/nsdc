@@ -121,6 +121,7 @@ type ServiceCenter = {
   programIds?: string[];
   sidhTcId?: string | null;
   status: string;
+  verifiedForSidh?: boolean;
 };
 
 type ServiceBatchCandidate = {
@@ -494,6 +495,7 @@ async function ensureTrainingCenter(centerId: string) {
     programIds: 1,
     sidhTcId: 1,
     status: 1,
+    verifiedForSidh: 1,
   })) as ServiceCenter | null;
 
   if (!center) {
@@ -603,11 +605,15 @@ async function validateBatchMasterData(input: {
       throw new ApiError(400, "CENTER_SIDH_TC_ID_MISSING", "Selected training center is missing SIDH TC metadata");
     }
 
+    if (!center.verifiedForSidh) {
+      throw new ApiError(400, "CENTER_NOT_VERIFIED", "Verify the training center before using it for SIDH sync");
+    }
+
     if (!course.sidhCourseId) {
       throw new ApiError(400, "COURSE_SIDH_MAPPING_MISSING", "Selected course is missing SIDH mapping metadata");
     }
 
-    if (!scheme.syncEnabled || !scheme.sidhSchemeId || !scheme.beneficiaryType || !scheme.fundingType) {
+    if (!scheme.syncEnabled || !scheme.sidhSchemeId) {
       throw new ApiError(400, "SCHEME_SYNC_METADATA_INCOMPLETE", "Selected scheme is missing required SIDH sync metadata");
     }
   }

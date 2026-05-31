@@ -39,6 +39,18 @@ const trainingCenterSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    verifiedForSidh: {
+      type: Boolean,
+      default: false,
+    },
+    verifiedAt: {
+      type: Date,
+      default: null,
+    },
+    verifiedByUserId: {
+      type: String,
+      default: null,
+    },
     status: {
       type: String,
       enum: ["active", "inactive"],

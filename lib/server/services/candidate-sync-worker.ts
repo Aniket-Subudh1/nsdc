@@ -76,6 +76,7 @@ type WorkerTrainingCenter = {
   centerName?: string | null;
   sidhTcId?: string | null;
   status?: string;
+  verifiedForSidh?: boolean;
 };
 
 type WorkerProgram = {
@@ -234,7 +235,7 @@ async function loadCandidateContext(candidateId: string) {
   }
 
   const [center, program] = await Promise.all([
-    TrainingCenterModel.findOne({ centerId: candidate.centerId }).select({ centerId: 1, centerName: 1, sidhTcId: 1, status: 1 }),
+    TrainingCenterModel.findOne({ centerId: candidate.centerId }).select({ centerId: 1, centerName: 1, sidhTcId: 1, status: 1, verifiedForSidh: 1 }),
     ProgramModel.findOne({ programId: candidate.programId }).select({ name: 1, programId: 1, status: 1, syncToSidh: 1 }),
   ]);
 
@@ -453,6 +454,22 @@ async function processClaimedJob(actor: SyncActor, job: WorkerSyncJob, connector
       code: "CENTER_SIDH_TC_ID_MISSING",
       manualReview: true,
       message: "Training center is missing SIDH TC metadata",
+    });
+    await finalizeManualReview(actor, candidate, job, attemptId, now, error, requestId);
+    return {
+      candidateId: candidate.candidateId,
+      message: error.message,
+      remoteCandidateId: null,
+      status: "manual_review",
+      syncJobId: job.syncJobId,
+    };
+  }
+
+  if (!center?.verifiedForSidh) {
+    const error = new SidhConnectorError({
+      code: "CENTER_NOT_VERIFIED",
+      manualReview: true,
+      message: "Training center must be verified before SIDH registration sync",
     });
     await finalizeManualReview(actor, candidate, job, attemptId, now, error, requestId);
     return {

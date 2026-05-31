@@ -245,6 +245,7 @@ type ProcessDependencies = {
 };
 
 const ACTIVE_BATCH_STATUSES = ["draft", "ready", "active"];
+const UNASSIGNED_CENTER_ID = "unassigned";
 
 function ensureCanReadBatches(actor: AuthSession) {
   if (!getPermissionsForRoles(actor.user.roles).includes("batches:read")) {
@@ -912,14 +913,32 @@ function calculateNextRunAt(retryCount: number, now: Date) {
 }
 
 async function validateBatchSyncEligibility(batch: ServiceBatch) {
-  return validateBatchMasterData({
-    centerId: batch.centerId,
-    courseId: batch.courseId,
-    endDate: batch.endDate,
-    schemeId: batch.schemeId,
-    startDate: batch.startDate,
-    syncEnabled: batch.syncEnabled,
-  });
+  if (batch.centerId !== UNASSIGNED_CENTER_ID) {
+    return validateBatchMasterData({
+      centerId: batch.centerId,
+      courseId: batch.courseId,
+      endDate: batch.endDate,
+      schemeId: batch.schemeId,
+      startDate: batch.startDate,
+      syncEnabled: batch.syncEnabled,
+    });
+  }
+
+  const [course, scheme] = await Promise.all([ensureCourse(batch.courseId), ensureScheme(batch.schemeId)]);
+
+  if (course.status !== "active" || course.approvalStatus !== "approved") {
+    throw new ApiError(400, "COURSE_NOT_SYNC_ELIGIBLE", "Selected course mapping is not approved and active");
+  }
+
+  if (course.validityStartDate.getTime() > batch.startDate.getTime() || course.validityEndDate.getTime() < batch.endDate.getTime()) {
+    throw new ApiError(400, "COURSE_VALIDITY_INVALID", "Selected course mapping is not valid for the requested batch dates");
+  }
+
+  if ((course.schemeIds ?? []).length > 0 && !(course.schemeIds ?? []).includes(batch.schemeId)) {
+    throw new ApiError(400, "COURSE_SCHEME_MISMATCH", "Selected course is not mapped to the chosen scheme");
+  }
+
+  return { center: null, course, scheme };
 }
 
 async function validateEnrollmentEligibility(batch: ServiceBatch, selectedBatchCandidates?: ServiceBatchCandidate[]) {
@@ -970,19 +989,28 @@ async function validateEnrollmentEligibility(batch: ServiceBatch, selectedBatchC
 export async function createBatch(actor: AuthSession, input: CreateBatchInput, requestId?: string) {
   await connectToDatabase();
   ensureCanWriteBatches(actor);
-  resolveScopedCenterFilter(actor, input.centerId);
+  const centerId = normalizeString(input.centerId) || UNASSIGNED_CENTER_ID;
+  const hasAssignedCenter = centerId !== UNASSIGNED_CENTER_ID;
+
+  if (hasAssignedCenter) {
+    resolveScopedCenterFilter(actor, centerId);
+  }
 
   const startDate = parseDate(input.startDate);
   const endDate = parseDate(input.endDate);
   const assessmentDate = input.assessmentDate ? parseDate(input.assessmentDate) : null;
-  await validateBatchMasterData({
-    centerId: input.centerId,
-    courseId: input.courseId,
-    endDate,
-    schemeId: input.schemeId,
-    startDate,
-    syncEnabled: input.syncEnabled,
-  });
+  if (hasAssignedCenter) {
+    await validateBatchMasterData({
+      centerId,
+      courseId: input.courseId,
+      endDate,
+      schemeId: input.schemeId,
+      startDate,
+      syncEnabled: input.syncEnabled,
+    });
+  } else {
+    await Promise.all([ensureCourse(input.courseId), ensureScheme(input.schemeId)]);
+  }
 
   const existingBatch = await BatchModel.findOne({ batchCode: normalizeString(input.batchCode) }).select({ batchId: 1 });
   if (existingBatch) {
@@ -998,7 +1026,7 @@ export async function createBatch(actor: AuthSession, input: CreateBatchInput, r
     batchId: createPrefixedId("bat"),
     batchName: normalizeString(input.batchName) || null,
     batchSize: input.batchSize,
-    centerId: input.centerId,
+    centerId,
     courseId: input.courseId,
     createdByUserId: actor.user.id,
     endDate,
@@ -1013,7 +1041,24 @@ export async function createBatch(actor: AuthSession, input: CreateBatchInput, r
     updatedByUserId: actor.user.id,
   })) as ServiceBatch;
 
-  await ensureBatchSyncState(batch.batchId, actor.user.id);
+  const syncState = await ensureBatchSyncState(batch.batchId, actor.user.id);
+
+  if (input.syncEnabled) {
+    syncState.batchSync = {
+      ...(syncState.batchSync ?? {}),
+      lastFailureCode: null,
+      lastFailureMessage: null,
+      lastJobId: createPrefixedId("bsjob"),
+      lockId: null,
+      lockedAt: null,
+      nextRunAt: new Date(),
+      retryCount: 0,
+      status: "queued",
+    };
+    syncState.updatedByUserId = actor.user.id;
+    await syncState.save?.();
+    await processQueuedBatchSyncJobs(actor, { limit: 5, requestId }).catch(() => undefined);
+  }
 
   if (input.candidateIds.length > 0) {
     await addCandidatesToBatch(actor, batch.batchId, { candidateIds: input.candidateIds }, requestId);
@@ -1306,6 +1351,8 @@ export async function queueBatchSync(actor: AuthSession, batchId: string, input:
     metadata: { forceResync: input.forceResync, jobId: syncState.batchSync.lastJobId },
     requestId,
   });
+
+  await processQueuedBatchSyncJobs(actor, { limit: 5, requestId }).catch(() => undefined);
 
   return getBatchStatus(actor, batch.batchId);
 }
@@ -1685,7 +1732,7 @@ function classifyMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unknown sync failure";
 }
 
-function buildBatchPayload(batch: ServiceBatch, center: ServiceCenter, course: ServiceCourse, scheme: ServiceScheme, candidateCount: number) {
+function buildBatchPayload(batch: ServiceBatch, center: ServiceCenter | null, course: ServiceCourse, scheme: ServiceScheme, candidateCount: number) {
   const assessmentDate = toIsoDate(batch.assessmentDate)?.slice(0, 10) ?? "";
 
   return {
@@ -1708,12 +1755,12 @@ function buildBatchPayload(batch: ServiceBatch, center: ServiceCenter, course: S
     schemeReferenceId: SIDH_BATCH_DEFAULTS.schemeReferenceId,
     schemeType: SIDH_BATCH_DEFAULTS.schemeType,
     size: Math.min(batch.batchSize ?? candidateCount, 80),
-    skillingcategory: {
+    skillingCategory: {
       id: SIDH_BATCH_DEFAULTS.skillingCategoryId,
       name: SIDH_BATCH_DEFAULTS.skillingCategoryName,
       scheme: SIDH_BATCH_DEFAULTS.scheme,
     },
-    tcId: center.sidhTcId ?? "",
+    tcId: center?.sidhTcId ?? "",
     trainingHoursPerDay: batch.trainingHoursPerDay ?? 8,
     type: SIDH_BATCH_DEFAULTS.type,
   };

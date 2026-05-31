@@ -38,7 +38,7 @@ const batchSchema = new mongoose.Schema(
     },
     centerId: {
       type: String,
-      required: true,
+      default: "unassigned",
       index: true,
     },
     startDate: {

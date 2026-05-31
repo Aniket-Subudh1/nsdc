@@ -41,7 +41,7 @@ export type BatchCreationPayload = {
   schemeReferenceId: string;
   schemeType: string;
   size: number;
-  skillingcategory: {
+  skillingCategory: {
     id: number;
     name: string;
     scheme: string;

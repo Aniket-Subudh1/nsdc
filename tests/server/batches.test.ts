@@ -365,7 +365,7 @@ describe("batch services", () => {
           feePaidBy: "Self-Paid",
           schemeReferenceId: "02R/2009-10/002IM",
           schemeType: "feeBased",
-          skillingcategory: { id: 1, name: "NSDC Market led programme", scheme: "Fee Based" },
+          skillingCategory: { id: 1, name: "NSDC Market led programme", scheme: "Fee Based" },
           trainingHoursPerDay: 8,
           type: "Fee Based",
         }),

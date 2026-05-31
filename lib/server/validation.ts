@@ -608,7 +608,7 @@ export const createBatchSchema = z
     batchSize: z.coerce.number().int().min(1).max(80).default(80),
     courseId: z.string().trim().min(1),
     schemeId: z.string().trim().min(1),
-    centerId: z.string().trim().min(1),
+    centerId: z.string().trim().min(1).optional(),
     startDate: z.string().date(),
     endDate: z.string().date(),
     assessmentDate: z.string().date(),

@@ -61,25 +61,31 @@ type SectorInput = {
 type CourseInput = {
   approvalDate?: string;
   approvalStatus: "approved" | "pending" | "rejected" | "expired";
-  associatedQpOrJobRole: string;
+  associatedQpOrJobRole?: string;
+  courseCode?: string;
   courseName: string;
   currentVersion?: number;
   gtUploadedDurationHours?: number;
-  internalCourseCode: string;
+  internalCourseCode?: string;
+  jobRole?: string;
   jobRoleMappingType: "QP_NOS" | "JOB_ROLE" | "HYBRID";
   minimumAge: number;
+  nsqfLevel: string | number;
   price: number;
   programIds: string[];
-  qpCode: string;
+  qpCode?: string;
   requestId?: string;
   schemeIds: string[];
   sectorId: string;
-  sidhCourseId: string;
+  sidhCourseId?: string;
+  shortForm?: string;
   status: "active" | "inactive";
-  trainingHours: number;
-  validityEndDate: string;
-  validityStartDate: string;
-  nsqfLevel: number;
+  totalHours?: number;
+  trainingHours?: number;
+  trainingPerDayHours?: number;
+  validity?: number;
+  validityEndDate?: string;
+  validityStartDate?: string;
 };
 
 type CourseListInput = ListMastersInput & {
@@ -232,16 +238,22 @@ function serializeCourse(course: CourseDocument) {
     programIds: course.programIds ?? [],
     schemeIds: course.schemeIds ?? [],
     courseName: course.courseName,
+    courseCode: course.sidhCourseId,
     internalCourseCode: course.internalCourseCode,
     sidhCourseId: course.sidhCourseId,
+    jobRole: course.associatedQpOrJobRole,
     associatedQpOrJobRole: course.associatedQpOrJobRole,
     nsqfLevel: course.nsqfLevel,
+    trainingPerDayHours: course.trainingPerDayHours ?? null,
+    totalHours: course.trainingHours,
     trainingHours: course.trainingHours,
     gtUploadedDurationHours: course.gtUploadedDurationHours ?? null,
     approvalStatus: course.approvalStatus,
     approvalDate: toIsoDate(course.approvalDate),
+    validity: course.validity ?? null,
     validityStartDate: toIsoDate(course.validityStartDate),
     validityEndDate: toIsoDate(course.validityEndDate),
+    shortForm: course.shortForm ?? null,
     minimumAge: course.minimumAge,
     price: course.price,
     qpCode: course.qpCode,
@@ -1037,6 +1049,8 @@ export async function listCourses(actor: AuthSession, input: CourseListInput): P
       { internalCourseCode: searchRegex },
       { sidhCourseId: searchRegex },
       { qpCode: searchRegex },
+      { associatedQpOrJobRole: searchRegex },
+      { shortForm: searchRegex },
     ];
   }
 
@@ -1054,19 +1068,32 @@ export async function listCourses(actor: AuthSession, input: CourseListInput): P
 export async function createCourse(actor: AuthSession, input: CourseInput) {
   await connectToDatabase();
   ensureCanWriteMasters(actor);
-  ensureDateRange(input.validityStartDate, input.validityEndDate);
+  const codes = resolveCourseCodes(input);
+  const jobRole = resolveCourseJobRole(input);
+  const dates = resolveCourseDates(input);
+  const totalHours = input.totalHours ?? input.trainingHours;
+
+  if (!totalHours) {
+    throw new ApiError(400, "TOTAL_HOURS_REQUIRED", "Total hours is required");
+  }
+
   await ensureSectorExists(input.sectorId);
   const normalizedProgramIds = await ensureProgramsExist(input.programIds);
   const normalizedSchemeIds = await ensureSchemesExist(input.schemeIds);
-  await ensureNoCourseValidityOverlap(input);
+  await ensureNoCourseValidityOverlap({
+    sidhCourseId: codes.sidhCourseId,
+    status: input.status,
+    validityEndDate: dates.endDate,
+    validityStartDate: dates.startDate,
+  });
 
   const existingCourse = await CourseModel.findOne({
     $or: [
-      { internalCourseCode: normalizeString(input.internalCourseCode) },
+      { internalCourseCode: codes.internalCourseCode },
       {
-        sidhCourseId: normalizeString(input.sidhCourseId),
-        validityStartDate: new Date(input.validityStartDate),
-        validityEndDate: new Date(input.validityEndDate),
+        sidhCourseId: codes.sidhCourseId,
+        validityStartDate: new Date(dates.startDate),
+        validityEndDate: new Date(dates.endDate),
       },
     ],
   });
@@ -1081,19 +1108,22 @@ export async function createCourse(actor: AuthSession, input: CourseInput) {
     programIds: normalizedProgramIds,
     schemeIds: normalizedSchemeIds,
     courseName: normalizeString(input.courseName),
-    internalCourseCode: normalizeString(input.internalCourseCode),
-    sidhCourseId: normalizeString(input.sidhCourseId),
-    associatedQpOrJobRole: normalizeString(input.associatedQpOrJobRole),
-    nsqfLevel: input.nsqfLevel,
-    trainingHours: input.trainingHours,
+    internalCourseCode: codes.internalCourseCode,
+    sidhCourseId: codes.sidhCourseId,
+    associatedQpOrJobRole: jobRole,
+    nsqfLevel: String(input.nsqfLevel).trim(),
+    trainingPerDayHours: input.trainingPerDayHours ?? null,
+    trainingHours: totalHours,
     gtUploadedDurationHours: input.gtUploadedDurationHours ?? null,
     approvalStatus: input.approvalStatus,
     approvalDate: input.approvalDate ? new Date(input.approvalDate) : null,
-    validityStartDate: new Date(input.validityStartDate),
-    validityEndDate: new Date(input.validityEndDate),
+    validity: input.validity ?? null,
+    validityStartDate: new Date(dates.startDate),
+    validityEndDate: new Date(dates.endDate),
+    shortForm: input.shortForm?.trim() || null,
     minimumAge: input.minimumAge,
     price: input.price,
-    qpCode: normalizeString(input.qpCode),
+    qpCode: input.qpCode?.trim() || jobRole,
     jobRoleMappingType: input.jobRoleMappingType,
     status: input.status,
     version: 1,
@@ -1133,9 +1163,20 @@ export async function updateCourse(actor: AuthSession, courseId: string, input: 
     throw new ApiError(409, "COURSE_VERSION_CONFLICT", "Course was updated by another user. Refresh and retry.");
   }
 
-  const nextValidityStartDate = input.validityStartDate ?? course.validityStartDate.toISOString().slice(0, 10);
-  const nextValidityEndDate = input.validityEndDate ?? course.validityEndDate.toISOString().slice(0, 10);
-  ensureDateRange(nextValidityStartDate, nextValidityEndDate);
+  const nextDates = resolveCourseDates({
+    approvalDate: input.approvalDate ?? (course.approvalDate ? course.approvalDate.toISOString().slice(0, 10) : undefined),
+    validity: input.validity ?? course.validity ?? undefined,
+    validityEndDate: input.validityEndDate ?? course.validityEndDate.toISOString().slice(0, 10),
+    validityStartDate: input.validityStartDate ?? course.validityStartDate.toISOString().slice(0, 10),
+  });
+
+  const nextCodes = input.courseCode || input.internalCourseCode || input.sidhCourseId
+    ? resolveCourseCodes({
+        courseCode: input.courseCode,
+        internalCourseCode: input.internalCourseCode ?? (input.courseCode ? undefined : course.internalCourseCode),
+        sidhCourseId: input.sidhCourseId ?? (input.courseCode ? undefined : course.sidhCourseId),
+      })
+    : { internalCourseCode: course.internalCourseCode, sidhCourseId: course.sidhCourseId };
 
   if (input.sectorId !== undefined) {
     await ensureSectorExists(input.sectorId);
@@ -1146,14 +1187,14 @@ export async function updateCourse(actor: AuthSession, courseId: string, input: 
 
   await ensureNoCourseValidityOverlap({
     excludeCourseId: course.courseId,
-    sidhCourseId: input.sidhCourseId ?? course.sidhCourseId,
+    sidhCourseId: nextCodes.sidhCourseId,
     status: input.status ?? course.status,
-    validityStartDate: nextValidityStartDate,
-    validityEndDate: nextValidityEndDate,
+    validityStartDate: nextDates.startDate,
+    validityEndDate: nextDates.endDate,
   });
 
-  if (input.internalCourseCode && input.internalCourseCode.trim() !== course.internalCourseCode) {
-    const duplicateCourse = await CourseModel.findOne({ internalCourseCode: normalizeString(input.internalCourseCode) });
+  if (nextCodes.internalCourseCode !== course.internalCourseCode) {
+    const duplicateCourse = await CourseModel.findOne({ internalCourseCode: nextCodes.internalCourseCode });
     if (duplicateCourse) {
       throw new ApiError(409, "COURSE_EXISTS", "A course with this internal code already exists");
     }
@@ -1172,16 +1213,31 @@ export async function updateCourse(actor: AuthSession, courseId: string, input: 
     course.courseName = normalizeString(input.courseName);
   }
   if (input.internalCourseCode !== undefined) {
-    course.internalCourseCode = normalizeString(input.internalCourseCode);
+    course.internalCourseCode = nextCodes.internalCourseCode;
+  }
+  if (input.courseCode !== undefined && input.internalCourseCode === undefined) {
+    course.internalCourseCode = nextCodes.internalCourseCode;
   }
   if (input.sidhCourseId !== undefined) {
-    course.sidhCourseId = normalizeString(input.sidhCourseId);
+    course.sidhCourseId = nextCodes.sidhCourseId;
+  }
+  if (input.courseCode !== undefined && input.sidhCourseId === undefined) {
+    course.sidhCourseId = nextCodes.sidhCourseId;
   }
   if (input.associatedQpOrJobRole !== undefined) {
     course.associatedQpOrJobRole = normalizeString(input.associatedQpOrJobRole);
   }
+  if (input.jobRole !== undefined) {
+    course.associatedQpOrJobRole = normalizeString(input.jobRole);
+  }
   if (input.nsqfLevel !== undefined) {
-    course.nsqfLevel = input.nsqfLevel;
+    course.nsqfLevel = String(input.nsqfLevel).trim();
+  }
+  if (input.trainingPerDayHours !== undefined) {
+    course.trainingPerDayHours = input.trainingPerDayHours;
+  }
+  if (input.totalHours !== undefined) {
+    course.trainingHours = input.totalHours;
   }
   if (input.trainingHours !== undefined) {
     course.trainingHours = input.trainingHours;
@@ -1196,10 +1252,18 @@ export async function updateCourse(actor: AuthSession, courseId: string, input: 
     course.approvalDate = input.approvalDate ? new Date(input.approvalDate) : null;
   }
   if (input.validityStartDate !== undefined) {
-    course.validityStartDate = new Date(input.validityStartDate);
+    course.validityStartDate = new Date(nextDates.startDate);
   }
   if (input.validityEndDate !== undefined) {
-    course.validityEndDate = new Date(input.validityEndDate);
+    course.validityEndDate = new Date(nextDates.endDate);
+  }
+  if (input.validity !== undefined) {
+    course.validity = input.validity;
+    course.validityStartDate = new Date(nextDates.startDate);
+    course.validityEndDate = new Date(nextDates.endDate);
+  }
+  if (input.shortForm !== undefined) {
+    course.shortForm = input.shortForm.trim() || null;
   }
   if (input.minimumAge !== undefined) {
     course.minimumAge = input.minimumAge;
@@ -1322,4 +1386,46 @@ export async function getCandidateReferenceData(actor: AuthSession) {
     courses: usableCourses.map((item) => serializeCourse(item)),
     enums: groupedReferenceValues,
   };
+}
+
+function addDays(date: Date, days: number) {
+  const nextDate = new Date(date);
+  nextDate.setDate(nextDate.getDate() + days);
+  return nextDate;
+}
+
+function toDateInput(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function resolveCourseCodes(input: Pick<CourseInput, "courseCode" | "internalCourseCode" | "sidhCourseId">) {
+  const courseCode = input.courseCode?.trim() || input.sidhCourseId?.trim() || input.internalCourseCode?.trim();
+
+  if (!courseCode) {
+    throw new ApiError(400, "COURSE_CODE_REQUIRED", "Course ID is required");
+  }
+
+  return {
+    internalCourseCode: input.internalCourseCode?.trim() || courseCode,
+    sidhCourseId: input.sidhCourseId?.trim() || courseCode,
+  };
+}
+
+function resolveCourseDates(input: Pick<CourseInput, "approvalDate" | "validity" | "validityEndDate" | "validityStartDate">) {
+  const startDate = input.validityStartDate ?? input.approvalDate ?? toDateInput(new Date());
+  const endDate = input.validityEndDate ?? toDateInput(addDays(new Date(`${startDate}T00:00:00.000Z`), input.validity ?? 365));
+
+  ensureDateRange(startDate, endDate);
+
+  return { endDate, startDate };
+}
+
+function resolveCourseJobRole(input: Pick<CourseInput, "associatedQpOrJobRole" | "jobRole">) {
+  const jobRole = input.jobRole?.trim() || input.associatedQpOrJobRole?.trim();
+
+  if (!jobRole) {
+    throw new ApiError(400, "JOB_ROLE_REQUIRED", "Job role is required");
+  }
+
+  return jobRole;
 }

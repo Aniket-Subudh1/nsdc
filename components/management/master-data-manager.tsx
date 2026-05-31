@@ -2,6 +2,7 @@
 
 import { startTransition, useEffect, useMemo, useState } from "react";
 import {
+  BookOpenText,
   BriefcaseBusiness,
   Layers3,
   LoaderCircle,
@@ -61,6 +62,26 @@ type SchemeRecord = {
   verifiedForSidh: boolean;
 };
 
+type CourseRecord = {
+  approvalDate: string | null;
+  approvalStatus: "approved" | "pending" | "rejected" | "expired";
+  courseCode: string;
+  courseId: string;
+  courseName: string;
+  id: string;
+  jobRole: string;
+  nsqfLevel: string;
+  sectorId: string;
+  shortForm: string | null;
+  status: "active" | "inactive";
+  totalHours: number;
+  trainingPerDayHours: number | null;
+  validity: number | null;
+  validityEndDate: string | null;
+  validityStartDate: string | null;
+  version: number;
+};
+
 type PagedResponse<T> = {
   items: T[];
   page: number;
@@ -68,12 +89,13 @@ type PagedResponse<T> = {
   total: number;
 };
 
-type Tab = "programs" | "sectors" | "schemes";
+type Tab = "programs" | "sectors" | "schemes" | "courses";
 
 const TABS: Array<{ icon: React.ReactNode; id: Tab; label: string }> = [
   { icon: <BriefcaseBusiness className="h-4 w-4" />, id: "programs", label: "Programs" },
   { icon: <Layers3 className="h-4 w-4" />, id: "sectors", label: "Sectors" },
   { icon: <Network className="h-4 w-4" />, id: "schemes", label: "Schemes" },
+  { icon: <BookOpenText className="h-4 w-4" />, id: "courses", label: "Courses" },
 ];
 
 // Default seed values from NsdcConstants.java / sidh-defaults.ts
@@ -145,18 +167,38 @@ const emptySchemeForm = {
   validTo: "",
 };
 
+const emptyCourseForm = {
+  approvalDate: "",
+  approvalStatus: "pending" as "approved" | "pending",
+  courseCode: "",
+  courseName: "",
+  jobRole: "",
+  nsqfLevel: "",
+  sectorId: "",
+  shortForm: "",
+  totalHours: "",
+  trainingPerDayHours: "",
+  validity: "",
+};
+
 export default function MasterDataManager({ portal }: MasterDataManagerProps) {
   const [activeTab, setActiveTab] = useState<Tab>("programs");
   const [programs, setPrograms] = useState<ProgramRecord[]>([]);
   const [sectors, setSectors] = useState<SectorRecord[]>([]);
   const [schemes, setSchemes] = useState<SchemeRecord[]>([]);
+  const [courses, setCourses] = useState<CourseRecord[]>([]);
+  const [coursePage, setCoursePage] = useState(1);
+  const [coursePageSize] = useState(10);
+  const [courseTotal, setCourseTotal] = useState(0);
 
   const [selectedProgramId, setSelectedProgramId] = useState<string | null>(null);
   const [selectedSchemeId, setSelectedSchemeId] = useState<string | null>(null);
+  const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
 
   const [programForm, setProgramForm] = useState(emptyProgramForm);
   const [sectorForm, setSectorForm] = useState(emptySectorForm);
   const [schemeForm, setSchemeForm] = useState(emptySchemeForm);
+  const [courseForm, setCourseForm] = useState(emptyCourseForm);
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -168,11 +210,13 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
 
   const selectedProgram = programs.find((p) => p.programId === selectedProgramId) ?? null;
   const selectedScheme = schemes.find((s) => s.schemeId === selectedSchemeId) ?? null;
+  const selectedCourse = courses.find((course) => course.courseId === selectedCourseId) ?? null;
 
   function switchTab(tab: Tab) {
     setActiveTab(tab);
     setSearchQuery("");
     setStatusFilter("all");
+    if (tab === "courses") setCoursePage(1);
   }
 
   const activeList = useMemo(
@@ -181,8 +225,10 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
         ? programs
         : activeTab === "sectors"
           ? sectors
-          : schemes,
-    [activeTab, programs, sectors, schemes],
+          : activeTab === "schemes"
+            ? schemes
+            : courses,
+      [activeTab, courses, programs, sectors, schemes],
   );
 
   const filteredPrograms = useMemo(() => {
@@ -216,13 +262,20 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
     });
   }, [schemes, searchQuery, statusFilter]);
 
+  const sectorNameById = useMemo(
+    () => new Map(sectors.map((sector) => [sector.sectorId, sector.name])),
+    [sectors],
+  );
+
   async function handleDelete(tab: Tab, id: string, label: string) {
     const endpoint =
       tab === "programs"
         ? `/api/v1/masters/programs/${id}`
         : tab === "sectors"
           ? `/api/v1/masters/sectors/${id}`
-          : `/api/v1/masters/schemes/${id}`;
+          : tab === "schemes"
+            ? `/api/v1/masters/schemes/${id}`
+            : `/api/v1/masters/courses/${id}`;
 
     if (!window.confirm(`Delete ${label}? This cannot be undone.`)) {
       return;
@@ -239,6 +292,11 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
       if (tab === "schemes" && selectedSchemeId === id) {
         setSelectedSchemeId(null);
         setSchemeForm(emptySchemeForm);
+        setShowEditModal(false);
+      }
+      if (tab === "courses" && selectedCourseId === id) {
+        setSelectedCourseId(null);
+        setCourseForm(emptyCourseForm);
         setShowEditModal(false);
       }
 
@@ -284,14 +342,17 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
   async function loadData() {
     setIsLoading(true);
     try {
-      const [programData, sectorData, schemeData] = await Promise.all([
+      const [programData, sectorData, schemeData, courseData] = await Promise.all([
         apiFetch<PagedResponse<ProgramRecord>>("/api/v1/masters/programs?page=1&pageSize=100"),
         apiFetch<PagedResponse<SectorRecord>>("/api/v1/masters/sectors?page=1&pageSize=100"),
         apiFetch<PagedResponse<SchemeRecord>>("/api/v1/masters/schemes?page=1&pageSize=100"),
+        apiFetch<PagedResponse<CourseRecord>>(`/api/v1/masters/courses?page=${coursePage}&pageSize=${coursePageSize}`),
       ]);
       setPrograms(programData.items);
       setSectors(sectorData.items);
       setSchemes(schemeData.items);
+      setCourses(courseData.items);
+      setCourseTotal(courseData.total);
     } catch (error) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to load master data");
     } finally {
@@ -301,12 +362,13 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
 
   useEffect(() => {
     void loadData();
-  }, []);
+  }, [coursePage]);
 
   function openCreateModal() {
     if (activeTab === "programs") setProgramForm(emptyProgramForm);
     else if (activeTab === "sectors") setSectorForm(emptySectorForm);
-    else setSchemeForm(emptySchemeForm);
+    else if (activeTab === "schemes") setSchemeForm(emptySchemeForm);
+    else setCourseForm({ ...emptyCourseForm, sectorId: sectors[0]?.sectorId ?? "" });
     setShowCreateModal(true);
   }
 
@@ -337,6 +399,23 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
         syncEnabled: scheme.syncEnabled,
         validFrom: scheme.validFrom ? scheme.validFrom.slice(0, 10) : "",
         validTo: scheme.validTo ? scheme.validTo.slice(0, 10) : "",
+      });
+    } else if (activeTab === "courses") {
+      const course = courses.find((item) => item.courseId === id);
+      if (!course) return;
+      setSelectedCourseId(course.courseId);
+      setCourseForm({
+        approvalDate: course.approvalDate ? course.approvalDate.slice(0, 10) : "",
+        approvalStatus: course.approvalStatus === "approved" ? "approved" : "pending",
+        courseCode: course.courseCode,
+        courseName: course.courseName,
+        jobRole: course.jobRole,
+        nsqfLevel: String(course.nsqfLevel ?? ""),
+        sectorId: course.sectorId,
+        shortForm: course.shortForm ?? "",
+        totalHours: String(course.totalHours ?? ""),
+        trainingPerDayHours: String(course.trainingPerDayHours ?? ""),
+        validity: String(course.validity ?? ""),
       });
     }
     setShowEditModal(true);
@@ -419,6 +498,45 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
     }
   }
 
+  async function handleCourseSave(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setIsSaving(true);
+    const payload = {
+      ...courseForm,
+      approvalDate: courseForm.approvalDate || undefined,
+      totalHours: Number(courseForm.totalHours),
+      trainingPerDayHours: Number(courseForm.trainingPerDayHours),
+      validity: Number(courseForm.validity),
+      ...(selectedCourse ? { currentVersion: selectedCourse.version } : {}),
+    };
+
+    try {
+      if (selectedCourse) {
+        await apiFetch(`/api/v1/masters/courses/${selectedCourse.courseId}`, {
+          method: "PATCH",
+          body: JSON.stringify(payload),
+        });
+        toast.success("Course updated");
+        setShowEditModal(false);
+      } else {
+        await apiFetch("/api/v1/masters/courses", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        toast.success("Course created");
+        setShowCreateModal(false);
+        setCoursePage(1);
+      }
+      setSelectedCourseId(null);
+      setCourseForm(emptyCourseForm);
+      await loadData();
+    } catch (error) {
+      toast.error(error instanceof ClientApiError ? error.message : "Unable to save course");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   async function handleSeedDefaults() {
     setIsSeeding(true);
     const results = await Promise.allSettled([
@@ -452,7 +570,9 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
       ? "New Program"
       : activeTab === "sectors"
         ? "New Sector"
-        : "New Scheme";
+          : activeTab === "schemes"
+            ? "New Scheme"
+            : "Add Course";
 
   const statusCounts = {
     active: activeList.filter((i) => i.status === "active").length,
@@ -539,6 +659,15 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
             active={activeTab === "schemes"}
             onClick={() => switchTab("schemes")}
           />
+          <StatCard
+            icon={<BookOpenText className="h-5 w-5" />}
+            iconBg="bg-indigo-100 text-indigo-600"
+            label="Courses"
+            value={courseTotal}
+            accent="text-indigo-600"
+            active={activeTab === "courses"}
+            onClick={() => switchTab("courses")}
+          />
         </div>
 
         {/* ── Main table card ─────────────────────────────────────────── */}
@@ -565,7 +694,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
                       : "bg-slate-100 text-slate-500"
                   }`}
                 >
-                  {{ programs: programs.length, sectors: sectors.length, schemes: schemes.length }[tab.id]}
+                  {{ programs: programs.length, sectors: sectors.length, schemes: schemes.length, courses: courseTotal }[tab.id]}
                 </span>
               </button>
             ))}
@@ -642,6 +771,19 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
                 onSync={handleSync}
               />
             )}
+            {activeTab === "courses" && (
+              <CoursesTable
+                courses={courses}
+                isLoading={isLoading}
+                onDelete={handleDelete}
+                onEdit={(id) => openEditModal(id)}
+                page={coursePage}
+                pageSize={coursePageSize}
+                sectorNameById={sectorNameById}
+                total={courseTotal}
+                onPageChange={setCoursePage}
+              />
+            )}
 
           </div>
         </div>
@@ -712,6 +854,35 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
             setSchemeForm(emptySchemeForm);
           }}
           onSubmit={handleSchemeSave}
+        />
+      )}
+      {showCreateModal && activeTab === "courses" && (
+        <CourseModal
+          form={courseForm}
+          isEdit={false}
+          isSaving={isSaving}
+          sectors={sectors}
+          setForm={setCourseForm}
+          onClose={() => {
+            setShowCreateModal(false);
+            setCourseForm(emptyCourseForm);
+          }}
+          onSubmit={handleCourseSave}
+        />
+      )}
+      {showEditModal && activeTab === "courses" && (
+        <CourseModal
+          form={courseForm}
+          isEdit={true}
+          isSaving={isSaving}
+          sectors={sectors}
+          setForm={setCourseForm}
+          onClose={() => {
+            setShowEditModal(false);
+            setSelectedCourseId(null);
+            setCourseForm(emptyCourseForm);
+          }}
+          onSubmit={handleCourseSave}
         />
       )}
     </div>
@@ -1015,12 +1186,141 @@ function SchemesTable({
   );
 }
 
+function CoursesTable({
+  courses,
+  isLoading,
+  onDelete,
+  onEdit,
+  onPageChange,
+  page,
+  pageSize,
+  sectorNameById,
+  total,
+}: {
+  courses: CourseRecord[];
+  isLoading: boolean;
+  onDelete: (tab: Tab, id: string, label: string) => void;
+  onEdit: (id: string) => void;
+  onPageChange: (page: number) => void;
+  page: number;
+  pageSize: number;
+  sectorNameById: Map<string, string>;
+  total: number;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const start = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, total);
+
+  return (
+    <div>
+      <table className="w-full min-w-295 text-sm">
+        <thead>
+          <tr className="border-b border-slate-100 bg-slate-50/80">
+            {[
+              "Sector Name",
+              "Course Name",
+              "Course ID",
+              "Job Role",
+              "NSQF Level",
+              "Training Per Day",
+              "Status",
+              "Approval Date",
+              "Total Hours",
+              "Validity",
+              "Short Form",
+              "",
+            ].map((h) => (
+              <th
+                key={h}
+                className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500 last:text-right"
+              >
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {isLoading ? (
+            <LoadingRow cols={12} />
+          ) : courses.length === 0 ? (
+            <EmptyRow
+              cols={12}
+              icon={<BookOpenText className="mx-auto h-8 w-8 text-slate-300" />}
+              message="No courses found"
+            />
+          ) : (
+            courses.map((course) => (
+              <tr
+                key={course.id}
+                className="group cursor-pointer transition-colors hover:bg-slate-50/80"
+                onClick={() => onEdit(course.courseId)}
+              >
+                <td className="px-4 py-4 font-medium text-slate-700">
+                  {sectorNameById.get(course.sectorId) ?? <span className="text-slate-300">NA</span>}
+                </td>
+                <td className="px-4 py-4 font-semibold text-slate-900">{course.courseName}</td>
+                <td className="px-4 py-4 font-mono text-xs text-slate-600">{course.courseCode}</td>
+                <td className="px-4 py-4 text-slate-600">{course.jobRole}</td>
+                <td className="px-4 py-4 text-slate-600">{course.nsqfLevel || "NA"}</td>
+                <td className="px-4 py-4 text-slate-600">{course.trainingPerDayHours ?? "NA"}</td>
+                <td className="px-4 py-4">
+                  <ApprovalBadge status={course.approvalStatus} />
+                </td>
+                <td className="px-4 py-4 text-slate-600">{formatDate(course.approvalDate)}</td>
+                <td className="px-4 py-4 text-slate-600">{course.totalHours}</td>
+                <td className="px-4 py-4 text-slate-600">{formatValidity(course)}</td>
+                <td className="px-4 py-4 font-mono text-xs text-slate-600">{course.shortForm || "NA"}</td>
+                <td className="px-4 py-4 text-right">
+                  <div className="flex justify-end gap-2 opacity-0 transition group-hover:opacity-100">
+                    <EditButton onClick={() => onEdit(course.courseId)} />
+                    <RowActionButton
+                      label="Delete"
+                      onClick={() => onDelete("courses", course.courseId, course.courseName)}
+                      icon={<Trash2 className="h-3 w-3" />}
+                      tone="danger"
+                    />
+                  </div>
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+      <div className="flex flex-col gap-3 border-t border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-xs font-medium text-slate-500">
+          Showing {start} to {end} of {total} courses
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onPageChange(Math.max(1, page - 1))}
+            disabled={page <= 1}
+            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Previous
+          </button>
+          <span className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-bold text-white">{page}</span>
+          <button
+            type="button"
+            onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+            disabled={page >= totalPages}
+            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Next
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 // ─── Modals ──────────────────────────────────────────────────────────────────
 
 type ProgramForm = typeof emptyProgramForm;
 type SectorForm = typeof emptySectorForm;
 type SchemeForm = typeof emptySchemeForm;
+type CourseForm = typeof emptyCourseForm;
 
 function ProgramModal({
   form,
@@ -1276,6 +1576,158 @@ function SchemeModal({
   );
 }
 
+function CourseModal({
+  form,
+  isEdit,
+  isSaving,
+  onClose,
+  onSubmit,
+  sectors,
+  setForm,
+}: {
+  form: CourseForm;
+  isEdit: boolean;
+  isSaving: boolean;
+  onClose: () => void;
+  onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
+  sectors: SectorRecord[];
+  setForm: React.Dispatch<React.SetStateAction<CourseForm>>;
+}) {
+  return (
+    <Modal
+      icon={<BookOpenText className="h-5 w-5" />}
+      iconBg="bg-indigo-100 text-indigo-600"
+      subtitle={isEdit ? "Update the course details below." : "Add a course to the local master data."}
+      title={isEdit ? "Edit Course" : "Add Course"}
+      wide
+      onClose={onClose}
+    >
+      <form onSubmit={onSubmit} className="flex flex-col gap-4">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <FormField label="Sector Name">
+            <select
+              value={form.sectorId}
+              onChange={(e) => setForm((current) => ({ ...current, sectorId: e.target.value }))}
+              className={inputCls}
+              required
+            >
+              <option value="">Select sector</option>
+              {sectors.map((sector) => (
+                <option key={sector.sectorId} value={sector.sectorId}>
+                  {sector.name}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Course Name">
+            <input
+              value={form.courseName}
+              onChange={(e) => setForm((current) => ({ ...current, courseName: e.target.value }))}
+              className={inputCls}
+              placeholder="Maize Cultivator"
+              required
+            />
+          </FormField>
+          <FormField label="Course ID">
+            <input
+              value={form.courseCode}
+              onChange={(e) => setForm((current) => ({ ...current, courseCode: e.target.value }))}
+              className={inputCls}
+              placeholder="FeeSchCor_48128"
+              required
+            />
+          </FormField>
+          <FormField label="Job Role">
+            <input
+              value={form.jobRole}
+              onChange={(e) => setForm((current) => ({ ...current, jobRole: e.target.value }))}
+              className={inputCls}
+              placeholder="Kisan Drone Operator"
+              required
+            />
+          </FormField>
+          <FormField label="NSQF Level">
+            <input
+              value={form.nsqfLevel}
+              onChange={(e) => setForm((current) => ({ ...current, nsqfLevel: e.target.value }))}
+              className={inputCls}
+              placeholder="NA"
+              required
+            />
+          </FormField>
+          <FormField label="Training Per Day (Hours)">
+            <input
+              type="number"
+              min="0.1"
+              step="0.1"
+              value={form.trainingPerDayHours}
+              onChange={(e) => setForm((current) => ({ ...current, trainingPerDayHours: e.target.value }))}
+              className={inputCls}
+              placeholder="6"
+              required
+            />
+          </FormField>
+          <FormField label="Status">
+            <select
+              value={form.approvalStatus}
+              onChange={(e) =>
+                setForm((current) => ({
+                  ...current,
+                  approvalStatus: e.target.value as "approved" | "pending",
+                }))
+              }
+              className={inputCls}
+            >
+              <option value="pending">Pending</option>
+              <option value="approved">Approved</option>
+            </select>
+          </FormField>
+          <FormField label="Approval Date">
+            <input
+              type="date"
+              value={form.approvalDate}
+              onChange={(e) => setForm((current) => ({ ...current, approvalDate: e.target.value }))}
+              className={inputCls}
+            />
+          </FormField>
+          <FormField label="Total Hours">
+            <input
+              type="number"
+              min="1"
+              value={form.totalHours}
+              onChange={(e) => setForm((current) => ({ ...current, totalHours: e.target.value }))}
+              className={inputCls}
+              placeholder="12"
+              required
+            />
+          </FormField>
+          <FormField label="Validity">
+            <input
+              type="number"
+              min="1"
+              value={form.validity}
+              onChange={(e) => setForm((current) => ({ ...current, validity: e.target.value }))}
+              className={inputCls}
+              placeholder="365"
+              required
+            />
+          </FormField>
+          <FormField label="Short Form">
+            <input
+              value={form.shortForm}
+              onChange={(e) => setForm((current) => ({ ...current, shortForm: e.target.value }))}
+              className={inputCls}
+              placeholder="MC"
+              required
+            />
+          </FormField>
+        </div>
+        <ModalFooter isEdit={isEdit} isSaving={isSaving} onClose={onClose} />
+      </form>
+    </Modal>
+  );
+}
+
 // ─── Shared primitives ────────────────────────────────────────────────────────
 
 function Modal({
@@ -1412,6 +1864,49 @@ function StatusBadge({ status }: { status: "active" | "inactive" }) {
       {status === "active" ? "Active" : "Inactive"}
     </span>
   );
+}
+
+function ApprovalBadge({ status }: { status: CourseRecord["approvalStatus"] }) {
+  const isApproved = status === "approved";
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
+        isApproved ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
+      }`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${isApproved ? "bg-emerald-500" : "bg-amber-500"}`} />
+      {isApproved ? "Approved" : "Pending"}
+    </span>
+  );
+}
+
+function formatDate(value: string | null) {
+  if (!value) {
+    return "NA";
+  }
+
+  return new Date(value).toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+  });
+}
+
+function formatValidity(course: CourseRecord) {
+  if (course.validityStartDate && course.validityEndDate) {
+    return `${new Date(course.validityStartDate).toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    })} - ${new Date(course.validityEndDate).toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    })}`;
+  }
+
+  return course.validity ? `${course.validity} days` : "NA";
 }
 
 function WorkflowBadge({ state }: { state: SidhWorkflowState }) {

@@ -45,8 +45,13 @@ const courseSchema = new mongoose.Schema(
       trim: true,
     },
     nsqfLevel: {
-      type: Number,
+      type: String,
       required: true,
+      trim: true,
+    },
+    trainingPerDayHours: {
+      type: Number,
+      default: null,
     },
     trainingHours: {
       type: Number,
@@ -75,6 +80,15 @@ const courseSchema = new mongoose.Schema(
       type: Date,
       required: true,
       index: true,
+    },
+    validity: {
+      type: Number,
+      default: null,
+    },
+    shortForm: {
+      type: String,
+      default: null,
+      trim: true,
     },
     minimumAge: {
       type: Number,

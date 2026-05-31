@@ -248,6 +248,7 @@ describe("batch services", () => {
         programIds: ["prg_001"],
         sidhTcId: "SIDH_TC_001",
         status: "active",
+        verifiedForSidh: true,
       }),
     );
     mocks.schemeFindOne.mockReturnValue(

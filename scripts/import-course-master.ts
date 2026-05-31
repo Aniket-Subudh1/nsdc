@@ -18,7 +18,7 @@ type ImportedCourseRow = {
   internalCourseCode: string;
   jobRoleMappingType: "QP_NOS" | "JOB_ROLE" | "HYBRID";
   minimumAge: number;
-  nsqfLevel: number;
+  nsqfLevel: number | string;
   price: number;
   qpCode: string;
   sectorCode: string;
@@ -181,7 +181,7 @@ function serializeSnapshot(course: {
   internalCourseCode: string;
   jobRoleMappingType: string;
   minimumAge: number;
-  nsqfLevel: number;
+  nsqfLevel: number | string;
   price: number;
   programIds?: string[];
   qpCode: string;
@@ -203,7 +203,7 @@ function serializeSnapshot(course: {
     internalCourseCode: course.internalCourseCode,
     sidhCourseId: course.sidhCourseId,
     associatedQpOrJobRole: course.associatedQpOrJobRole,
-    nsqfLevel: course.nsqfLevel,
+    nsqfLevel: String(course.nsqfLevel),
     trainingHours: course.trainingHours,
     gtUploadedDurationHours: course.gtUploadedDurationHours ?? null,
     approvalStatus: course.approvalStatus,
@@ -269,7 +269,7 @@ function hasCourseChanged(existingCourse: ComparableCourse | null, row: Imported
     internalCourseCode: row.internalCourseCode,
     sidhCourseId: row.sidhCourseId,
     associatedQpOrJobRole: row.associatedQpOrJobRole,
-    nsqfLevel: row.nsqfLevel,
+    nsqfLevel: String(row.nsqfLevel),
     trainingHours: row.trainingHours,
     gtUploadedDurationHours: row.gtUploadedDurationHours ?? null,
     approvalStatus: row.approvalStatus,
@@ -315,7 +315,7 @@ async function createCourseVersionSnapshot(course: {
   internalCourseCode: string;
   jobRoleMappingType: string;
   minimumAge: number;
-  nsqfLevel: number;
+  nsqfLevel: number | string;
   price: number;
   programIds?: string[];
   qpCode: string;
@@ -363,7 +363,7 @@ async function importCourseRow(row: ImportedCourseRow) {
       internalCourseCode: row.internalCourseCode,
       sidhCourseId: row.sidhCourseId,
       associatedQpOrJobRole: row.associatedQpOrJobRole,
-      nsqfLevel: row.nsqfLevel,
+      nsqfLevel: String(row.nsqfLevel),
       trainingHours: row.trainingHours,
       gtUploadedDurationHours: row.gtUploadedDurationHours ?? null,
       approvalStatus: row.approvalStatus,
@@ -392,7 +392,7 @@ async function importCourseRow(row: ImportedCourseRow) {
   existingCourse.courseName = row.courseName;
   existingCourse.sidhCourseId = row.sidhCourseId;
   existingCourse.associatedQpOrJobRole = row.associatedQpOrJobRole;
-  existingCourse.nsqfLevel = row.nsqfLevel;
+  existingCourse.nsqfLevel = String(row.nsqfLevel);
   existingCourse.trainingHours = row.trainingHours;
   existingCourse.gtUploadedDurationHours = row.gtUploadedDurationHours ?? null;
   existingCourse.approvalStatus = row.approvalStatus;

@@ -1,10 +1,9 @@
 import { createHash } from "node:crypto";
 
-import * as XLSX from "xlsx";
-
 import { ApiError } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
 import { connectToDatabase } from "@/lib/server/mongodb";
+import { readWorkbookSheetsFromArrayBuffer } from "@/lib/spreadsheet/node";
 import { CandidateModel } from "@/lib/server/models/candidate";
 import { ImportJobModel } from "@/lib/server/models/import-job";
 import { OutboxEventModel } from "@/lib/server/models/outbox-event";
@@ -1021,15 +1020,14 @@ export async function createCandidateImportJob(
   resolveScopedCenterFilter(actor, input.centerId);
   await Promise.all([ensureProgramExists(input.programId), ensureTrainingCenterExists(input.centerId)]);
 
-  const workbook = XLSX.read(workbookBuffer, { type: "array" });
-  const firstSheetName = workbook.SheetNames.find((sheetName) => normalizeWhitespace(sheetName).toLowerCase() === "candidate import template") ?? workbook.SheetNames[0];
+  const workbookSheets = await readWorkbookSheetsFromArrayBuffer(workbookBuffer, { defaultValue: "" });
+  const firstSheet = workbookSheets.find((sheet) => normalizeWhitespace(sheet.name).toLowerCase() === "candidate import template") ?? workbookSheets[0];
 
-  if (!firstSheetName) {
+  if (!firstSheet) {
     throw new ApiError(400, "IMPORT_EMPTY_WORKBOOK", "Workbook does not contain any sheets");
   }
 
-  const worksheet = workbook.Sheets[firstSheetName];
-  const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: "", raw: false });
+  const rawRows = firstSheet.rows;
   const seenHashes = new Set<string>();
   const rows: Array<Record<string, unknown>> = [];
   let validRows = 0;

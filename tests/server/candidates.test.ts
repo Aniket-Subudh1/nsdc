@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import * as XLSX from "xlsx";
+
+import { writeWorkbookToArrayBuffer } from "@/lib/spreadsheet/node";
 
 const mocks = vi.hoisted(() => ({
   connectToDatabase: vi.fn(),
@@ -85,11 +86,8 @@ function createSelectQuery<T>(value: T) {
   };
 }
 
-function buildWorkbook(rows: Array<Record<string, unknown>>) {
-  const workbook = XLSX.utils.book_new();
-  const worksheet = XLSX.utils.json_to_sheet(rows);
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Candidates");
-  return XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+async function buildWorkbook(rows: Array<Record<string, unknown>>) {
+  return writeWorkbookToArrayBuffer([{ name: "Candidates", rows }]);
 }
 
 describe("candidate services", () => {
@@ -176,7 +174,7 @@ describe("candidate services", () => {
     mocks.candidateFindOne.mockReturnValue(createSelectQuery(null));
     mocks.importJobCreate.mockImplementation(async (value: Record<string, unknown>) => value);
 
-    const workbook = buildWorkbook([
+    const workbook = await buildWorkbook([
       {
         FullName: "Rohit Kumar",
         Gender: "Male",

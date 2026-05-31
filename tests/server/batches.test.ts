@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import * as XLSX from "xlsx";
+
+import { writeWorkbookToArrayBuffer } from "@/lib/spreadsheet/node";
 
 const mocks = vi.hoisted(() => ({
   attendanceRecordDeleteMany: vi.fn(),
@@ -152,11 +153,8 @@ function createSortQuery<T>(value: T) {
   };
 }
 
-function buildWorkbook(rows: Array<Record<string, unknown>>) {
-  const workbook = XLSX.utils.book_new();
-  const worksheet = XLSX.utils.json_to_sheet(rows);
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Attendance");
-  return XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+async function buildWorkbook(rows: Array<Record<string, unknown>>) {
+  return writeWorkbookToArrayBuffer([{ name: "Attendance", rows }]);
 }
 
 function createBatchDocument(overrides: Record<string, unknown> = {}) {
@@ -394,7 +392,7 @@ describe("batch services", () => {
     ]) });
     mocks.candidateTrainingStatusFind.mockReturnValue({ sort: vi.fn().mockResolvedValue([]) });
 
-    const workbook = buildWorkbook([
+    const workbook = await buildWorkbook([
       { CandidateId: "cand_001", AttendanceDate: "10/01/2026", AttendanceStatus: "Present", TrainingStatus: "ongoing" },
       { CandidateId: "cand_002", AttendanceDate: "10/01/2026", AttendanceStatus: "Absent", TrainingStatus: "ongoing" },
     ]);

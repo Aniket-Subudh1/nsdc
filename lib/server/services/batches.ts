@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 
-import * as XLSX from "xlsx";
-
 import { ApiError } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
 import { connectToDatabase } from "@/lib/server/mongodb";
+import { readWorkbookSheetsFromArrayBuffer } from "@/lib/spreadsheet/node";
+import { excelSerialToDate } from "@/lib/spreadsheet/shared";
 import { AttendanceRecordModel } from "@/lib/server/models/attendance-record";
 import { AttendanceUploadModel } from "@/lib/server/models/attendance-upload";
 import { BatchCandidateModel } from "@/lib/server/models/batch-candidate";
@@ -807,12 +807,17 @@ function getAttendanceCellValue(row: Record<string, unknown>, aliases: string[])
 
 function parseExcelDate(value: unknown) {
   if (typeof value === "number") {
-    const parsed = XLSX.SSF.parse_date_code(value);
+    const parsed = excelSerialToDate(value);
+
     if (!parsed) {
       return "";
     }
 
-    return `${String(parsed.y).padStart(4, "0")}-${String(parsed.m).padStart(2, "0")}-${String(parsed.d).padStart(2, "0")}`;
+    return parsed.toISOString().slice(0, 10);
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString().slice(0, 10);
   }
 
   const normalized = normalizeString(String(value ?? ""));
@@ -1358,15 +1363,13 @@ export async function createAttendanceImport(actor: AuthSession, batchId: string
   const batch = await loadBatchWithScope(actor, batchId);
   const roster = await loadBatchRoster(batch.batchId);
   const rosterIdSet = new Set(roster.batchCandidates.map((item) => item.candidateId));
-  const workbook = XLSX.read(fileBuffer, { type: "array" });
-  const sheetName = workbook.SheetNames[0];
-  const worksheet = sheetName ? workbook.Sheets[sheetName] : null;
+  const [worksheet] = await readWorkbookSheetsFromArrayBuffer(fileBuffer, { defaultValue: "" });
 
   if (!worksheet) {
     throw new ApiError(400, "ATTENDANCE_SHEET_MISSING", "The uploaded workbook does not contain a readable worksheet");
   }
 
-  const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: "" });
+  const rawRows = worksheet.rows;
   const seenKeys = new Set<string>();
   const rows = rawRows.map((row, index) => {
     const normalized = {

@@ -25,6 +25,7 @@ import {
 import { toast } from "sonner";
 
 import { apiFetch, ClientApiError, type ApiEnvelope } from "@/lib/client/api";
+import { downloadWorkbook } from "@/lib/spreadsheet/browser";
 
 type CandidatesManagerProps = {
   portal: "admin" | "training_partner";
@@ -1048,14 +1049,10 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
     setSuccessMessage(null);
 
     try {
-      const XLSX = await import("xlsx");
-      const workbook = XLSX.utils.book_new();
-      const templateSheet = XLSX.utils.json_to_sheet([...candidateImportTemplateRows]);
-      const instructionsSheet = XLSX.utils.json_to_sheet([...candidateImportTemplateInstructions]);
-
-      XLSX.utils.book_append_sheet(workbook, templateSheet, "Candidate Import Template");
-      XLSX.utils.book_append_sheet(workbook, instructionsSheet, "Instructions");
-      XLSX.writeFileXLSX(workbook, "nsdc-candidate-import-template.xlsx");
+      await downloadWorkbook("nsdc-candidate-import-template.xlsx", [
+        { name: "Candidate Import Template", rows: [...candidateImportTemplateRows] },
+        { name: "Instructions", rows: [...candidateImportTemplateInstructions] },
+      ]);
 
       setSuccessMessage("Sample candidate import workbook downloaded successfully");
     } catch (error) {

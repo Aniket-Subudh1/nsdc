@@ -1,5 +1,4 @@
 import { loadEnvConfig } from "@next/env";
-import * as XLSX from "xlsx";
 
 import { ensureBootstrapData } from "../lib/server/bootstrap";
 import { createPrefixedId } from "../lib/server/ids";
@@ -7,6 +6,8 @@ import { connectToDatabase } from "../lib/server/mongodb";
 import { CourseModel, type CourseDocument } from "../lib/server/models/course";
 import { CourseVersionModel } from "../lib/server/models/course-version";
 import { SectorModel } from "../lib/server/models/sector";
+import { readWorkbookSheetsFromFile } from "../lib/spreadsheet/node";
+import { excelSerialToDate } from "../lib/spreadsheet/shared";
 
 type ImportedCourseRow = {
   approvalDate?: Date | null;
@@ -80,10 +81,10 @@ function toDateValue(value: unknown) {
   }
 
   if (typeof value === "number") {
-    const parsed = XLSX.SSF.parse_date_code(value);
+    const parsed = excelSerialToDate(value);
 
     if (parsed) {
-      return new Date(Date.UTC(parsed.y, parsed.m - 1, parsed.d));
+      return parsed;
     }
   }
 
@@ -425,21 +426,18 @@ async function main() {
   await connectToDatabase();
   await ensureBootstrapData();
 
-  const workbook = XLSX.readFile(workbookPath, { cellDates: true });
-  const targetSheetName = sheetName ?? workbook.SheetNames[0];
+  const workbookSheets = await readWorkbookSheetsFromFile(workbookPath, { defaultValue: null });
+  const targetSheet = sheetName ? workbookSheets.find((sheet) => sheet.name === sheetName) : workbookSheets[0];
 
-  if (!targetSheetName) {
+  if (!targetSheet) {
     throw new Error("Workbook does not contain any sheets");
   }
 
-  const worksheet = workbook.Sheets[targetSheetName];
-
-  if (!worksheet) {
-    throw new Error(`Sheet '${targetSheetName}' was not found`);
+  if (sheetName && targetSheet.name !== sheetName) {
+    throw new Error(`Sheet '${sheetName}' was not found`);
   }
 
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: null });
-  const importRows: ImportedCourseRow[] = rows.flatMap((row) => {
+  const importRows: ImportedCourseRow[] = targetSheet.rows.flatMap((row) => {
     const mappedRow = mapWorkbookRow(row);
     return mappedRow ? [mappedRow] : [];
   });
@@ -461,7 +459,7 @@ async function main() {
     }
   }
 
-  console.log(`Imported ${importRows.length} rows from ${targetSheetName}`);
+  console.log(`Imported ${importRows.length} rows from ${targetSheet.name}`);
   console.table(summary);
 }
 

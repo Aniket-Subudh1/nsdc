@@ -769,6 +769,15 @@ export function getOpenApiDocument() {
             countryCode: { type: "string", nullable: true },
           },
         },
+        CandidateRegistrationLocationDetails: {
+          type: "object",
+          description: "Local-only fields captured from the candidate_details.xlsx template. These are stored internally and are not sent to the SIDH candidate registration endpoint.",
+          properties: {
+            state: { type: "string", nullable: true, example: "Odisha" },
+            city: { type: "string", nullable: true, example: "Bhubaneswar" },
+            centerName: { type: "string", nullable: true, example: "Center One" },
+          },
+        },
         CandidateIdentity: {
           type: "object",
           required: ["idType"],
@@ -823,6 +832,7 @@ export function getOpenApiDocument() {
             "registrationMode",
             "personalDetails",
             "contactDetails",
+            "locationDetails",
             "domicile",
             "identity",
             "permanentAddress",
@@ -841,6 +851,7 @@ export function getOpenApiDocument() {
             registrationMode: ref("CandidateRegistrationMode"),
             personalDetails: ref("CandidatePersonalDetails"),
             contactDetails: ref("CandidateContactDetails"),
+            locationDetails: ref("CandidateRegistrationLocationDetails"),
             domicile: ref("CandidateDomicile"),
             identity: ref("CandidateIdentity"),
             permanentAddress: ref("CandidateAddress"),
@@ -862,6 +873,7 @@ export function getOpenApiDocument() {
           properties: {
             personalDetails: ref("CandidateRegistrationPersonalDetails"),
             contactDetails: ref("CandidateRegistrationContactDetails"),
+            locationDetails: ref("CandidateRegistrationLocationDetails"),
           },
         },
         UpdateCandidateRequest: {
@@ -872,6 +884,7 @@ export function getOpenApiDocument() {
             registrationMode: ref("CandidateRegistrationMode"),
             personalDetails: ref("CandidatePersonalDetails"),
             contactDetails: ref("CandidateContactDetails"),
+            locationDetails: ref("CandidateRegistrationLocationDetails"),
             identity: ref("CandidateIdentity"),
             domicile: ref("CandidateDomicile"),
             permanentAddress: ref("CandidateAddress"),
@@ -904,8 +917,12 @@ export function getOpenApiDocument() {
         CandidateImportRequest: {
           type: "object",
           required: ["file"],
+          description: "Upload the Skill India candidate workbook. The current UI downloads public/candidate_details.xlsx; the accepted headers are Name Prefix, First Name, Gender, DOB, Father's Name, Guardian's Name, Email, Phone, Country Code, State, City, and Center Name. Program and center metadata are optional and default internally when omitted.",
           properties: {
             file: { type: "string", format: "binary" },
+            programId: { type: "string", description: "Optional internal program scope. Defaults to candidate_registration when omitted." },
+            centerId: { type: "string", description: "Optional internal center scope. Defaults from the actor scope or a technical candidate-registration center ID when omitted." },
+            registrationMode: ref("CandidateRegistrationMode"),
           },
         },
         BulkQueueCandidateSyncRequest: {
@@ -1972,7 +1989,8 @@ export function getOpenApiDocument() {
         },
         post: {
           tags: ["Candidates"],
-          summary: "Create a candidate record without calling SIDH directly",
+          summary: "Create a payload-first candidate record without calling SIDH directly",
+          description: "Stores the candidate registration fields locally. The outbound SIDH worker later sends only PersonalDetails and ContactDetails to /api/user/v1/register/Candidate/v1; local locationDetails are not submitted to SIDH.",
           security: [{ cookieAuth: [] }],
           requestBody: {
             required: true,
@@ -2078,6 +2096,7 @@ export function getOpenApiDocument() {
         post: {
           tags: ["Candidates"],
           summary: "Stage a bulk candidate workbook for row-level validation",
+          description: "Accepts a file-only multipart upload. Optional programId, centerId, and registrationMode fields may be sent, but missing/null/blank values are valid and default internally.",
           security: [{ cookieAuth: [] }],
           requestBody: {
             required: true,
@@ -2130,7 +2149,8 @@ export function getOpenApiDocument() {
       "/candidates/imports/{jobId}/commit": {
         post: {
           tags: ["Candidates"],
-          summary: "Commit valid staged import rows into candidate records and queue sync jobs",
+          summary: "Commit valid staged import rows into candidate records",
+          description: "Commit saves valid rows locally only. Operators queue selected candidates separately through /candidates/{candidateId}/sync or /candidates/sync/bulk.",
           security: [{ cookieAuth: [] }],
           parameters: [{ $ref: "#/components/parameters/ImportJobId" }],
           responses: {

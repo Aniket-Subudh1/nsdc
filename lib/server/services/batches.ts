@@ -81,7 +81,7 @@ type ServiceCandidate = {
   programId: string;
   registrationMode: string;
   sidhCandidateId?: string | null;
-  syncState?: Record<string, unknown> | null;
+  syncState?: { status?: string | null } | null;
   trainingStatus?: string | null;
 };
 
@@ -689,7 +689,24 @@ async function validateCandidateAssignments(batch: ServiceBatch, candidateIds: s
   }
 
   for (const candidate of candidates) {
-    if (candidate.centerId !== batch.centerId) {
+    if (!candidate.sidhCandidateId) {
+      throw new ApiError(
+        400,
+        "CANDIDATE_NOT_VERIFIED_FOR_SIDH",
+        `Candidate ${candidate.candidateId} must have a verified SIDH candidate ID before batch assignment`,
+      );
+    }
+
+    const candidateSyncStatus = candidate.syncState?.status ?? (candidate.registrationMode === "existing_sidh_link" ? "linked" : null);
+    if (candidateSyncStatus && !["linked", "synced"].includes(candidateSyncStatus)) {
+      throw new ApiError(
+        400,
+        "CANDIDATE_NOT_VERIFIED_FOR_SIDH",
+        `Candidate ${candidate.candidateId} must be verified on SIDH before batch assignment`,
+      );
+    }
+
+    if (batch.centerId !== UNASSIGNED_CENTER_ID && candidate.centerId !== batch.centerId) {
       throw new ApiError(400, "CANDIDATE_CENTER_MISMATCH", `Candidate ${candidate.candidateId} is assigned to a different center`);
     }
 
@@ -1281,6 +1298,18 @@ export async function addCandidatesToBatch(actor: AuthSession, batchId: string, 
     metadata: { candidateIds: incomingCandidates.map((candidate) => candidate.candidateId) },
     requestId,
   });
+
+  if (incomingCandidates.length > 0) {
+    await queueEnrollmentSync(
+      actor,
+      batch.batchId,
+      {
+        candidateIds: incomingCandidates.map((candidate) => candidate.candidateId),
+        forceResync: true,
+      },
+      requestId,
+    );
+  }
 
   return getBatch(actor, batch.batchId);
 }

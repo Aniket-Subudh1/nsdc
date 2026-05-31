@@ -168,7 +168,7 @@ describe("SIDH connector", () => {
     });
   });
 
-  it("enrolls candidates against the UAT SIDH third-party enrollment endpoint", async () => {
+  it("enrolls candidates against the documented UAT SIDH batch enrollment endpoint", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token" }, status: 200 }))
@@ -189,10 +189,9 @@ describe("SIDH connector", () => {
     const enrollmentCall = fetchImpl.mock.calls[3];
 
     expect(result.remoteEnrollmentId).toBe("ENROLL_REMOTE_001");
-    expect(enrollmentCall?.[0]).toBe("https://backend.itrackglobal.com/api/thirdparty/v1/enroll/Candidate");
+    expect(enrollmentCall?.[0]).toBe("https://backend.itrackglobal.com/api/v1/candidate/batch/BATCH_REMOTE_001/enrollCandidate");
     expect(JSON.parse(String(enrollmentCall?.[1]?.body))).toEqual({
-      batchId: "BATCH_REMOTE_001",
-      candidateIds: ["CAN_001", "CAN_002"],
+      candidateIds: "CAN_001,CAN_002",
     });
   });
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { startTransition, useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Eye, LayoutList, LoaderCircle, Plus, RefreshCw, RotateCcw, Users } from "lucide-react";
+import { CheckCircle2, Eye, LayoutList, LoaderCircle, Plus, RefreshCw, RotateCcw, Search, UserCheck, Users } from "lucide-react";
 import { toast } from "sonner";
 
 import { apiFetch, ClientApiError } from "@/lib/client/api";
@@ -83,6 +83,34 @@ type PagedCourses = {
   total: number;
 };
 
+type CandidateOption = {
+  candidateId: string;
+  contactDetails: {
+    mobileNumber: string;
+  };
+  createdAt: string | null;
+  locationDetails: {
+    centerName: string | null;
+    city: string | null;
+    state: string | null;
+  };
+  personalDetails: {
+    fullName: string;
+  };
+  registrationMode: "internal_registration" | "existing_sidh_link";
+  sidhCandidateId: string | null;
+  syncState?: {
+    status?: string | null;
+  } | null;
+};
+
+type PagedCandidates = {
+  items: CandidateOption[];
+  page: number;
+  pageSize: number;
+  total: number;
+};
+
 type BatchDetail = BatchListItem & {
   candidates: Array<{
     batchCandidateId: string;
@@ -90,6 +118,7 @@ type BatchDetail = BatchListItem & {
     candidateMobileNumber: string | null;
     candidateName: string | null;
     enrollmentStatus: string;
+    lastEnrollmentFailureMessage?: string | null;
     sidhCandidateId: string | null;
     trainingStatus: string | null;
   }>;
@@ -147,6 +176,11 @@ function formatDate(value: string | null | undefined) {
 
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function isSidhVerifiedCandidate(candidate: CandidateOption) {
+  const syncStatus = candidate.syncState?.status ?? (candidate.registrationMode === "existing_sidh_link" ? "linked" : null);
+  return Boolean(candidate.sidhCandidateId && (!syncStatus || ["linked", "synced"].includes(syncStatus)));
 }
 
 function normalizeMatchValue(value: string | null | undefined) {
@@ -215,7 +249,14 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [syncingBatchId, setSyncingBatchId] = useState<string | null>(null);
+  const [syncingEnrollmentBatchId, setSyncingEnrollmentBatchId] = useState<string | null>(null);
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
+  const [assignBatchId, setAssignBatchId] = useState("");
+  const [assignCandidates, setAssignCandidates] = useState<CandidateOption[]>([]);
+  const [assignSearch, setAssignSearch] = useState("");
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
+  const [isLoadingCandidates, setIsLoadingCandidates] = useState(false);
+  const [isAssigningCandidates, setIsAssigningCandidates] = useState(false);
 
   const courseMap = useMemo(() => new Map((referenceData?.courses ?? []).map((course) => [course.courseId, course])), [referenceData]);
   const programMap = useMemo(() => new Map((referenceData?.programs ?? []).map((program) => [program.programId, program])), [referenceData]);
@@ -240,6 +281,17 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
   }, [batchForm.categoryId, batchForm.sectorId, programMap, referenceData?.courses, sectorMap]);
 
   const selectedCourse = courseMap.get(batchForm.courseId);
+  const assignBatch = batches.find((batch) => batch.batchId === assignBatchId);
+  const assignedCandidateIds = useMemo(
+    () => new Set(selectedBatch?.batchId === assignBatchId ? selectedBatch.candidates.map((candidate) => candidate.candidateId) : []),
+    [assignBatchId, selectedBatch],
+  );
+  const assignableCandidates = useMemo(
+    () => assignCandidates.filter((candidate) => isSidhVerifiedCandidate(candidate) && !assignedCandidateIds.has(candidate.candidateId)),
+    [assignCandidates, assignedCandidateIds],
+  );
+  const activeSelectedCandidateIds = selectedCandidateIds.filter((candidateId) => assignableCandidates.some((candidate) => candidate.candidateId === candidateId));
+  const allAssignableSelected = assignableCandidates.length > 0 && assignableCandidates.every((candidate) => activeSelectedCandidateIds.includes(candidate.candidateId));
 
   async function loadData() {
     setIsLoading(true);
@@ -285,6 +337,39 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to load enrolled candidates");
     } finally {
       setDetailLoadingId(null);
+    }
+  }
+
+  async function loadAssignableCandidates(batchId: string, search = assignSearch) {
+    const batch = batches.find((item) => item.batchId === batchId);
+
+    if (!batch) {
+      setAssignCandidates([]);
+      return;
+    }
+
+    setIsLoadingCandidates(true);
+
+    try {
+      const params = new URLSearchParams({ page: "1", pageSize: "100" });
+      if (search.trim()) {
+        params.set("search", search.trim());
+      }
+      if (batch.centerId && batch.centerId !== "unassigned") {
+        params.set("centerId", batch.centerId);
+      }
+
+      const [candidatePage] = await Promise.all([
+        apiFetch<PagedCandidates>(`/api/v1/candidates?${params.toString()}`),
+        handleViewBatch(batchId, false),
+      ]);
+
+      setAssignCandidates(candidatePage.items.filter(isSidhVerifiedCandidate));
+      setSelectedCandidateIds([]);
+    } catch (error) {
+      toast.error(error instanceof ClientApiError ? error.message : "Unable to load verified SIDH candidates");
+    } finally {
+      setIsLoadingCandidates(false);
     }
   }
 
@@ -357,6 +442,57 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to queue SIDH retry");
     } finally {
       setSyncingBatchId(null);
+    }
+  }
+
+  async function handleRetryEnrollment(batchId: string, candidateIds?: string[]) {
+    setSyncingEnrollmentBatchId(batchId);
+
+    try {
+      await apiFetch(`/api/v1/batches/${batchId}/enrollment-sync`, {
+        body: JSON.stringify({ candidateIds, forceResync: true }),
+        method: "POST",
+      });
+      toast.success("Enrollment retry queued");
+      await loadData();
+      await handleViewBatch(batchId, false);
+      if (assignBatchId === batchId) {
+        await loadAssignableCandidates(batchId);
+      }
+    } catch (error) {
+      toast.error(error instanceof ClientApiError ? error.message : "Unable to queue enrollment retry");
+    } finally {
+      setSyncingEnrollmentBatchId(null);
+    }
+  }
+
+  async function handleAssignCandidates() {
+    if (!assignBatchId) {
+      toast.error("Select a batch before assigning candidates");
+      return;
+    }
+
+    if (activeSelectedCandidateIds.length === 0) {
+      toast.error("Select at least one verified SIDH candidate");
+      return;
+    }
+
+    setIsAssigningCandidates(true);
+
+    try {
+      const detail = await apiFetch<BatchDetail>(`/api/v1/batches/${assignBatchId}/candidates`, {
+        body: JSON.stringify({ candidateIds: activeSelectedCandidateIds }),
+        method: "POST",
+      });
+      setSelectedBatch(detail);
+      setSelectedCandidateIds([]);
+      toast.success("Candidates saved and enrollment queued");
+      await loadData();
+      await loadAssignableCandidates(assignBatchId);
+    } catch (error) {
+      toast.error(error instanceof ClientApiError ? error.message : "Unable to assign candidates to batch");
+    } finally {
+      setIsAssigningCandidates(false);
     }
   }
 
@@ -624,6 +760,15 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                       {syncingBatchId === selectedBatch.batchId ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
                       Retry SIDH create
                     </button>
+                    <button
+                      className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-emerald-200 hover:text-emerald-700 disabled:opacity-60"
+                      disabled={syncingEnrollmentBatchId === selectedBatch.batchId || selectedBatch.candidates.length === 0}
+                      onClick={() => void handleRetryEnrollment(selectedBatch.batchId)}
+                      type="button"
+                    >
+                      {syncingEnrollmentBatchId === selectedBatch.batchId ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <UserCheck className="h-3.5 w-3.5" />}
+                      Retry enrollment
+                    </button>
                   </div>
                 </div>
 
@@ -647,7 +792,10 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                           <td className="px-3 py-4 text-slate-700">{candidate.candidateMobileNumber ?? "-"}</td>
                           <td className="px-3 py-4 text-slate-700">{candidate.sidhCandidateId ?? "-"}</td>
                           <td className="px-3 py-4">
-                            <StatusBadge tone={candidate.enrollmentStatus === "synced" ? "emerald" : candidate.enrollmentStatus === "manual_review" ? "amber" : "slate"} value={candidate.enrollmentStatus} />
+                            <div className="flex max-w-72 flex-col gap-2">
+                              <StatusBadge tone={candidate.enrollmentStatus === "synced" ? "emerald" : candidate.enrollmentStatus === "manual_review" ? "amber" : candidate.enrollmentStatus === "failed" ? "rose" : "slate"} value={candidate.enrollmentStatus} />
+                              {candidate.lastEnrollmentFailureMessage ? <span className="text-xs text-amber-700">{candidate.lastEnrollmentFailureMessage}</span> : null}
+                            </div>
                           </td>
                           <td className="px-3 py-4 text-slate-700">{formatStatusLabel(candidate.trainingStatus ?? "ongoing")}</td>
                         </tr>
@@ -663,13 +811,140 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
         ) : null}
 
         {activeTab === "assign" ? (
-          <section className="rounded-md border border-slate-200 bg-white p-10 text-center shadow-sm">
-            <div className="mx-auto flex max-w-md flex-col items-center gap-3">
-              <div className="rounded-full bg-slate-100 p-4 text-slate-600">
-                <Users className="h-6 w-6" />
+          <section className="space-y-5">
+            <div className="rounded-md border border-slate-200 bg-white shadow-sm">
+              <div className="border-b border-slate-100 px-5 py-4">
+                <h2 className="text-lg font-semibold text-slate-950">Assign Candidate to Batch</h2>
               </div>
-              <h2 className="text-lg font-semibold text-slate-950">Assign Candidate To Batch</h2>
-              <p className="text-sm leading-6 text-slate-500">This tab is ready for the next phase.</p>
+
+              <div className="grid gap-4 p-5 md:grid-cols-[1fr_auto] md:items-end">
+                <div className="space-y-2">
+                  <Label htmlFor="assignBatchId">Select Batch</Label>
+                  <FieldSelect
+                    id="assignBatchId"
+                    value={assignBatchId}
+                    onChange={(value) => {
+                      setAssignBatchId(value);
+                      setSelectedCandidateIds([]);
+                      setAssignCandidates([]);
+                      if (value) {
+                        void loadAssignableCandidates(value);
+                      }
+                    }}
+                  >
+                    <option value="">Select Batch</option>
+                    {batches.map((batch) => (
+                      <option key={batch.batchId} value={batch.batchId}>{batch.batchName ?? batch.batchCode}</option>
+                    ))}
+                  </FieldSelect>
+                </div>
+
+                <button
+                  className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-indigo-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:opacity-60"
+                  disabled={!assignBatchId || activeSelectedCandidateIds.length === 0 || isAssigningCandidates}
+                  onClick={() => void handleAssignCandidates()}
+                  type="button"
+                >
+                  {isAssigningCandidates ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <UserCheck className="h-4 w-4" />}
+                  Assign Candidate to Batch
+                </button>
+              </div>
+            </div>
+
+            <div className="rounded-md border border-slate-200 bg-white shadow-sm">
+              <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-950">Assign Candidate to Batch</h2>
+                  <p className="mt-1 text-sm text-slate-500">{assignBatch ? `${assignBatch.batchName ?? assignBatch.batchCode} / ${assignBatch.sidhBatchId ?? "SIDH batch pending"}` : "Select a batch to load verified SIDH candidates"}</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <Input
+                      className="h-10 w-64 pl-9"
+                      placeholder="Search"
+                      value={assignSearch}
+                      onChange={(event) => setAssignSearch(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && assignBatchId) {
+                          void loadAssignableCandidates(assignBatchId, assignSearch);
+                        }
+                      }}
+                    />
+                  </div>
+                  <button
+                    className="inline-flex h-10 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:border-indigo-200 hover:text-indigo-700 disabled:opacity-60"
+                    disabled={!assignBatchId || isLoadingCandidates}
+                    onClick={() => void loadAssignableCandidates(assignBatchId, assignSearch)}
+                    type="button"
+                  >
+                    {isLoadingCandidates ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                    Refresh
+                  </button>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto p-5">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-600">
+                  <span>{activeSelectedCandidateIds.length} selected</span>
+                  {assignBatchId && selectedBatch?.batchId === assignBatchId ? <StatusBadge tone="sky" value={`${selectedBatch.candidates.length} assigned`} /> : null}
+                </div>
+
+                <table className="w-full border-collapse text-sm" style={{ minWidth: 1180 }}>
+                  <thead>
+                    <tr className="border-y border-slate-200 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <th className="w-12 px-3 py-3">
+                        <input
+                          aria-label="Select all verified SIDH candidates"
+                          checked={allAssignableSelected}
+                          disabled={assignableCandidates.length === 0}
+                          onChange={(event) => setSelectedCandidateIds(event.target.checked ? assignableCandidates.map((candidate) => candidate.candidateId) : [])}
+                          type="checkbox"
+                        />
+                      </th>
+                      <th className="px-3 py-3">Candidate ID</th>
+                      <th className="px-3 py-3">First Name</th>
+                      <th className="px-3 py-3">State</th>
+                      <th className="px-3 py-3">City</th>
+                      <th className="px-3 py-3">Centre Name</th>
+                      <th className="px-3 py-3">Status</th>
+                      <th className="px-3 py-3">Created on</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {assignableCandidates.map((candidate) => {
+                      const isSelected = activeSelectedCandidateIds.includes(candidate.candidateId);
+
+                      return (
+                        <tr key={candidate.candidateId} className={classNames("align-top hover:bg-slate-50", isSelected ? "bg-indigo-50" : "bg-white")}>
+                          <td className="px-3 py-4">
+                            <input
+                              aria-label={`Select ${candidate.candidateId}`}
+                              checked={isSelected}
+                              onChange={(event) => {
+                                setSelectedCandidateIds((current) =>
+                                  event.target.checked ? [...new Set([...current, candidate.candidateId])] : current.filter((id) => id !== candidate.candidateId),
+                                );
+                              }}
+                              type="checkbox"
+                            />
+                          </td>
+                          <td className="px-3 py-4 font-medium text-slate-800">{candidate.sidhCandidateId ?? candidate.candidateId}</td>
+                          <td className="px-3 py-4 text-slate-700">{candidate.personalDetails.fullName}</td>
+                          <td className="px-3 py-4 text-slate-700">{candidate.locationDetails.state ?? "-"}</td>
+                          <td className="px-3 py-4 text-slate-700">{candidate.locationDetails.city ?? "-"}</td>
+                          <td className="px-3 py-4 text-slate-700">{candidate.locationDetails.centerName ?? "-"}</td>
+                          <td className="px-3 py-4"><StatusBadge tone="emerald" value="Registration Done" /></td>
+                          <td className="px-3 py-4 text-slate-700">{candidate.createdAt ? new Date(candidate.createdAt).toLocaleString("en-IN") : "-"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+
+                {assignBatchId && !isLoadingCandidates && assignableCandidates.length === 0 ? <div className="border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">No verified SIDH candidates are available for this batch.</div> : null}
+                {!assignBatchId ? <div className="border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">Select a batch to load candidates.</div> : null}
+              </div>
             </div>
           </section>
         ) : null}

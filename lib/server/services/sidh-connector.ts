@@ -856,11 +856,23 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
 
     async enrollCandidate(input: EnrollCandidateInput): Promise<EnrollCandidateResult> {
       const runEnrollment = async (session: ConnectorSession) => {
+        const batchId = input.payload.batchId?.trim();
+
+        if (!batchId) {
+          throw new SidhConnectorError({
+            code: "SIDH_BATCH_ID_MISSING",
+            manualReview: true,
+            message: "SIDH batch ID is required before enrolling candidates",
+          });
+        }
+
         const response = await requestJson({
           attemptId: input.attemptId,
-          body: input.payload,
+          body: {
+            candidateIds: input.payload.candidateIds.join(","),
+          },
           operation: "batch.enroll_candidate",
-          path: "/api/thirdparty/v1/enroll/Candidate",
+          path: `/api/v1/candidate/batch/${encodeURIComponent(batchId)}/enrollCandidate`,
           session,
           syncJobId: input.syncJobId,
         });

@@ -293,6 +293,25 @@ function toIsoDate(value?: Date | string | null) {
   return Number.isNaN(dateValue.getTime()) ? null : dateValue.toISOString();
 }
 
+function toRfc3339Seconds(value?: Date | string | null) {
+  return toIsoDate(value)?.replace(/\.\d{3}Z$/, "Z") ?? null;
+}
+
+function toRfc3339DateTime(value: Date | string | null | undefined, time: string | null | undefined, fallbackTime: string) {
+  const dateValue = value instanceof Date ? value : value ? new Date(value) : null;
+
+  if (!dateValue || Number.isNaN(dateValue.getTime())) {
+    return "";
+  }
+
+  const [hours = 0, minutes = 0] = (time || fallbackTime).split(":").map((part) => Number.parseInt(part, 10));
+  const dateTime = new Date(
+    Date.UTC(dateValue.getUTCFullYear(), dateValue.getUTCMonth(), dateValue.getUTCDate(), hours, minutes, 0),
+  );
+
+  return toRfc3339Seconds(dateTime) ?? "";
+}
+
 function parseDate(value: string) {
   const parsed = new Date(`${value}T00:00:00.000Z`);
 
@@ -1762,20 +1781,20 @@ function classifyMessage(error: unknown) {
 }
 
 function buildBatchPayload(batch: ServiceBatch, center: ServiceCenter | null, course: ServiceCourse, scheme: ServiceScheme, candidateCount: number) {
-  const assessmentDate = toIsoDate(batch.assessmentDate)?.slice(0, 10) ?? "";
+  const assessmentDate = toRfc3339Seconds(batch.assessmentDate) ?? "";
 
   return {
     assessmentEndDate: assessmentDate,
     assessmentMode: SIDH_BATCH_DEFAULTS.assessmentMode,
     assessmentStartDate: assessmentDate,
-    batchEndDate: toIsoDate(batch.endDate)?.slice(0, 10) ?? "",
-    batchEndTime: batch.endTime ?? "17:00",
+    batchEndDate: toRfc3339Seconds(batch.endDate) ?? "",
+    batchEndTime: toRfc3339DateTime(batch.endDate, batch.endTime, "17:00"),
     batchFee: {
       totalFees: batch.fee ?? 0,
     },
     batchName: batch.batchName ?? batch.batchCode,
-    batchStartDate: toIsoDate(batch.startDate)?.slice(0, 10) ?? "",
-    batchStartTime: batch.startTime ?? "09:00",
+    batchStartDate: toRfc3339Seconds(batch.startDate) ?? "",
+    batchStartTime: toRfc3339DateTime(batch.startDate, batch.startTime, "09:00"),
     batchType: SIDH_BATCH_DEFAULTS.batchType,
     courseId: course.sidhCourseId,
     createdSource: SIDH_BATCH_DEFAULTS.createdSource,
@@ -1784,7 +1803,7 @@ function buildBatchPayload(batch: ServiceBatch, center: ServiceCenter | null, co
     schemeReferenceId: SIDH_BATCH_DEFAULTS.schemeReferenceId,
     schemeType: SIDH_BATCH_DEFAULTS.schemeType,
     size: Math.min(batch.batchSize ?? candidateCount, 80),
-    skillingCategory: {
+    skillingcategory: {
       id: SIDH_BATCH_DEFAULTS.skillingCategoryId,
       name: SIDH_BATCH_DEFAULTS.skillingCategoryName,
       scheme: SIDH_BATCH_DEFAULTS.scheme,

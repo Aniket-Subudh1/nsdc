@@ -41,7 +41,7 @@ export type BatchCreationPayload = {
   schemeReferenceId: string;
   schemeType: string;
   size: number;
-  skillingCategory: {
+  skillingcategory: {
     id: number;
     name: string;
     scheme: string;
@@ -258,19 +258,29 @@ function redactValue(value: unknown): unknown {
 }
 
 function buildLoginPayload(username: string, encryptedPassword: string, tpId: string) {
-  return new URLSearchParams({
+  void tpId;
+
+  return {
     password: encryptedPassword,
-    tpId,
-    username,
-  });
+    userName: username,
+  };
 }
 
 function buildAuthHeaders(session?: ConnectorSession) {
   return {
-    ...(session?.accessToken ? { Authorization: `Bearer ${session.accessToken}` } : {}),
+    ...(session?.accessToken ? { Authorization: session.accessToken } : {}),
     ...(session?.cookie ? { Cookie: session.cookie } : {}),
     ...(session?.csrfToken ? { "x-csrf-token": session.csrfToken } : {}),
   };
+}
+
+function getCookieHeader(headers: Headers) {
+  const setCookies = (headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.() ?? [];
+  const cookieParts = (setCookies.length > 0 ? setCookies : (headers.get("set-cookie") ?? "").split(/,(?=\s*[^;,\s]+=)/))
+    .map((cookie) => cookie.split(";")[0]?.trim())
+    .filter(Boolean);
+
+  return cookieParts.length > 0 ? cookieParts.join("; ") : null;
 }
 
 function parseResponsePayload<T = unknown>(text: string, contentType: string | null): T | string {
@@ -376,7 +386,14 @@ export function extractRemoteCandidateId(payload: unknown) {
     "referenceID",
   ]);
 
-  return typeof value === "string" && value.trim() ? value.trim() : null;
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+
+  const message = typeof payload === "string" ? payload : extractJsonValue<string>(payload, ["message", "error", "errorMessage"]);
+  const candidateId = message?.match(/\bCAN_[A-Za-z0-9_-]+\b/)?.[0];
+
+  return candidateId ?? null;
 }
 
 export function extractRemoteBatchId(payload: unknown) {
@@ -534,6 +551,49 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
   const credentials = getSidhCredentials(env);
   let cachedSession: ConnectorSession | null = null;
 
+  async function fetchCsrfSession(syncJobId: string, attemptId: string, operation: string) {
+    const csrfResponse = await fetchImpl(new URL("/api/user/v1", credentials.baseUrl).toString(), {
+      headers: {
+        Accept: "application/json",
+      },
+      method: "HEAD",
+    });
+    const csrfHeaders = Object.fromEntries(csrfResponse.headers.entries());
+
+    await logTransaction({
+      attemptId,
+      endpoint: "/api/user/v1",
+      operation,
+      requestHeaders: { Accept: "application/json" },
+      requestPayload: {},
+      responseHeaders: csrfHeaders,
+      responsePayload: {},
+      responseStatus: csrfResponse.status,
+      success: csrfResponse.ok,
+      syncJobId,
+    });
+
+    if (!csrfResponse.ok) {
+      throw classifyError(csrfResponse.status, {}, "Unable to fetch SIDH CSRF token");
+    }
+
+    const csrfToken = csrfResponse.headers.get("x-csrf-token")?.trim();
+
+    if (!csrfToken) {
+      throw new SidhConnectorError({
+        code: "SIDH_CSRF_MISSING",
+        manualReview: true,
+        message: "SIDH CSRF bootstrap did not return x-csrf-token",
+      });
+    }
+
+    return {
+      accessToken: null,
+      cookie: getCookieHeader(csrfResponse.headers),
+      csrfToken,
+    } satisfies ConnectorSession;
+  }
+
   async function requestJson(options: RequestOptions): Promise<{ headers: Headers; payload: unknown; status: number }> {
     const url = new URL(options.path, credentials.baseUrl).toString();
     const serializedBody = serializeRequestBody(options.body);
@@ -686,53 +746,14 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
       });
     }
 
-    const csrfResponse = await fetchImpl(new URL("/api/user/v1", credentials.baseUrl).toString(), {
-      headers: {
-        Accept: "application/json",
-      },
-      method: "HEAD",
-    });
-    const csrfHeaders = Object.fromEntries(csrfResponse.headers.entries());
-
-    await logTransaction({
-      attemptId,
-      endpoint: "/api/user/v1",
-      operation: "csrf.fetch",
-      requestHeaders: { Accept: "application/json" },
-      requestPayload: {},
-      responseHeaders: csrfHeaders,
-      responsePayload: {},
-      responseStatus: csrfResponse.status,
-      success: csrfResponse.ok,
-      syncJobId,
-    });
-
-    if (!csrfResponse.ok) {
-      throw classifyError(csrfResponse.status, {}, "Unable to fetch SIDH CSRF token");
-    }
-
-    const csrfToken = csrfResponse.headers.get("x-csrf-token")?.trim();
-    const csrfCookie = csrfResponse.headers.get("set-cookie")?.trim() || null;
-
-    if (!csrfToken) {
-      throw new SidhConnectorError({
-        code: "SIDH_CSRF_MISSING",
-        manualReview: true,
-        message: "SIDH CSRF bootstrap did not return x-csrf-token",
-      });
-    }
-
-    const bootstrapSession: ConnectorSession = {
-      accessToken: null,
-      cookie: csrfCookie,
-      csrfToken,
-    };
+    const apiSession = await fetchCsrfSession(syncJobId, attemptId, "csrf.fetch");
+    const loginSession = await fetchCsrfSession(syncJobId, attemptId, "auth.csrf.fetch");
 
     const keyResponse = await requestJson({
       attemptId,
       operation: "keys.fetch",
       path: "/api/user/v1/getkey",
-      session: bootstrapSession,
+      session: loginSession,
       syncJobId,
     });
     const publicKey = extractJsonValue<string>(keyResponse.payload, ["publicKey", "public_key", "key"]);
@@ -751,16 +772,15 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
       body: buildLoginPayload(credentials.username, encryptPassword(credentials.password, publicKey, secretKey), credentials.tpId),
       operation: "auth.login",
       path: "/api/user/v1/login",
-      session: bootstrapSession,
+      session: loginSession,
       syncJobId,
     });
     const accessToken = extractJsonValue<string>(loginResponse.payload, ["accessToken", "token", "authToken", "jwt"]);
-    const cookie = loginResponse.headers.get("set-cookie")?.trim() || bootstrapSession.cookie;
 
     cachedSession = {
       accessToken: accessToken?.trim() || null,
-      cookie,
-      csrfToken,
+      cookie: apiSession.cookie,
+      csrfToken: apiSession.csrfToken,
     };
 
     return cachedSession;

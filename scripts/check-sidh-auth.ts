@@ -56,6 +56,32 @@ function encryptPasswordFromDoc(password: string, publicKey: string, secretKey: 
   return `${encryptedPassword}${secretKey.trim()}`;
 }
 
+function getCookieHeader(headers: Headers) {
+  const setCookies = (headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.() ?? [];
+  const cookieParts = (setCookies.length > 0 ? setCookies : (headers.get("set-cookie") ?? "").split(/,(?=\s*[^;,\s]+=)/))
+    .map((cookie) => cookie.split(";")[0]?.trim())
+    .filter(Boolean);
+
+  return cookieParts.length > 0 ? cookieParts.join("; ") : "";
+}
+
+function redactPayload(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactPayload(entry));
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [
+      key,
+      /authorization|cookie|password|token|secret/i.test(key) ? "[REDACTED]" : redactPayload(entry),
+    ]),
+  );
+}
+
 function summarizeBody(text: string) {
   const trimmed = text.trim();
 
@@ -77,7 +103,7 @@ function summarizeBody(text: string) {
       summary.dataKeys = Object.keys(parsed.data as Record<string, unknown>).slice(0, 8);
     }
 
-    return JSON.stringify(Object.keys(summary).length > 0 ? summary : parsed).slice(0, 300);
+    return JSON.stringify(redactPayload(Object.keys(summary).length > 0 ? summary : parsed)).slice(0, 300);
   } catch {
     return trimmed.slice(0, 300);
   }
@@ -101,7 +127,7 @@ async function main() {
     method: "HEAD",
   });
   const csrfToken = csrfResponse.headers.get("x-csrf-token")?.trim() ?? "";
-  const csrfCookie = csrfResponse.headers.get("set-cookie")?.trim() ?? "";
+  const csrfCookie = getCookieHeader(csrfResponse.headers);
 
   console.log(JSON.stringify({ step: "csrf", status: csrfResponse.status, ok: csrfResponse.ok, hasToken: Boolean(csrfToken), hasCookie: Boolean(csrfCookie) }));
 
@@ -132,6 +158,11 @@ async function main() {
 
   const documentedPassword = encryptPasswordFromDoc(password, publicKey, secretKey);
   const variants: LoginVariant[] = [
+    {
+      body: JSON.stringify({ userName: username, password: documentedPassword }),
+      headers: { "Content-Type": "application/json" },
+      name: "json_userName_doc_encrypted_without_tp",
+    },
     {
       body: new URLSearchParams({ username, password: documentedPassword, tpId }),
       headers: { "Content-Type": "application/x-www-form-urlencoded" },

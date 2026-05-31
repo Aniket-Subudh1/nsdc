@@ -169,7 +169,7 @@ describe("candidate sync worker", () => {
             Phone: "9876543210",
           },
           PersonalDetails: {
-            DOB: "2005-06-10",
+            DOB: "2005-06-10T00:00:00Z",
             FatherName: "Suresh Kumar",
             FirstName: "Rohit Kumar",
             Gender: "Male",

@@ -104,6 +104,10 @@ function toIsoDate(value?: Date | string | null) {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
+function toRfc3339Seconds(value?: Date | string | null) {
+  return toIsoDate(value)?.replace(/\.\d{3}Z$/, "Z") ?? null;
+}
+
 function buildCandidateSnapshot(candidate: WorkerCandidate) {
   return {
     candidateId: candidate.candidateId,
@@ -135,7 +139,7 @@ function buildRegistrationPayload(candidate: WorkerCandidate): CandidateRegistra
       Phone: candidate.mobileNumber,
     },
     PersonalDetails: {
-      DOB: toIsoDate(candidate.dateOfBirth)?.slice(0, 10) ?? "",
+      DOB: toRfc3339Seconds(candidate.dateOfBirth) ?? "",
       ...(candidate.fathersName?.trim() ? { FatherName: candidate.fathersName.trim() } : {}),
       FirstName: candidate.fullName,
       ...(candidate.gender?.trim() ? { Gender: candidate.gender.trim() } : {}),

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createEnv } from "@/lib/server/env";
-import { createSidhConnector, SidhConnectorError } from "@/lib/server/services/sidh-connector";
+import { createSidhConnector, extractRemoteCandidateId, SidhConnectorError } from "@/lib/server/services/sidh-connector";
 
 const mocks = vi.hoisted(() => ({
   createTransaction: vi.fn(),
@@ -91,6 +91,7 @@ describe("SIDH connector", () => {
           status: 200,
         }),
       )
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "login-csrf-token" }, status: 200 }))
       .mockResolvedValueOnce(createJsonResponse({ publicKey: "test-public-key", secretKey: "test-secret" }))
       .mockResolvedValueOnce(
         createJsonResponse(
@@ -112,14 +113,15 @@ describe("SIDH connector", () => {
     });
 
     expect(result.remoteCandidateId).toBe("CAN_778899");
-    expect(fetchImpl).toHaveBeenCalledTimes(4);
-    expect(mocks.createTransaction).toHaveBeenCalledTimes(4);
+    expect(fetchImpl).toHaveBeenCalledTimes(5);
+    expect(mocks.createTransaction).toHaveBeenCalledTimes(5);
   });
 
   it("creates batches against the UAT SIDH endpoint and injects the TP ID", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token" }, status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "login-csrf-token" }, status: 200 }))
       .mockResolvedValueOnce(createJsonResponse({ publicKey: "test-public-key", secretKey: "test-secret" }))
       .mockResolvedValueOnce(createJsonResponse({ accessToken: "access-token" }))
       .mockResolvedValueOnce(createJsonResponse({ batchId: "BATCH_REMOTE_001" }, { status: 201 }));
@@ -145,7 +147,7 @@ describe("SIDH connector", () => {
         schemeReferenceId: "02R/2009-10/002IM",
         schemeType: "feeBased",
         size: 80,
-        skillingCategory: { id: 1, name: "NSDC Market led programme", scheme: "Fee Based" },
+        skillingcategory: { id: 1, name: "NSDC Market led programme", scheme: "Fee Based" },
         tcId: "SIDH_TC_001",
         trainingHoursPerDay: 8,
         type: "Fee Based",
@@ -153,7 +155,7 @@ describe("SIDH connector", () => {
       syncJobId: "bsjob_001",
     });
 
-    const createCall = fetchImpl.mock.calls[3];
+    const createCall = fetchImpl.mock.calls[4];
     const createBody = JSON.parse(String(createCall?.[1]?.body));
 
     expect(result.remoteBatchId).toBe("BATCH_REMOTE_001");
@@ -172,6 +174,7 @@ describe("SIDH connector", () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token" }, status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "login-csrf-token" }, status: 200 }))
       .mockResolvedValueOnce(createJsonResponse({ publicKey: "test-public-key", secretKey: "test-secret" }))
       .mockResolvedValueOnce(createJsonResponse({ accessToken: "access-token" }))
       .mockResolvedValueOnce(createJsonResponse({ candidateBatchId: "ENROLL_REMOTE_001" }, { status: 201 }));
@@ -186,7 +189,7 @@ describe("SIDH connector", () => {
       syncJobId: "enjob_001",
     });
 
-    const enrollmentCall = fetchImpl.mock.calls[3];
+    const enrollmentCall = fetchImpl.mock.calls[4];
 
     expect(result.remoteEnrollmentId).toBe("ENROLL_REMOTE_001");
     expect(enrollmentCall?.[0]).toBe("https://backend.itrackglobal.com/api/v1/candidate/batch/BATCH_REMOTE_001/enrollCandidate");
@@ -199,6 +202,7 @@ describe("SIDH connector", () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token" }, status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "login-csrf-token" }, status: 200 }))
       .mockResolvedValueOnce(createJsonResponse({ publicKey: "test-public-key", secretKey: "test-secret" }))
       .mockResolvedValueOnce(createJsonResponse({ accessToken: "access-token" }))
       .mockResolvedValueOnce(createJsonResponse({ message: "Updated batch with candidate in candidate collection" }, { status: 200 }));
@@ -236,7 +240,7 @@ describe("SIDH connector", () => {
       syncJobId: "tasjob_001",
     });
 
-    const submissionCall = fetchImpl.mock.calls[3];
+    const submissionCall = fetchImpl.mock.calls[4];
 
     expect(result.responseStatus).toBe(200);
     expect(submissionCall?.[0]).toBe("https://backend.itrackglobal.com/v1/candidates/candidate/pushBatchEachCandidate");
@@ -255,6 +259,7 @@ describe("SIDH connector", () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token" }, status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "login-csrf-token" }, status: 200 }))
       .mockResolvedValueOnce(createJsonResponse({ publicKey: "test-public-key", secretKey: "test-secret" }))
       .mockResolvedValueOnce(createJsonResponse({ accessToken: "access-token" }))
       .mockResolvedValueOnce(createJsonResponse({ message: "certificate generated" }, { status: 200 }));
@@ -269,7 +274,7 @@ describe("SIDH connector", () => {
       syncJobId: "certjob_001",
     });
 
-    const certificateCall = fetchImpl.mock.calls[3];
+    const certificateCall = fetchImpl.mock.calls[4];
 
     expect(result.responseStatus).toBe(200);
     expect(certificateCall?.[0]).toBe("https://backend.itrackglobal.com/api/v1/cert/certificate?for=trainingPartner");
@@ -284,6 +289,7 @@ describe("SIDH connector", () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token" }, status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "login-csrf-token" }, status: 200 }))
       .mockResolvedValueOnce(createJsonResponse({ publicKey: "test-public-key", secretKey: "test-secret" }))
       .mockResolvedValueOnce(createJsonResponse({ accessToken: "access-token" }))
       .mockResolvedValueOnce(
@@ -306,7 +312,7 @@ describe("SIDH connector", () => {
       syncJobId: "certdownjob_001",
     });
 
-    const downloadCall = fetchImpl.mock.calls[3];
+    const downloadCall = fetchImpl.mock.calls[4];
 
     expect(result.contentType).toBe("application/pdf");
     expect(result.fileName).toBe("certdownload.pdf");
@@ -319,10 +325,12 @@ describe("SIDH connector", () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-1" }, status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "login-csrf-1" }, status: 200 }))
       .mockResolvedValueOnce(createJsonResponse({ publicKey: "key-1", secretKey: "secret-1" }))
       .mockResolvedValueOnce(createJsonResponse({ accessToken: "token-1" }))
       .mockResolvedValueOnce(createJsonResponse({ message: "expired auth" }, { status: 412 }))
       .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-2" }, status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "login-csrf-2" }, status: 200 }))
       .mockResolvedValueOnce(createJsonResponse({ publicKey: "key-2", secretKey: "secret-2" }))
       .mockResolvedValueOnce(createJsonResponse({ accessToken: "token-2" }))
       .mockResolvedValueOnce(createJsonResponse({ candidateId: "CAN_445566" }, { status: 201 }));
@@ -335,13 +343,14 @@ describe("SIDH connector", () => {
     });
 
     expect(result.remoteCandidateId).toBe("CAN_445566");
-    expect(fetchImpl).toHaveBeenCalledTimes(8);
+    expect(fetchImpl).toHaveBeenCalledTimes(10);
   });
 
   it("surfaces unreconciled conflict errors", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token" }, status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "login-csrf-token" }, status: 200 }))
       .mockResolvedValueOnce(createJsonResponse({ publicKey: "test-public-key", secretKey: "test-secret" }))
       .mockResolvedValueOnce(createJsonResponse({ accessToken: "access-token" }))
       .mockResolvedValueOnce(createJsonResponse({ message: "already exists" }, { status: 409 }));
@@ -357,6 +366,11 @@ describe("SIDH connector", () => {
     ).rejects.toBeInstanceOf(SidhConnectorError);
   });
 
+  it("extracts existing candidate ids from SIDH conflict messages", () => {
+    expect(extractRemoteCandidateId({ message: "User Already Exist - CAN_40450541" })).toBe("CAN_40450541");
+    expect(extractRemoteCandidateId("User Already Exist - CAN_998877" )).toBe("CAN_998877");
+  });
+
   it("carries the csrf cookie into key fetch and login", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
@@ -365,6 +379,15 @@ describe("SIDH connector", () => {
           headers: {
             "set-cookie": "csrf-session=abc123",
             "x-csrf-token": "csrf-token",
+          },
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(null, {
+          headers: {
+            "set-cookie": "login-session=def456",
+            "x-csrf-token": "login-csrf-token",
           },
           status: 200,
         }),
@@ -382,22 +405,33 @@ describe("SIDH connector", () => {
     });
 
     expect(fetchImpl).toHaveBeenNthCalledWith(
-      2,
+      3,
       "https://backend.itrackglobal.com/api/user/v1/getkey",
       expect.objectContaining({
         headers: expect.objectContaining({
-          Cookie: "csrf-session=abc123",
-          "x-csrf-token": "csrf-token",
+          Cookie: "login-session=def456",
+          "x-csrf-token": "login-csrf-token",
         }),
       }),
     );
     expect(fetchImpl).toHaveBeenNthCalledWith(
-      3,
+      4,
       "https://backend.itrackglobal.com/api/user/v1/login",
       expect.objectContaining({
-        body: expect.stringContaining("username=uat-user"),
+        body: expect.stringContaining('"userName":"uat-user"'),
         headers: expect.objectContaining({
-          "Content-Type": "application/x-www-form-urlencoded",
+          "Content-Type": "application/json",
+          Cookie: "login-session=def456",
+          "x-csrf-token": "login-csrf-token",
+        }),
+      }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      5,
+      "https://backend.itrackglobal.com/api/user/v1/register/Candidate/v1",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "access-token",
           Cookie: "csrf-session=abc123",
           "x-csrf-token": "csrf-token",
         }),
@@ -424,6 +458,7 @@ describe("SIDH connector", () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token" }, status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "login-csrf-token" }, status: 200 }))
       .mockResolvedValueOnce(createJsonResponse({ publicKey: indentedPem, secret: "test-secret" }))
       .mockResolvedValueOnce(createJsonResponse({ accessToken: "access-token" }))
       .mockResolvedValueOnce(createJsonResponse({ candidateId: "CAN_778899" }, { status: 201 }));
@@ -436,21 +471,24 @@ describe("SIDH connector", () => {
       syncJobId: "sync_001",
     });
 
-    const loginCall = fetchImpl.mock.calls[2];
-    const loginBody = new URLSearchParams(String(loginCall?.[1]?.body ?? ""));
-    const encryptedPassword = loginBody.get("password");
+    const loginCall = fetchImpl.mock.calls[3];
+    const loginBody = JSON.parse(String(loginCall?.[1]?.body ?? "{}")) as { password?: string; userName?: string };
+    const encryptedPassword = loginBody.password;
 
     expect(encryptedPassword).toBeTruthy();
     expect(encryptedPassword?.endsWith("test-secret")).toBe(true);
     expect(encryptedPassword).not.toBe(`${Buffer.from("uat-password", "utf8").toString("base64")}test-secret`);
+    expect(loginBody.userName).toBe("uat-user");
   });
 
   it("preserves plain-text auth errors instead of failing json parsing", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token" }, status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "login-csrf-token" }, status: 200 }))
       .mockResolvedValueOnce(new Response("Unauthorized : csrf", { status: 401 }))
       .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token-2" }, status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "login-csrf-token-2" }, status: 200 }))
       .mockResolvedValueOnce(new Response("Unauthorized : csrf", { status: 401 }));
 
     const connector = createSidhConnector({ env, fetchImpl });
@@ -472,6 +510,7 @@ describe("SIDH connector", () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token", "set-cookie": "csrf-session=abc123" }, status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "login-csrf-token", "set-cookie": "login-session=def456" }, status: 200 }))
       .mockResolvedValueOnce(createJsonResponse({ publicKey: "test-public-key", secret: "test-secret" }))
       .mockResolvedValueOnce(new Response("Error in request", { status: 403 }));
 
@@ -490,6 +529,6 @@ describe("SIDH connector", () => {
       status: 403,
     });
 
-    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
   });
 });

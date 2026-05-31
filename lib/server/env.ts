@@ -76,11 +76,13 @@ export function getSidhBaseUrl(env: AppEnv): string {
 
 export function getSidhCredentials(env: AppEnv) {
   const isProduction = env.SIDH_ENV === "production";
+  const username = isProduction ? env.SIDH_PROD_USERNAME : env.SIDH_UAT_USERNAME;
+  const configuredTpId = isProduction ? env.SIDH_PROD_TP_ID : env.SIDH_UAT_TP_ID;
 
   return {
     baseUrl: getSidhBaseUrl(env),
     password: isProduction ? env.SIDH_PROD_PASSWORD : env.SIDH_UAT_PASSWORD,
-    tpId: isProduction ? env.SIDH_PROD_TP_ID : env.SIDH_UAT_TP_ID,
-    username: isProduction ? env.SIDH_PROD_USERNAME : env.SIDH_UAT_USERNAME,
+    tpId: configuredTpId.trim() || username,
+    username,
   };
 }

@@ -259,6 +259,9 @@ const batchSyncStatusSchema = z.enum(["not_synced", "queued", "processing", "syn
 const attendanceUploadStatusSchema = z.enum(["staged", "validated", "committed", "failed"]);
 const attendanceStatusSchema = z.enum(["present", "absent"]);
 const candidateTrainingStatusSchema = z.enum(["ongoing", "completed", "dropout"]);
+const timeSchema = z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Time must use HH:mm format");
+const requiredStringSchema = z.string().trim().min(1);
+const stringOrNumberIdSchema = z.union([requiredStringSchema, z.coerce.number().int().positive()]);
 const yesNoSchema = z.enum(["Yes", "No"]).optional().or(z.literal(""));
 const nullableTrimmedStringSchema = z.string().trim().optional().or(z.literal(""));
 
@@ -514,12 +517,17 @@ export const createBatchSchema = z
   .object({
     batchCode: z.string().trim().min(2).max(80),
     batchName: z.string().trim().min(2).max(160).optional().or(z.literal("")),
+    batchSize: z.coerce.number().int().min(1).max(80).default(80),
     courseId: z.string().trim().min(1),
     schemeId: z.string().trim().min(1),
     centerId: z.string().trim().min(1),
     startDate: z.string().date(),
     endDate: z.string().date(),
-    assessmentDate: z.string().date().optional(),
+    assessmentDate: z.string().date(),
+    startTime: timeSchema.default("09:00"),
+    endTime: timeSchema.default("17:00"),
+    trainingHoursPerDay: z.coerce.number().int().positive().max(24).default(8),
+    fee: z.coerce.number().min(0).default(0),
     status: batchStatusSchema.default("draft"),
     syncEnabled: z.boolean().default(true),
     allowAssessmentBeforeBatchEnd: z.boolean().default(false),
@@ -549,12 +557,17 @@ export const updateBatchSchema = z
   .object({
     batchCode: z.string().trim().min(2).max(80).optional(),
     batchName: z.string().trim().min(2).max(160).optional().or(z.literal("")),
+    batchSize: z.coerce.number().int().min(1).max(80).optional(),
     courseId: z.string().trim().min(1).optional(),
     schemeId: z.string().trim().min(1).optional(),
     centerId: z.string().trim().min(1).optional(),
     startDate: z.string().date().optional(),
     endDate: z.string().date().optional(),
     assessmentDate: z.string().date().optional(),
+    startTime: timeSchema.optional(),
+    endTime: timeSchema.optional(),
+    trainingHoursPerDay: z.coerce.number().int().positive().max(24).optional(),
+    fee: z.coerce.number().min(0).optional(),
     status: batchStatusSchema.optional(),
     syncEnabled: z.boolean().optional(),
     allowAssessmentBeforeBatchEnd: z.boolean().optional(),
@@ -610,6 +623,51 @@ export const enrollmentSyncRequestSchema = z.object({
   forceResync: z.boolean().default(false),
 });
 
+export const trainingAssessmentSubmissionSchema = z.object({
+  batchId: stringOrNumberIdSchema.optional(),
+  candidates: z
+    .array(
+      z.object({
+        candidateID: requiredStringSchema,
+        trainingDetails: z.object({
+          trainingStatus: requiredStringSchema,
+          attendance: z.coerce.number().int().min(0).max(100),
+        }),
+        assessmentDetails: z.object({
+          assessmentStatus: requiredStringSchema,
+          assessmentPercentage: z.coerce.number().int().min(0).max(100),
+          grade: requiredStringSchema.optional(),
+          assessmentDataUploadedOn: requiredStringSchema,
+          assessmentAgency: requiredStringSchema.default("Self"),
+          assessorID: requiredStringSchema,
+          assessorName: requiredStringSchema,
+        }),
+        certificationDetails: z.object({
+          certificationName: requiredStringSchema,
+          isCertified: z.boolean(),
+          certifyingAgency: requiredStringSchema,
+          certificationDate: requiredStringSchema,
+        }),
+      }),
+    )
+    .min(1),
+});
+
+export const certificateGenerationRequestSchema = z
+  .object({
+    candidateId: requiredStringSchema.optional(),
+    userName: requiredStringSchema.optional(),
+  })
+  .refine((value) => value.candidateId || value.userName, {
+    message: "candidateId or userName is required",
+    path: ["candidateId"],
+  });
+
+export const certificateDownloadQuerySchema = z.object({
+  candidateId: requiredStringSchema,
+  type: requiredStringSchema.default("externalcertificate"),
+});
+
 export const attendanceImportFormSchema = z.object({
   batchId: z.string().trim().min(1),
 });
@@ -643,6 +701,9 @@ export type BatchListQuery = z.infer<typeof batchListQuerySchema>;
 export type AddCandidatesToBatchInput = z.infer<typeof addCandidatesToBatchSchema>;
 export type BatchSyncRequestInput = z.infer<typeof batchSyncRequestSchema>;
 export type EnrollmentSyncRequestInput = z.infer<typeof enrollmentSyncRequestSchema>;
+export type TrainingAssessmentSubmissionInput = z.infer<typeof trainingAssessmentSubmissionSchema>;
+export type CertificateGenerationRequestInput = z.infer<typeof certificateGenerationRequestSchema>;
+export type CertificateDownloadQueryInput = z.infer<typeof certificateDownloadQuerySchema>;
 export type AttendanceImportFormInput = z.infer<typeof attendanceImportFormSchema>;
 export type AttendanceImportRowInput = z.infer<typeof attendanceImportRowSchema>;
 export type AttendanceCommitInput = z.infer<typeof attendanceCommitSchema>;

@@ -1048,18 +1048,23 @@ export function getOpenApiDocument() {
         },
         Batch: {
           type: "object",
-          required: ["id", "batchId", "batchCode", "batchName", "courseId", "schemeId", "centerId", "startDate", "endDate", "assessmentDate", "status", "syncEnabled", "allowAssessmentBeforeBatchEnd", "allowCandidateOverlap", "assessmentEligibilityThreshold", "candidateCount", "sidhBatchId", "syncState"],
+          required: ["id", "batchId", "batchCode", "batchName", "batchSize", "courseId", "schemeId", "centerId", "startDate", "endDate", "assessmentDate", "startTime", "endTime", "trainingHoursPerDay", "fee", "status", "syncEnabled", "allowAssessmentBeforeBatchEnd", "allowCandidateOverlap", "assessmentEligibilityThreshold", "candidateCount", "sidhBatchId", "syncState"],
           properties: {
             id: { type: "string" },
             batchId: { type: "string" },
             batchCode: { type: "string" },
             batchName: { type: "string", nullable: true },
+            batchSize: { type: "integer", minimum: 1, maximum: 80 },
             courseId: { type: "string" },
             schemeId: { type: "string" },
             centerId: { type: "string" },
             startDate: { type: "string", nullable: true, format: "date" },
             endDate: { type: "string", nullable: true, format: "date" },
             assessmentDate: { type: "string", nullable: true, format: "date" },
+            startTime: { type: "string", pattern: "^([01]\\d|2[0-3]):[0-5]\\d$" },
+            endTime: { type: "string", pattern: "^([01]\\d|2[0-3]):[0-5]\\d$" },
+            trainingHoursPerDay: { type: "integer", minimum: 1, maximum: 24 },
+            fee: { type: "number", minimum: 0 },
             status: { type: "string", enum: ["draft", "ready", "active", "completed", "cancelled"] },
             syncEnabled: { type: "boolean" },
             allowAssessmentBeforeBatchEnd: { type: "boolean" },
@@ -1090,16 +1095,21 @@ export function getOpenApiDocument() {
         },
         CreateBatchRequest: {
           type: "object",
-          required: ["batchCode", "courseId", "schemeId", "centerId", "startDate", "endDate"],
+          required: ["batchCode", "courseId", "schemeId", "centerId", "startDate", "endDate", "assessmentDate"],
           properties: {
             batchCode: { type: "string" },
             batchName: { type: "string" },
+            batchSize: { type: "integer", minimum: 1, maximum: 80, default: 80 },
             courseId: { type: "string" },
             schemeId: { type: "string" },
             centerId: { type: "string" },
             startDate: { type: "string", format: "date" },
             endDate: { type: "string", format: "date" },
             assessmentDate: { type: "string", format: "date" },
+            startTime: { type: "string", pattern: "^([01]\\d|2[0-3]):[0-5]\\d$", default: "09:00" },
+            endTime: { type: "string", pattern: "^([01]\\d|2[0-3]):[0-5]\\d$", default: "17:00" },
+            trainingHoursPerDay: { type: "integer", minimum: 1, maximum: 24, default: 8 },
+            fee: { type: "number", minimum: 0, default: 0 },
             assessmentEligibilityThreshold: { type: "integer", minimum: 0, maximum: 100, default: 70 },
             candidateIds: { type: "array", items: { type: "string" }, maxItems: 80 },
             syncEnabled: { type: "boolean", default: true },
@@ -1111,12 +1121,17 @@ export function getOpenApiDocument() {
           properties: {
             batchCode: { type: "string" },
             batchName: { type: "string" },
+            batchSize: { type: "integer", minimum: 1, maximum: 80 },
             courseId: { type: "string" },
             schemeId: { type: "string" },
             centerId: { type: "string" },
             startDate: { type: "string", format: "date" },
             endDate: { type: "string", format: "date" },
             assessmentDate: { type: "string", format: "date" },
+            startTime: { type: "string", pattern: "^([01]\\d|2[0-3]):[0-5]\\d$" },
+            endTime: { type: "string", pattern: "^([01]\\d|2[0-3]):[0-5]\\d$" },
+            trainingHoursPerDay: { type: "integer", minimum: 1, maximum: 24 },
+            fee: { type: "number", minimum: 0 },
             assessmentEligibilityThreshold: { type: "integer", minimum: 0, maximum: 100 },
             syncEnabled: { type: "boolean" },
             status: { type: "string", enum: ["draft", "ready", "active", "completed", "cancelled"] },
@@ -1140,6 +1155,71 @@ export function getOpenApiDocument() {
           properties: {
             candidateIds: { type: "array", items: { type: "string" } },
             forceResync: { type: "boolean", default: false },
+          },
+        },
+        TrainingAssessmentTrainingDetails: {
+          type: "object",
+          required: ["trainingStatus", "attendance"],
+          properties: {
+            trainingStatus: { type: "string", example: "completed" },
+            attendance: { type: "integer", minimum: 0, maximum: 100 },
+          },
+        },
+        TrainingAssessmentAssessmentDetails: {
+          type: "object",
+          required: ["assessmentStatus", "assessmentPercentage", "assessmentDataUploadedOn", "assessmentAgency", "assessorID", "assessorName"],
+          properties: {
+            assessmentStatus: { type: "string", example: "Pass" },
+            assessmentPercentage: { type: "integer", minimum: 0, maximum: 100 },
+            grade: { type: "string" },
+            assessmentDataUploadedOn: { type: "string", example: "2026-02-05" },
+            assessmentAgency: { type: "string", default: "Self" },
+            assessorID: { type: "string" },
+            assessorName: { type: "string" },
+          },
+        },
+        TrainingAssessmentCertificationDetails: {
+          type: "object",
+          required: ["certificationName", "isCertified", "certifyingAgency", "certificationDate"],
+          properties: {
+            certificationName: { type: "string" },
+            isCertified: { type: "boolean" },
+            certifyingAgency: { type: "string" },
+            certificationDate: { type: "string", example: "2026-02-05" },
+          },
+        },
+        TrainingAssessmentCandidate: {
+          type: "object",
+          required: ["candidateID", "trainingDetails", "assessmentDetails", "certificationDetails"],
+          properties: {
+            candidateID: { type: "string" },
+            trainingDetails: ref("TrainingAssessmentTrainingDetails"),
+            assessmentDetails: ref("TrainingAssessmentAssessmentDetails"),
+            certificationDetails: ref("TrainingAssessmentCertificationDetails"),
+          },
+        },
+        TrainingAssessmentSubmissionRequest: {
+          type: "object",
+          required: ["candidates"],
+          properties: {
+            batchId: { oneOf: [{ type: "string" }, { type: "integer" }] },
+            candidates: { type: "array", minItems: 1, items: ref("TrainingAssessmentCandidate") },
+          },
+        },
+        CertificateGenerationRequest: {
+          type: "object",
+          oneOf: [{ required: ["candidateId"] }, { required: ["userName"] }],
+          properties: {
+            candidateId: { type: "string", description: "SIDH candidate ID. Sent as userName to SIDH when userName is omitted." },
+            userName: { type: "string", description: "SIDH userName/candidate ID expected by the certificate API." },
+          },
+        },
+        SidhOperationResult: {
+          type: "object",
+          required: ["responseBody", "responseStatus"],
+          properties: {
+            responseBody: { nullable: true, additionalProperties: true },
+            responseStatus: { type: "integer" },
           },
         },
         BatchStatus: {
@@ -1279,7 +1359,7 @@ export function getOpenApiDocument() {
       "/auth/login": {
         post: {
           tags: ["Auth"],
-          summary: "Authenticate a user",
+          summary: "Authenticate a portal user and issue a session cookie",
           requestBody: {
             required: true,
             content: jsonContent(ref("LoginRequest")),
@@ -2016,6 +2096,68 @@ export function getOpenApiDocument() {
             401: errorResponse("Authentication required"),
             403: errorResponse("Forbidden"),
             404: errorResponse("Batch not found"),
+          },
+        },
+      },
+      "/batches/{batchId}/assessment": {
+        post: {
+          tags: ["Batches"],
+          summary: "Submit training, assessment, and certification details to SIDH",
+          security: [{ cookieAuth: [] }],
+          parameters: [{ $ref: "#/components/parameters/BatchId" }],
+          requestBody: {
+            required: true,
+            content: jsonContent(ref("TrainingAssessmentSubmissionRequest")),
+          },
+          responses: {
+            200: successResponse("Training and assessment data submitted to SIDH", ref("SidhOperationResult")),
+            400: errorResponse("Validation failed"),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+            409: errorResponse("Remote SIDH state rejected the submission"),
+          },
+        },
+      },
+      "/batches/{batchId}/certificates": {
+        post: {
+          tags: ["Batches"],
+          summary: "Generate a SIDH certificate for a batch candidate",
+          security: [{ cookieAuth: [] }],
+          parameters: [{ $ref: "#/components/parameters/BatchId" }],
+          requestBody: {
+            required: true,
+            content: jsonContent(ref("CertificateGenerationRequest")),
+          },
+          responses: {
+            200: successResponse("Certificate generation requested in SIDH", ref("SidhOperationResult")),
+            400: errorResponse("Validation failed"),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+            409: errorResponse("Remote SIDH state rejected the request"),
+          },
+        },
+        get: {
+          tags: ["Batches"],
+          summary: "Download a generated SIDH certificate PDF",
+          security: [{ cookieAuth: [] }],
+          parameters: [
+            { $ref: "#/components/parameters/BatchId" },
+            { name: "candidateId", in: "query", required: true, schema: { type: "string" } },
+            { name: "type", in: "query", required: false, schema: { type: "string", default: "externalcertificate" } },
+          ],
+          responses: {
+            200: {
+              description: "Certificate PDF downloaded",
+              content: {
+                "application/pdf": {
+                  schema: { type: "string", format: "binary" },
+                },
+              },
+            },
+            400: errorResponse("Validation failed"),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+            404: errorResponse("Certificate not found"),
           },
         },
       },

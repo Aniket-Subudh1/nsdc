@@ -20,6 +20,12 @@ const batchSchema = new mongoose.Schema(
       trim: true,
       default: null,
     },
+    batchSize: {
+      type: Number,
+      default: 80,
+      min: 1,
+      max: 80,
+    },
     courseId: {
       type: String,
       required: true,
@@ -48,6 +54,24 @@ const batchSchema = new mongoose.Schema(
     assessmentDate: {
       type: Date,
       default: null,
+    },
+    startTime: {
+      type: String,
+      default: "09:00",
+      trim: true,
+    },
+    endTime: {
+      type: String,
+      default: "17:00",
+      trim: true,
+    },
+    trainingHoursPerDay: {
+      type: Number,
+      default: 8,
+    },
+    fee: {
+      type: Number,
+      default: 0,
     },
     status: {
       type: String,

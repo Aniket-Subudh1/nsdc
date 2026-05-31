@@ -22,54 +22,76 @@ export type CandidateRegistrationPayload = {
 };
 
 export type BatchCreationPayload = {
-  assessmentDate: string | null;
-  batchCode: string;
+  assessmentEndDate: string;
+  assessmentMode: string;
+  assessmentStartDate: string;
+  batchEndDate: string;
+  batchEndTime: string;
+  batchFee: {
+    totalFees: number;
+  };
   batchName: string;
-  batchReferenceId: string;
-  center: {
-    centerId: string;
-    centerName: string;
-    sidhTcId: string | null;
+  batchStartDate: string;
+  batchStartTime: string;
+  batchType: string;
+  courseId: string;
+  createdSource: string;
+  feePaidBy: string;
+  schemeId: string;
+  schemeReferenceId: string;
+  schemeType: string;
+  size: number;
+  skillingcategory: {
+    id: number;
+    name: string;
+    scheme: string;
   };
-  course: {
-    courseId: string;
-    courseName: string;
-    nsqfLevel: number;
-    qpCode: string;
-    sidhCourseId: string;
-    trainingHours: number;
-  };
-  dates: {
-    endDate: string | null;
-    startDate: string | null;
-  };
-  meta: {
-    candidateCount: number;
-    centerId: string;
-    courseId: string;
-    schemeId: string;
-  };
-  scheme: {
-    beneficiaryType: string | null;
-    fundingType: string | null;
-    schemeId: string;
-    schemeName: string;
-    sidhSchemeId: string | null;
-  };
+  tcId: string;
+  tpId?: string;
+  trainingHoursPerDay: number;
+  type: string;
 };
 
 export type EnrollmentPayload = {
   batchId: string | null | undefined;
-  batchReferenceId: string;
-  candidateId: string | null | undefined;
-  candidateReferenceId: string;
-  enrollmentReferenceId: string;
-  meta: {
-    batchCode: string;
-    centerId: string;
-    courseId: string;
-    schemeId: string;
-  };
+  candidateIds: string[];
+};
+
+export type TrainingAssessmentPayload = {
+  batchId: number | string;
+  candidates: Array<{
+    assessmentDetails: {
+      assessmentAgency: string;
+      assessmentDataUploadedOn: string;
+      assessmentPercentage: number;
+      assessmentStatus: string;
+      assessorID: string;
+      assessorName: string;
+      grade?: string;
+    };
+    candidateID: string;
+    certificationDetails: {
+      certificationDate: string;
+      certificationName: string;
+      certifyingAgency: string;
+      isCertified: boolean;
+    };
+    trainingDetails: {
+      attendance: number;
+      trainingStatus: string;
+    };
+  }>;
+};
+
+export type CertificateGenerationPayload = {
+  batchId: number | string;
+  userName: string;
+};
+
+export type CertificateDownloadPayload = {
+  batchId: number | string;
+  candidateId: string;
+  type?: string;
 };
 
 export type RegisterCandidateInput = {
@@ -90,6 +112,24 @@ export type EnrollCandidateInput = {
   syncJobId: string;
 };
 
+export type SubmitTrainingAssessmentInput = {
+  attemptId: string;
+  payload: TrainingAssessmentPayload;
+  syncJobId: string;
+};
+
+export type GenerateCertificateInput = {
+  attemptId: string;
+  payload: CertificateGenerationPayload;
+  syncJobId: string;
+};
+
+export type DownloadCertificateInput = {
+  attemptId: string;
+  payload: CertificateDownloadPayload;
+  syncJobId: string;
+};
+
 export type RegisterCandidateResult = {
   remoteCandidateId: string | null;
   responseBody: unknown;
@@ -105,6 +145,23 @@ export type CreateBatchResult = {
 export type EnrollCandidateResult = {
   remoteEnrollmentId: string | null;
   responseBody: unknown;
+  responseStatus: number;
+};
+
+export type SubmitTrainingAssessmentResult = {
+  responseBody: unknown;
+  responseStatus: number;
+};
+
+export type GenerateCertificateResult = {
+  responseBody: unknown;
+  responseStatus: number;
+};
+
+export type DownloadCertificateResult = {
+  contentType: string | null;
+  fileName: string | null;
+  responseBody: ArrayBuffer;
   responseStatus: number;
 };
 
@@ -293,6 +350,19 @@ function extractJsonValue<T = unknown>(payload: unknown, candidates: string[]): 
   }
 
   return undefined;
+}
+
+function extractFileName(contentDisposition: string | null) {
+  if (!contentDisposition) {
+    return null;
+  }
+
+  const encodedFileName = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (encodedFileName) {
+    return decodeURIComponent(encodedFileName.replace(/^"|"$/g, ""));
+  }
+
+  return contentDisposition.match(/filename="?([^";]+)"?/i)?.[1] ?? null;
 }
 
 export function extractRemoteCandidateId(payload: unknown) {
@@ -531,6 +601,79 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
     }
   }
 
+  async function requestBinary(options: RequestOptions): Promise<{ headers: Headers; payload: ArrayBuffer; status: number }> {
+    const url = new URL(options.path, credentials.baseUrl).toString();
+    const serializedBody = serializeRequestBody(options.body);
+    const requestHeaders = {
+      Accept: "application/pdf,application/octet-stream,application/json",
+      ...buildAuthHeaders(options.session),
+      ...(serializedBody.contentType ? { "Content-Type": serializedBody.contentType } : {}),
+      ...(options.headers ?? {}),
+    };
+
+    try {
+      const response = await fetchImpl(url, {
+        body: serializedBody.payload,
+        headers: requestHeaders,
+        method: options.headers?.["x-http-method"] ?? (options.body ? "POST" : "GET"),
+      });
+      const responseHeaders = Object.fromEntries(response.headers.entries());
+      const contentType = response.headers.get("content-type");
+      const payload = await response.arrayBuffer();
+      const responsePayload = response.ok
+        ? { byteLength: payload.byteLength, contentType }
+        : parseResponsePayload(Buffer.from(payload).toString("utf8"), contentType);
+
+      await logTransaction({
+        attemptId: options.attemptId,
+        endpoint: options.path,
+        operation: options.operation,
+        requestHeaders,
+        requestPayload: serializedBody.requestPayload,
+        responseHeaders,
+        responsePayload,
+        responseStatus: response.status,
+        success: response.ok,
+        syncJobId: options.syncJobId,
+      });
+
+      if (!response.ok) {
+        cachedSession = null;
+        const message = extractErrorMessage(responsePayload, `SIDH ${options.operation} failed`);
+        throw classifyError(response.status, responsePayload, message, options.operation);
+      }
+
+      return {
+        headers: response.headers,
+        payload,
+        status: response.status,
+      };
+    } catch (error) {
+      if (error instanceof SidhConnectorError) {
+        throw error;
+      }
+
+      await logTransaction({
+        attemptId: options.attemptId,
+        endpoint: options.path,
+        operation: options.operation,
+        requestHeaders,
+        requestPayload: serializedBody.requestPayload,
+        responseHeaders: {},
+        responsePayload: { message: error instanceof Error ? error.message : "Unknown network error" },
+        responseStatus: null,
+        success: false,
+        syncJobId: options.syncJobId,
+      });
+
+      throw new SidhConnectorError({
+        code: "SIDH_NETWORK_ERROR",
+        message: error instanceof Error ? error.message : "Unable to reach SIDH",
+        retryable: true,
+      });
+    }
+  }
+
   async function bootstrapAuth(syncJobId: string, attemptId: string) {
     if (!credentials.username.trim() || !credentials.password.trim() || !credentials.tpId.trim()) {
       throw new SidhConnectorError({
@@ -671,9 +814,12 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
       const runCreateBatch = async (session: ConnectorSession) => {
         const response = await requestJson({
           attemptId: input.attemptId,
-          body: input.payload,
+          body: {
+            ...input.payload,
+            tpId: input.payload.tpId?.trim() || credentials.tpId,
+          },
           operation: "batch.create",
-          path: "/api/tpApi/tp/v1/batch/create",
+          path: "/api/batch/v1/create",
           session,
           syncJobId: input.syncJobId,
         });
@@ -711,7 +857,7 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
           attemptId: input.attemptId,
           body: input.payload,
           operation: "batch.enroll_candidate",
-          path: "/api/tpApi/tp/v1/batch/enrollment",
+          path: "/api/thirdparty/v1/enroll/Candidate",
           session,
           syncJobId: input.syncJobId,
         });
@@ -737,6 +883,123 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
         ) {
           cachedSession = null;
           return executeEnrollment(true);
+        }
+
+        throw error;
+      }
+    },
+
+    async submitTrainingAndAssessment(input: SubmitTrainingAssessmentInput): Promise<SubmitTrainingAssessmentResult> {
+      const runSubmission = async (session: ConnectorSession) => {
+        const response = await requestJson({
+          attemptId: input.attemptId,
+          body: input.payload,
+          operation: "batch.training_assessment_submit",
+          path: "/v1/candidates/candidate/pushBatchEachCandidate",
+          session,
+          syncJobId: input.syncJobId,
+        });
+
+        return {
+          responseBody: response.payload,
+          responseStatus: response.status,
+        } satisfies SubmitTrainingAssessmentResult;
+      };
+
+      const executeSubmission = async (forceRefresh = false) => {
+        const session = await ensureSession(input.syncJobId, input.attemptId, forceRefresh);
+        return runSubmission(session);
+      };
+
+      try {
+        return await executeSubmission();
+      } catch (error) {
+        if (
+          error instanceof SidhConnectorError &&
+          (error.status === 401 || error.status === 412 || error.code === "SIDH_AUTH_FAILED")
+        ) {
+          cachedSession = null;
+          return executeSubmission(true);
+        }
+
+        throw error;
+      }
+    },
+
+    async generateCertificate(input: GenerateCertificateInput): Promise<GenerateCertificateResult> {
+      const runGeneration = async (session: ConnectorSession) => {
+        const response = await requestJson({
+          attemptId: input.attemptId,
+          body: input.payload,
+          operation: "certificate.generate",
+          path: "/api/v1/cert/certificate?for=trainingPartner",
+          session,
+          syncJobId: input.syncJobId,
+        });
+
+        return {
+          responseBody: response.payload,
+          responseStatus: response.status,
+        } satisfies GenerateCertificateResult;
+      };
+
+      const executeGeneration = async (forceRefresh = false) => {
+        const session = await ensureSession(input.syncJobId, input.attemptId, forceRefresh);
+        return runGeneration(session);
+      };
+
+      try {
+        return await executeGeneration();
+      } catch (error) {
+        if (
+          error instanceof SidhConnectorError &&
+          (error.status === 401 || error.status === 412 || error.code === "SIDH_AUTH_FAILED")
+        ) {
+          cachedSession = null;
+          return executeGeneration(true);
+        }
+
+        throw error;
+      }
+    },
+
+    async downloadCertificate(input: DownloadCertificateInput): Promise<DownloadCertificateResult> {
+      const runDownload = async (session: ConnectorSession) => {
+        const query = new URLSearchParams({
+          batchId: String(input.payload.batchId),
+          candidateId: input.payload.candidateId,
+          type: input.payload.type ?? "externalcertificate",
+        });
+        const response = await requestBinary({
+          attemptId: input.attemptId,
+          operation: "certificate.download",
+          path: `/api/v1/cert/uc/singledocdownload?${query.toString()}`,
+          session,
+          syncJobId: input.syncJobId,
+        });
+
+        return {
+          contentType: response.headers.get("content-type"),
+          fileName: extractFileName(response.headers.get("content-disposition")),
+          responseBody: response.payload,
+          responseStatus: response.status,
+        } satisfies DownloadCertificateResult;
+      };
+
+      const executeDownload = async (forceRefresh = false) => {
+        const session = await ensureSession(input.syncJobId, input.attemptId, forceRefresh);
+        return runDownload(session);
+      };
+
+      try {
+        return await executeDownload();
+      } catch (error) {
+        if (
+          error instanceof SidhConnectorError &&
+          (error.status === 401 || error.status === 412 || error.code === "SIDH_AUTH_FAILED")
+        ) {
+          cachedSession = null;
+          return executeDownload(true);
         }
 
         throw error;

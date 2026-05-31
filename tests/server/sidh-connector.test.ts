@@ -105,6 +105,206 @@ describe("SIDH connector", () => {
     expect(mocks.createTransaction).toHaveBeenCalledTimes(4);
   });
 
+  it("creates batches against the UAT SIDH endpoint and injects the TP ID", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token" }, status: 200 }))
+      .mockResolvedValueOnce(createJsonResponse({ publicKey: "test-public-key", secretKey: "test-secret" }))
+      .mockResolvedValueOnce(createJsonResponse({ accessToken: "access-token" }))
+      .mockResolvedValueOnce(createJsonResponse({ batchId: "BATCH_REMOTE_001" }, { status: 201 }));
+
+    const connector = createSidhConnector({ env, fetchImpl });
+    const result = await connector.createBatch({
+      attemptId: "batatt_001",
+      payload: {
+        assessmentEndDate: "2026-02-05",
+        assessmentMode: "Self",
+        assessmentStartDate: "2026-02-05",
+        batchEndDate: "2026-02-01",
+        batchEndTime: "17:00",
+        batchFee: { totalFees: 500 },
+        batchName: "Retail Batch",
+        batchStartDate: "2026-01-01",
+        batchStartTime: "09:00",
+        batchType: "Regular",
+        courseId: "SIDH_COURSE_001",
+        createdSource: "Created for NSDC Academy Partners",
+        feePaidBy: "Self-Paid",
+        schemeId: "Scheme_2",
+        schemeReferenceId: "02R/2009-10/002IM",
+        schemeType: "feeBased",
+        size: 80,
+        skillingcategory: { id: 1, name: "NSDC Market led programme", scheme: "Fee Based" },
+        tcId: "SIDH_TC_001",
+        trainingHoursPerDay: 8,
+        type: "Fee Based",
+      },
+      syncJobId: "bsjob_001",
+    });
+
+    const createCall = fetchImpl.mock.calls[3];
+    const createBody = JSON.parse(String(createCall?.[1]?.body));
+
+    expect(result.remoteBatchId).toBe("BATCH_REMOTE_001");
+    expect(createCall?.[0]).toBe("https://backend.itrackglobal.com/api/batch/v1/create");
+    expect(createBody).toMatchObject({
+      batchName: "Retail Batch",
+      courseId: "SIDH_COURSE_001",
+      feePaidBy: "Self-Paid",
+      schemeReferenceId: "02R/2009-10/002IM",
+      tcId: "SIDH_TC_001",
+      tpId: "TP_UAT",
+    });
+  });
+
+  it("enrolls candidates against the UAT SIDH third-party enrollment endpoint", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token" }, status: 200 }))
+      .mockResolvedValueOnce(createJsonResponse({ publicKey: "test-public-key", secretKey: "test-secret" }))
+      .mockResolvedValueOnce(createJsonResponse({ accessToken: "access-token" }))
+      .mockResolvedValueOnce(createJsonResponse({ candidateBatchId: "ENROLL_REMOTE_001" }, { status: 201 }));
+
+    const connector = createSidhConnector({ env, fetchImpl });
+    const result = await connector.enrollCandidate({
+      attemptId: "enatt_001",
+      payload: {
+        batchId: "BATCH_REMOTE_001",
+        candidateIds: ["CAN_001", "CAN_002"],
+      },
+      syncJobId: "enjob_001",
+    });
+
+    const enrollmentCall = fetchImpl.mock.calls[3];
+
+    expect(result.remoteEnrollmentId).toBe("ENROLL_REMOTE_001");
+    expect(enrollmentCall?.[0]).toBe("https://backend.itrackglobal.com/api/thirdparty/v1/enroll/Candidate");
+    expect(JSON.parse(String(enrollmentCall?.[1]?.body))).toEqual({
+      batchId: "BATCH_REMOTE_001",
+      candidateIds: ["CAN_001", "CAN_002"],
+    });
+  });
+
+  it("submits training and assessment data against the UAT SIDH endpoint", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token" }, status: 200 }))
+      .mockResolvedValueOnce(createJsonResponse({ publicKey: "test-public-key", secretKey: "test-secret" }))
+      .mockResolvedValueOnce(createJsonResponse({ accessToken: "access-token" }))
+      .mockResolvedValueOnce(createJsonResponse({ message: "Updated batch with candidate in candidate collection" }, { status: 200 }));
+
+    const connector = createSidhConnector({ env, fetchImpl });
+    const result = await connector.submitTrainingAndAssessment({
+      attemptId: "taatt_001",
+      payload: {
+        batchId: "BATCH_REMOTE_001",
+        candidates: [
+          {
+            assessmentDetails: {
+              assessmentAgency: "Self",
+              assessmentDataUploadedOn: "2026-02-05",
+              assessmentPercentage: 82,
+              assessmentStatus: "Pass",
+              assessorID: "ASSR_001",
+              assessorName: "Assessor One",
+              grade: "A",
+            },
+            candidateID: "CAN_001",
+            certificationDetails: {
+              certificationDate: "2026-02-05",
+              certificationName: "Retail Course",
+              certifyingAgency: "Self",
+              isCertified: true,
+            },
+            trainingDetails: {
+              attendance: 92,
+              trainingStatus: "completed",
+            },
+          },
+        ],
+      },
+      syncJobId: "tasjob_001",
+    });
+
+    const submissionCall = fetchImpl.mock.calls[3];
+
+    expect(result.responseStatus).toBe(200);
+    expect(submissionCall?.[0]).toBe("https://backend.itrackglobal.com/v1/candidates/candidate/pushBatchEachCandidate");
+    expect(JSON.parse(String(submissionCall?.[1]?.body))).toMatchObject({
+      batchId: "BATCH_REMOTE_001",
+      candidates: [
+        expect.objectContaining({
+          candidateID: "CAN_001",
+          trainingDetails: { attendance: 92, trainingStatus: "completed" },
+        }),
+      ],
+    });
+  });
+
+  it("generates certificates against the UAT SIDH endpoint", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token" }, status: 200 }))
+      .mockResolvedValueOnce(createJsonResponse({ publicKey: "test-public-key", secretKey: "test-secret" }))
+      .mockResolvedValueOnce(createJsonResponse({ accessToken: "access-token" }))
+      .mockResolvedValueOnce(createJsonResponse({ message: "certificate generated" }, { status: 200 }));
+
+    const connector = createSidhConnector({ env, fetchImpl });
+    const result = await connector.generateCertificate({
+      attemptId: "certatt_001",
+      payload: {
+        batchId: "BATCH_REMOTE_001",
+        userName: "CAN_001",
+      },
+      syncJobId: "certjob_001",
+    });
+
+    const certificateCall = fetchImpl.mock.calls[3];
+
+    expect(result.responseStatus).toBe(200);
+    expect(certificateCall?.[0]).toBe("https://backend.itrackglobal.com/api/v1/cert/certificate?for=trainingPartner");
+    expect(JSON.parse(String(certificateCall?.[1]?.body))).toEqual({
+      batchId: "BATCH_REMOTE_001",
+      userName: "CAN_001",
+    });
+  });
+
+  it("downloads generated certificates from the UAT SIDH endpoint", async () => {
+    const pdfBytes = new Uint8Array([37, 80, 68, 70]);
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token" }, status: 200 }))
+      .mockResolvedValueOnce(createJsonResponse({ publicKey: "test-public-key", secretKey: "test-secret" }))
+      .mockResolvedValueOnce(createJsonResponse({ accessToken: "access-token" }))
+      .mockResolvedValueOnce(
+        new Response(pdfBytes, {
+          headers: {
+            "content-disposition": "attachment; filename=certdownload.pdf",
+            "content-type": "application/pdf",
+          },
+          status: 200,
+        }),
+      );
+
+    const connector = createSidhConnector({ env, fetchImpl });
+    const result = await connector.downloadCertificate({
+      attemptId: "certdownatt_001",
+      payload: {
+        batchId: "BATCH_REMOTE_001",
+        candidateId: "CAN_001",
+      },
+      syncJobId: "certdownjob_001",
+    });
+
+    const downloadCall = fetchImpl.mock.calls[3];
+
+    expect(result.contentType).toBe("application/pdf");
+    expect(result.fileName).toBe("certdownload.pdf");
+    expect(result.responseBody.byteLength).toBe(4);
+    expect(downloadCall?.[0]).toBe("https://backend.itrackglobal.com/api/v1/cert/uc/singledocdownload?batchId=BATCH_REMOTE_001&candidateId=CAN_001&type=externalcertificate");
+    expect(downloadCall?.[1]?.method).toBe("GET");
+  });
+
   it("refreshes auth and retries once on 412", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()

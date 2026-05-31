@@ -23,6 +23,7 @@ import {
   canManageBatches,
   getPermissionsForRoles,
 } from "@/lib/server/rbac";
+import { SIDH_BATCH_DEFAULTS } from "@/lib/server/sidh-defaults";
 import { writeAuditLog } from "@/lib/server/services/audit";
 import { createSidhConnector, SidhConnectorError } from "@/lib/server/services/sidh-connector";
 import { type AuthSession } from "@/lib/server/services/session";
@@ -52,16 +53,21 @@ type ServiceBatch = {
   batchCode: string;
   batchId: string;
   batchName?: string | null;
+  batchSize?: number;
   candidateCount?: number;
   centerId: string;
   courseId: string;
   createdAt?: Date;
   endDate: Date;
+  endTime?: string;
+  fee?: number;
   sidhBatchId?: string | null;
   schemeId: string;
   startDate: Date;
+  startTime?: string;
   status: string;
   syncEnabled: boolean;
+  trainingHoursPerDay?: number;
   updatedAt?: Date;
   updatedByUserId?: string | null;
 };
@@ -394,12 +400,17 @@ function serializeBatch(batch: ServiceBatch, syncState?: ServiceBatchSyncState |
     batchId: batch.batchId,
     batchCode: batch.batchCode,
     batchName: batch.batchName ?? null,
+    batchSize: batch.batchSize ?? 80,
     courseId: batch.courseId,
     schemeId: batch.schemeId,
     centerId: batch.centerId,
     startDate: toIsoDate(batch.startDate)?.slice(0, 10) ?? null,
     endDate: toIsoDate(batch.endDate)?.slice(0, 10) ?? null,
     assessmentDate: toIsoDate(batch.assessmentDate)?.slice(0, 10) ?? null,
+    startTime: batch.startTime ?? "09:00",
+    endTime: batch.endTime ?? "17:00",
+    trainingHoursPerDay: batch.trainingHoursPerDay ?? 8,
+    fee: batch.fee ?? 0,
     status: batch.status,
     syncEnabled: batch.syncEnabled,
     allowAssessmentBeforeBatchEnd: batch.allowAssessmentBeforeBatchEnd ?? false,
@@ -648,8 +659,9 @@ async function validateCandidateAssignments(batch: ServiceBatch, candidateIds: s
   const existingIds = new Set(existingBatchCandidates.map((item) => item.candidateId));
   const incomingIds = uniqueCandidateIds.filter((candidateId) => !existingIds.has(candidateId));
 
-  if ((existingIds.size + incomingIds.length) > 80) {
-    throw new ApiError(400, "BATCH_SIZE_EXCEEDED", "Batch size must never exceed 80 candidates");
+  const batchCapacity = Math.min(batch.batchSize ?? 80, 80);
+  if ((existingIds.size + incomingIds.length) > batchCapacity) {
+    throw new ApiError(400, "BATCH_SIZE_EXCEEDED", `Batch size must never exceed ${batchCapacity} candidates`);
   }
 
   const candidates = (await CandidateModel.find({ candidateId: { $in: incomingIds } }).select({
@@ -979,14 +991,19 @@ export async function createBatch(actor: AuthSession, input: CreateBatchInput, r
     batchCode: normalizeString(input.batchCode),
     batchId: createPrefixedId("bat"),
     batchName: normalizeString(input.batchName) || null,
+    batchSize: input.batchSize,
     centerId: input.centerId,
     courseId: input.courseId,
     createdByUserId: actor.user.id,
     endDate,
+    endTime: input.endTime,
+    fee: input.fee,
     schemeId: input.schemeId,
     startDate,
+    startTime: input.startTime,
     status: input.status,
     syncEnabled: input.syncEnabled,
+    trainingHoursPerDay: input.trainingHoursPerDay,
     updatedByUserId: actor.user.id,
   })) as ServiceBatch;
 
@@ -1049,6 +1066,9 @@ export async function updateBatch(actor: AuthSession, batchId: string, input: Up
   if (input.batchName !== undefined) {
     batch.batchName = normalizeString(input.batchName) || null;
   }
+  if (input.batchSize !== undefined) {
+    batch.batchSize = input.batchSize;
+  }
   if (input.courseId !== undefined) {
     batch.courseId = input.courseId;
   }
@@ -1066,6 +1086,18 @@ export async function updateBatch(actor: AuthSession, batchId: string, input: Up
   }
   if (input.assessmentDate !== undefined) {
     batch.assessmentDate = nextAssessmentDate;
+  }
+  if (input.startTime !== undefined) {
+    batch.startTime = input.startTime;
+  }
+  if (input.endTime !== undefined) {
+    batch.endTime = input.endTime;
+  }
+  if (input.trainingHoursPerDay !== undefined) {
+    batch.trainingHoursPerDay = input.trainingHoursPerDay;
+  }
+  if (input.fee !== undefined) {
+    batch.fee = input.fee;
   }
   if (input.status !== undefined) {
     batch.status = input.status;
@@ -1648,57 +1680,43 @@ function classifyMessage(error: unknown) {
 }
 
 function buildBatchPayload(batch: ServiceBatch, center: ServiceCenter, course: ServiceCourse, scheme: ServiceScheme, candidateCount: number) {
+  const assessmentDate = toIsoDate(batch.assessmentDate)?.slice(0, 10) ?? "";
+
   return {
-    assessmentDate: toIsoDate(batch.assessmentDate)?.slice(0, 10) ?? null,
-    batchCode: batch.batchCode,
+    assessmentEndDate: assessmentDate,
+    assessmentMode: SIDH_BATCH_DEFAULTS.assessmentMode,
+    assessmentStartDate: assessmentDate,
+    batchEndDate: toIsoDate(batch.endDate)?.slice(0, 10) ?? "",
+    batchEndTime: batch.endTime ?? "17:00",
+    batchFee: {
+      totalFees: batch.fee ?? 0,
+    },
     batchName: batch.batchName ?? batch.batchCode,
-    batchReferenceId: batch.batchId,
-    center: {
-      centerId: center.centerId,
-      centerName: center.centerName,
-      sidhTcId: center.sidhTcId ?? null,
+    batchStartDate: toIsoDate(batch.startDate)?.slice(0, 10) ?? "",
+    batchStartTime: batch.startTime ?? "09:00",
+    batchType: SIDH_BATCH_DEFAULTS.batchType,
+    courseId: course.sidhCourseId,
+    createdSource: SIDH_BATCH_DEFAULTS.createdSource,
+    feePaidBy: SIDH_BATCH_DEFAULTS.feePaidBy,
+    schemeId: scheme.sidhSchemeId ?? SIDH_BATCH_DEFAULTS.schemeId,
+    schemeReferenceId: SIDH_BATCH_DEFAULTS.schemeReferenceId,
+    schemeType: SIDH_BATCH_DEFAULTS.schemeType,
+    size: Math.min(batch.batchSize ?? candidateCount, 80),
+    skillingcategory: {
+      id: SIDH_BATCH_DEFAULTS.skillingCategoryId,
+      name: SIDH_BATCH_DEFAULTS.skillingCategoryName,
+      scheme: SIDH_BATCH_DEFAULTS.scheme,
     },
-    course: {
-      courseId: course.courseId,
-      courseName: course.courseName,
-      nsqfLevel: course.nsqfLevel,
-      qpCode: course.qpCode,
-      sidhCourseId: course.sidhCourseId,
-      trainingHours: course.trainingHours,
-    },
-    dates: {
-      endDate: toIsoDate(batch.endDate)?.slice(0, 10) ?? null,
-      startDate: toIsoDate(batch.startDate)?.slice(0, 10) ?? null,
-    },
-    meta: {
-      candidateCount,
-      centerId: batch.centerId,
-      courseId: batch.courseId,
-      schemeId: batch.schemeId,
-    },
-    scheme: {
-      beneficiaryType: scheme.beneficiaryType ?? null,
-      fundingType: scheme.fundingType ?? null,
-      schemeId: scheme.schemeId,
-      schemeName: scheme.name,
-      sidhSchemeId: scheme.sidhSchemeId ?? null,
-    },
+    tcId: center.sidhTcId ?? "",
+    trainingHoursPerDay: batch.trainingHoursPerDay ?? 8,
+    type: SIDH_BATCH_DEFAULTS.type,
   };
 }
 
-function buildEnrollmentPayload(batch: ServiceBatch, syncState: ServiceBatchSyncState, batchCandidate: ServiceBatchCandidate, candidate: ServiceCandidate) {
+function buildEnrollmentPayload(batch: ServiceBatch, syncState: ServiceBatchSyncState, _batchCandidate: ServiceBatchCandidate, candidate: ServiceCandidate) {
   return {
     batchId: syncState.sidhBatchId ?? batch.sidhBatchId,
-    batchReferenceId: batch.batchId,
-    candidateId: candidate.sidhCandidateId,
-    candidateReferenceId: candidate.candidateId,
-    enrollmentReferenceId: batchCandidate.batchCandidateId,
-    meta: {
-      batchCode: batch.batchCode,
-      centerId: batch.centerId,
-      courseId: batch.courseId,
-      schemeId: batch.schemeId,
-    },
+    candidateIds: [candidate.sidhCandidateId as string],
   };
 }
 

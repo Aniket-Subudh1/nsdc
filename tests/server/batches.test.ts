@@ -136,6 +136,7 @@ import {
   createAttendanceImport,
   createBatch,
   getBatchAttendanceSummary,
+  processQueuedBatchSyncJobs,
   processQueuedEnrollmentSyncJobs,
   queueEnrollmentSync,
 } from "@/lib/server/services/batches";
@@ -166,16 +167,21 @@ function createBatchDocument(overrides: Record<string, unknown> = {}) {
     batchCode: "BAT-001",
     batchId: "bat_001",
     batchName: "Retail Batch",
+    batchSize: 80,
     candidateCount: 2,
     centerId: "tc_001",
     courseId: "course_001",
     endDate: new Date("2026-02-01T00:00:00.000Z"),
+    endTime: "17:00",
+    fee: 500,
     save: vi.fn().mockResolvedValue(undefined),
     schemeId: "scheme_001",
     sidhBatchId: "BATCH_REMOTE_001",
     startDate: new Date("2026-01-01T00:00:00.000Z"),
+    startTime: "09:00",
     status: "draft",
     syncEnabled: true,
+    trainingHoursPerDay: 8,
     updatedByUserId: null,
     ...overrides,
   };
@@ -288,16 +294,82 @@ describe("batch services", () => {
         allowCandidateOverlap: false,
         batchCode: "BAT-001",
         batchName: "Retail Batch",
+        batchSize: 80,
         candidateIds: [],
         centerId: "tc_001",
         courseId: "course_001",
         endDate: "2026-02-01",
+        endTime: "17:00",
+        fee: 500,
         schemeId: "scheme_001",
         startDate: "2026-01-01",
+        startTime: "09:00",
         status: "draft",
         syncEnabled: true,
+        trainingHoursPerDay: 8,
       }),
     ).rejects.toThrow("Selected course mapping is not valid for the requested batch dates");
+  });
+
+  it("builds SIDH batch creation payloads with default NSDC metadata", async () => {
+    const batch = createBatchDocument({ sidhBatchId: null });
+    const claimedState = createSyncState({
+      batchSync: {
+        attempts: [],
+        lastJobId: "bsjob_001",
+        retryCount: 0,
+        status: "processing",
+      },
+      sidhBatchId: null,
+    });
+
+    mocks.batchSyncStateFindOneAndUpdate.mockResolvedValueOnce(claimedState).mockResolvedValueOnce(null);
+    mocks.batchFindOne.mockResolvedValue(batch);
+    mocks.courseFindOne.mockReturnValue(
+      createSelectQuery({
+        approvalStatus: "approved",
+        associatedQpOrJobRole: "Retail Sales Associate",
+        courseId: "course_001",
+        courseName: "Retail Course",
+        minimumAge: 18,
+        nsqfLevel: 4,
+        programIds: ["prg_001"],
+        qpCode: "QP001",
+        schemeIds: ["scheme_001"],
+        sidhCourseId: "SIDH_COURSE_001",
+        status: "active",
+        trainingHours: 240,
+        validityEndDate: new Date("2026-12-31T00:00:00.000Z"),
+        validityStartDate: new Date("2025-01-01T00:00:00.000Z"),
+      }),
+    );
+    mocks.batchCandidateFind.mockReturnValueOnce(createSortQuery([]));
+
+    const connector = {
+      createBatch: vi.fn().mockResolvedValue({ remoteBatchId: "BATCH_REMOTE_002", responseBody: {}, responseStatus: 201 }),
+    };
+
+    const result = await processQueuedBatchSyncJobs(actor as never, { limit: 1 }, { connector: connector as never, now: () => new Date("2026-01-15T00:00:00.000Z") });
+
+    expect(result.succeededCount).toBe(1);
+    expect(connector.createBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          assessmentMode: "Self",
+          batchEndTime: "17:00",
+          batchFee: { totalFees: 500 },
+          batchStartTime: "09:00",
+          batchType: "Regular",
+          createdSource: "Created for NSDC Academy Partners",
+          feePaidBy: "Self-Paid",
+          schemeReferenceId: "02R/2009-10/002IM",
+          schemeType: "feeBased",
+          skillingcategory: { id: 1, name: "NSDC Market led programme", scheme: "Fee Based" },
+          trainingHoursPerDay: 8,
+          type: "Fee Based",
+        }),
+      }),
+    );
   });
 
   it("allows enrollment sync only for sync-eligible batches and candidates", async () => {
@@ -427,7 +499,7 @@ describe("enrollment sync worker", () => {
   };
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   it("handles remote 406 cancelled batch responses", async () => {

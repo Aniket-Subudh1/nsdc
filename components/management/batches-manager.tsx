@@ -72,13 +72,17 @@ type BatchListItem = {
   batchCode: string;
   batchId: string;
   batchName: string | null;
+  batchSize: number;
   candidateCount: number;
   centerId: string;
   courseId: string;
   endDate: string | null;
+  endTime: string;
+  fee: number;
   schemeId: string;
   sidhBatchId: string | null;
   startDate: string | null;
+  startTime: string;
   status: string;
   syncEnabled: boolean;
   syncState: {
@@ -119,6 +123,7 @@ type BatchDetail = BatchListItem & {
       status: string;
     };
   };
+  trainingHoursPerDay: number;
 };
 
 type BatchStatus = {
@@ -186,11 +191,16 @@ type BatchFormState = {
   assessmentEligibilityThreshold: string;
   batchCode: string;
   batchName: string;
+  batchSize: string;
   centerId: string;
   courseId: string;
   endDate: string;
+  endTime: string;
+  fee: string;
   schemeId: string;
   startDate: string;
+  startTime: string;
+  trainingHoursPerDay: string;
 };
 
 const portalContent = {
@@ -211,11 +221,16 @@ const emptyBatchForm: BatchFormState = {
   assessmentEligibilityThreshold: "70",
   batchCode: "",
   batchName: "",
+  batchSize: "80",
   centerId: "",
   courseId: "",
   endDate: "",
+  endTime: "17:00",
+  fee: "0",
   schemeId: "",
   startDate: "",
+  startTime: "09:00",
+  trainingHoursPerDay: "8",
 };
 
 function classNames(...values: Array<string | false | null | undefined>) {
@@ -296,11 +311,16 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
       assessmentEligibilityThreshold: String(batch.assessmentEligibilityThreshold ?? 70),
       batchCode: batch.batchCode,
       batchName: batch.batchName ?? "",
+      batchSize: String(batch.batchSize ?? 80),
       centerId: batch.centerId,
       courseId: batch.courseId,
       endDate: batch.endDate ?? "",
+      endTime: batch.endTime ?? "17:00",
+      fee: String(batch.fee ?? 0),
       schemeId: batch.schemeId,
       startDate: batch.startDate ?? "",
+      startTime: batch.startTime ?? "09:00",
+      trainingHoursPerDay: String(batch.trainingHoursPerDay ?? 8),
     });
   }
 
@@ -366,11 +386,16 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
         assessmentEligibilityThreshold: Number(batchForm.assessmentEligibilityThreshold || 70),
         batchCode: batchForm.batchCode,
         batchName: batchForm.batchName,
+        batchSize: Number(batchForm.batchSize || 80),
         centerId: batchForm.centerId,
         courseId: batchForm.courseId,
         endDate: batchForm.endDate,
+        endTime: batchForm.endTime,
+        fee: Number(batchForm.fee || 0),
         schemeId: batchForm.schemeId,
         startDate: batchForm.startDate,
+        startTime: batchForm.startTime,
+        trainingHoursPerDay: Number(batchForm.trainingHoursPerDay || 8),
       };
 
       const data = selectedBatch
@@ -530,7 +555,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,_#eff6ff,_#f8fafc_55%,_#ffffff)] px-6 py-10 text-slate-700">
+      <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#eff6ff,#f8fafc_55%,#ffffff)] px-6 py-10 text-slate-700">
         <div className="flex items-center gap-3 rounded-full border border-slate-200 bg-white/80 px-5 py-3 text-sm font-medium shadow-sm backdrop-blur">
           <LoaderCircle className="h-4 w-4 animate-spin" />
           Loading batch operations
@@ -540,7 +565,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
   }
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(125,211,252,0.18),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(253,230,138,0.22),_transparent_26%),linear-gradient(180deg,_#f8fafc_0%,_#ffffff_100%)] px-5 py-6 md:px-8 md:py-8">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(125,211,252,0.18),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(253,230,138,0.22),transparent_26%),linear-gradient(180deg,#f8fafc_0%,#ffffff_100%)] px-5 py-6 md:px-8 md:py-8">
       <div className="mx-auto flex max-w-7xl flex-col gap-6">
         <section className="rounded-[28px] border border-slate-200/70 bg-white/85 p-6 shadow-[0_24px_70px_-40px_rgba(15,23,42,0.35)] backdrop-blur md:p-8">
           <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
@@ -664,6 +689,26 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                   <div className="space-y-2">
                     <Label htmlFor="threshold">Eligibility threshold (%)</Label>
                     <Input id="threshold" type="number" min={0} max={100} value={batchForm.assessmentEligibilityThreshold} onChange={(event) => setBatchForm((current) => ({ ...current, assessmentEligibilityThreshold: event.target.value }))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="batchSize">Batch size</Label>
+                    <Input id="batchSize" type="number" min={1} max={80} value={batchForm.batchSize} onChange={(event) => setBatchForm((current) => ({ ...current, batchSize: event.target.value }))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="fee">Fee</Label>
+                    <Input id="fee" type="number" min={0} value={batchForm.fee} onChange={(event) => setBatchForm((current) => ({ ...current, fee: event.target.value }))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="startTime">Start time</Label>
+                    <Input id="startTime" type="time" value={batchForm.startTime} onChange={(event) => setBatchForm((current) => ({ ...current, startTime: event.target.value }))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="endTime">End time</Label>
+                    <Input id="endTime" type="time" value={batchForm.endTime} onChange={(event) => setBatchForm((current) => ({ ...current, endTime: event.target.value }))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="trainingHoursPerDay">Training hours per day</Label>
+                    <Input id="trainingHoursPerDay" type="number" min={1} max={24} value={batchForm.trainingHoursPerDay} onChange={(event) => setBatchForm((current) => ({ ...current, trainingHoursPerDay: event.target.value }))} />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="startDate">Start date</Label>

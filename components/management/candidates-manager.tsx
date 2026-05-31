@@ -21,7 +21,6 @@ import {
 import { toast } from "sonner";
 
 import { apiFetch, ClientApiError, type ApiEnvelope } from "@/lib/client/api";
-import { downloadWorkbook } from "@/lib/spreadsheet/browser";
 
 type CandidatesManagerProps = {
   portal: "admin" | "training_partner";
@@ -186,7 +185,9 @@ type CandidateFilters = {
 };
 
 type IndividualCandidateFormState = {
+  centerName: string;
   countryCode: string;
+  city: string;
   dob: string;
   email: string;
   fatherName: string;
@@ -195,6 +196,7 @@ type IndividualCandidateFormState = {
   guardianName: string;
   namePrefix: string;
   phone: string;
+  state: string;
 };
 
 type SyncFilters = {
@@ -229,6 +231,8 @@ type BulkQueueResult = {
   skippedCount: number;
 };
 
+type CandidateWorkspaceTab = "all_candidates" | "create_candidate" | "bulk_upload" | "skill_india_queue";
+
 const portalContent = {
   admin: {
     description:
@@ -245,6 +249,12 @@ const portalContent = {
 const candidateSyncStatusOptions = ["not_queued", "queued", "processing", "synced", "failed", "manual_review", "linked"];
 const syncJobStatusOptions = ["queued", "processing", "succeeded", "failed", "manual_review", "dead_letter"];
 const pageSizeOptions = [12, 24, 48];
+const candidateWorkspaceTabs: Array<{ icon: React.ReactNode; id: CandidateWorkspaceTab; label: string }> = [
+  { icon: <Users className="h-4 w-4" />, id: "all_candidates", label: "All Candidates" },
+  { icon: <BadgeCheck className="h-4 w-4" />, id: "create_candidate", label: "Create Candidate" },
+  { icon: <FileSpreadsheet className="h-4 w-4" />, id: "bulk_upload", label: "Bulk Upload" },
+  { icon: <Workflow className="h-4 w-4" />, id: "skill_india_queue", label: "Queue" },
+];
 
 const emptyImportForm: ImportFormState = {
   file: null,
@@ -258,7 +268,9 @@ const initialCandidateFilters: CandidateFilters = {
 };
 
 const emptyIndividualCandidateForm: IndividualCandidateFormState = {
+  centerName: "",
   countryCode: "91",
+  city: "",
   dob: "",
   email: "",
   fatherName: "",
@@ -267,6 +279,7 @@ const emptyIndividualCandidateForm: IndividualCandidateFormState = {
   guardianName: "",
   namePrefix: "",
   phone: "",
+  state: "",
 };
 
 const initialSyncFilters: SyncFilters = {
@@ -274,49 +287,6 @@ const initialSyncFilters: SyncFilters = {
   pageSize: 12,
   status: "",
 };
-
-const candidateImportTemplateRows = [
-  {
-    "Name Prefix": "Mr",
-    "First Name": "Import Valid Candidate QA",
-    Gender: "Male",
-    DOB: "10/06/2005",
-    "Father's Name": "Import Parent QA",
-    "Guardian Name": "",
-    Email: "import.valid.qa@example.com",
-    Phone: "9876543212",
-    "Country Code": "91",
-  },
-  {
-    "Name Prefix": "Ms",
-    "First Name": "Import Invalid Candidate QA",
-    Gender: "Female",
-    DOB: "12/07/2005",
-    "Father's Name": "Import Parent QA",
-    "Guardian Name": "",
-    Email: "import.invalid.qa@example.com",
-    Phone: "",
-    "Country Code": "91",
-  },
-  {
-    "Name Prefix": "Mr",
-    "First Name": "Import Valid Candidate QA",
-    Gender: "Male",
-    DOB: "10/06/2005",
-    "Father's Name": "Import Parent QA",
-    "Guardian Name": "",
-    Email: "import.duplicate.qa@example.com",
-    Phone: "9876543212",
-    "Country Code": "91",
-  },
-] as const;
-
-const candidateImportTemplateInstructions = [
-  { Note: "Keep the sheet headers unchanged. The upload checks only Name Prefix, First Name, Gender, DOB, father or guardian name, email, phone, and country code." },
-  { Note: "Use dd/mm/yyyy for DOB in the sample sheet." },
-  { Note: "The app applies your allowed center and program automatically when saving candidates." },
-  { Note: "After saving valid rows, select the candidates you want to send to Skill India and add them to the queue." },
-] as const;
 
 function buildIndividualCandidatePayload(form: IndividualCandidateFormState) {
   return {
@@ -333,7 +303,30 @@ function buildIndividualCandidatePayload(form: IndividualCandidateFormState) {
       phone: form.phone,
       countryCode: form.countryCode,
     },
+    locationDetails: {
+      state: form.state,
+      city: form.city,
+      centerName: form.centerName,
+    },
   };
+}
+
+async function downloadStaticWorkbook(fileName: string, sourcePath: string) {
+  const response = await fetch(sourcePath);
+
+  if (!response.ok) {
+    throw createApiError("Unable to load the sample import workbook", response.status);
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function createApiError(message: string, status = 400) {
@@ -367,6 +360,17 @@ function formatDateTime(value?: string | null) {
 
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+}
+
+function formatStatusLabel(value?: string | null) {
+  if (!value) {
+    return "Unknown";
+  }
+
+  return value
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function formatJson(value: unknown) {
@@ -448,6 +452,7 @@ async function queueCandidateSyncBulk(candidateIds: string[]) {
 }
 
 export default function CandidatesManager({ portal }: CandidatesManagerProps) {
+  const [activeTab, setActiveTab] = useState<CandidateWorkspaceTab>("all_candidates");
   const [candidates, setCandidates] = useState<CandidateRecord[]>([]);
   const [candidateFilters, setCandidateFilters] = useState(initialCandidateFilters);
   const [candidatePagination, setCandidatePagination] = useState({ page: 1, pageSize: 12, total: 0 });
@@ -489,6 +494,16 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
       individualCandidateForm.phone &&
       (individualCandidateForm.fatherName || individualCandidateForm.guardianName),
   );
+  const tabCounts: Record<CandidateWorkspaceTab, number | string> = {
+    all_candidates: candidatePagination.total,
+    bulk_upload: currentImportJob?.totalRows ?? importRows.length,
+    create_candidate: isIndividualCandidateReady ? "Ready" : "Draft",
+    skill_india_queue: syncPagination.total,
+  };
+
+  function switchTab(tab: CandidateWorkspaceTab) {
+    setActiveTab(tab);
+  }
 
   useEffect(() => {
     if (errorMessage) {
@@ -697,10 +712,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
     setSuccessMessage(null);
 
     try {
-      await downloadWorkbook("skill-india-candidate-upload-template.xlsx", [
-        { name: "Candidate Import Template", rows: [...candidateImportTemplateRows] },
-        { name: "Instructions", rows: [...candidateImportTemplateInstructions] },
-      ]);
+      await downloadStaticWorkbook("candidate_details.xlsx", "/candidate_details.xlsx");
 
       setSuccessMessage("Sample upload sheet downloaded successfully");
     } catch (error) {
@@ -825,454 +837,521 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
           </button>
         </div>
       </section>
-      <section className="grid gap-4 md:grid-cols-3">
-        <MetricCard icon={<Users className="h-5 w-5" />} label="Candidates in scope" value={candidatePagination.total} />
-        <MetricCard icon={<Send className="h-5 w-5" />} label="Queued or processing" value={queuedJobs} />
-        <MetricCard icon={<RotateCcw className="h-5 w-5" />} label="Flagged jobs" value={flaggedJobs} />
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard
+          icon={<Users className="h-5 w-5" />}
+          label="All Candidates"
+          value={candidatePagination.total}
+          active={activeTab === "all_candidates"}
+          onClick={() => switchTab("all_candidates")}
+        />
+        <MetricCard
+          icon={<BadgeCheck className="h-5 w-5" />}
+          label="Create Candidate"
+          value={isIndividualCandidateReady ? "Ready" : "Draft"}
+          active={activeTab === "create_candidate"}
+          onClick={() => switchTab("create_candidate")}
+        />
+        <MetricCard
+          icon={<FileSpreadsheet className="h-5 w-5" />}
+          label="Bulk Upload"
+          value={currentImportJob?.totalRows ?? 0}
+          active={activeTab === "bulk_upload"}
+          onClick={() => switchTab("bulk_upload")}
+        />
+        <MetricCard
+          icon={<Workflow className="h-5 w-5" />}
+          label="Queue Jobs"
+          value={syncPagination.total}
+          active={activeTab === "skill_india_queue"}
+          onClick={() => switchTab("skill_india_queue")}
+        />
       </section>
-
-      <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex items-center gap-3">
-            <span className="rounded-2xl bg-sky-50 p-2 text-sky-600">
-              <Upload className="h-5 w-5" />
-            </span>
-            <div>
-              <h2 className="text-lg font-semibold text-slate-900">Candidate Registration</h2>
-              <p className="text-sm text-slate-500">Use the same Skill India registration fields for bulk upload or for adding one candidate directly.</p>
-            </div>
-          </div>
-          <div className="mt-6 grid gap-4 md:grid-cols-3">
-            <MiniStat label="1" value="Download sample" />
-            <MiniStat label="2" value="Upload or add one" />
-            <MiniStat label="3" value="Save and send" />
-          </div>
-          <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-            The candidate registration payload now follows the Skill India candidate format only: name prefix, first name, gender, DOB, father or guardian name, email, phone, and country code. Program, center, and registration mode are applied internally.
-          </div>
-          <div className="mt-4 flex flex-wrap gap-3">
-            <button type="button" onClick={() => void handleDownloadImportTemplate()} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition-colors hover:border-emerald-300 hover:text-emerald-700">
-              <Download className="h-4 w-4" /> Download sample sheet
+      <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex items-center gap-1 overflow-x-auto border-b border-slate-100 px-5 pt-3">
+          {candidateWorkspaceTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => switchTab(tab.id)}
+              className={`inline-flex shrink-0 items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition ${
+                activeTab === tab.id
+                  ? "border-slate-900 text-slate-900"
+                  : "border-transparent text-slate-400 hover:text-slate-600"
+              }`}
+            >
+              {tab.icon}
+              {tab.label}
+              <span
+                className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                  activeTab === tab.id
+                    ? "bg-slate-900 text-white"
+                    : "bg-slate-100 text-slate-500"
+                }`}
+              >
+                {tabCounts[tab.id]}
+              </span>
             </button>
-            <button type="button" onClick={() => startTransition(() => void refreshVisibleData())} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition-colors hover:border-sky-300 hover:text-sky-700">
-              <RefreshCw className="h-4 w-4" /> Refresh candidates
-            </button>
-          </div>
+          ))}
         </div>
 
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-semibold text-slate-900">Saved Candidates</h2>
-              <p className="text-sm text-slate-500">Review saved candidates, choose the records to send, and track their Skill India ID after submission.</p>
-            </div>
-            {isLoading ? <LoaderCircle className="h-5 w-5 animate-spin text-slate-400" /> : null}
-          </div>
+        <div className="flex flex-col gap-6 p-5 md:p-6">
+          {activeTab === "all_candidates" ? (
+            <div className="space-y-6">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">All Candidates</h2>
+                  <p className="text-sm text-slate-500">Review all saved candidates, queue eligible records, and track each candidate status with the returned NSDC candidate ID.</p>
+                </div>
+                {isLoading ? <LoaderCircle className="h-5 w-5 animate-spin text-slate-400" /> : null}
+              </div>
 
-          <div className="mt-5 grid gap-3 md:grid-cols-3">
-            <InlineField icon={<Search className="h-4 w-4" />} label="Search">
-              <input value={candidateFilters.search} onChange={(event) => setCandidateFilters((current) => ({ ...current, page: 1, search: event.target.value }))} className={inputClassName} placeholder="Name, mobile, SIDH ID, or candidate ID" />
-            </InlineField>
-            <InlineField label="Sync status">
-              <select value={candidateFilters.syncStatus} onChange={(event) => setCandidateFilters((current) => ({ ...current, page: 1, syncStatus: event.target.value }))} className={inputClassName}>
-                <option value="">All statuses</option>
-                {candidateSyncStatusOptions.map((status) => (
-                  <option key={status} value={status}>{status}</option>
-                ))}
-              </select>
-            </InlineField>
-            <InlineField label="Page size">
-              <select value={candidateFilters.pageSize} onChange={(event) => setCandidateFilters((current) => ({ ...current, page: 1, pageSize: Number(event.target.value) }))} className={inputClassName}>
-                {pageSizeOptions.map((size) => (
-                  <option key={size} value={size}>{size} rows</option>
-                ))}
-              </select>
-            </InlineField>
-          </div>
+              <div className="grid gap-4 md:grid-cols-3">
+                <MiniStat label="Candidates in scope" value={candidatePagination.total} />
+                <MiniStat label="Queued or processing" value={queuedJobs} />
+                <MiniStat label="Flagged jobs" value={flaggedJobs} />
+              </div>
 
-          <div className="mt-5 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <label className="inline-flex items-center gap-3 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={allVisibleSelected}
-                onChange={(event) => {
-                  setSelectedCandidateIds(event.target.checked ? selectableCandidateIds : []);
-                }}
-                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
-              />
-              Select all send-ready candidates on this page
-            </label>
-            <button
-              type="button"
-              onClick={() => void handleQueueSelectedCandidates()}
-              disabled={activeSelectedCandidateIds.length === 0}
-              className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <Send className="h-4 w-4" /> Add selected to Skill India queue
-            </button>
-            <span className="text-sm text-slate-500">{activeSelectedCandidateIds.length} selected</span>
-          </div>
+              <div className="grid gap-3 md:grid-cols-3">
+                <InlineField icon={<Search className="h-4 w-4" />} label="Search">
+                  <input value={candidateFilters.search} onChange={(event) => setCandidateFilters((current) => ({ ...current, page: 1, search: event.target.value }))} className={inputClassName} placeholder="Name, mobile, NSDC ID, or candidate ID" />
+                </InlineField>
+                <InlineField label="Sync status">
+                  <select value={candidateFilters.syncStatus} onChange={(event) => setCandidateFilters((current) => ({ ...current, page: 1, syncStatus: event.target.value }))} className={inputClassName}>
+                    <option value="">All statuses</option>
+                    {candidateSyncStatusOptions.map((status) => (
+                      <option key={status} value={status}>{formatStatusLabel(status)}</option>
+                    ))}
+                  </select>
+                </InlineField>
+                <InlineField label="Page size">
+                  <select value={candidateFilters.pageSize} onChange={(event) => setCandidateFilters((current) => ({ ...current, page: 1, pageSize: Number(event.target.value) }))} className={inputClassName}>
+                    {pageSizeOptions.map((size) => (
+                      <option key={size} value={size}>{size} rows</option>
+                    ))}
+                  </select>
+                </InlineField>
+              </div>
 
-          <div className="mt-6 space-y-3">
-            {candidates.length === 0 ? (
-              <EmptyState message={isLoading ? "Loading candidate records..." : "No candidates match the current filters."} />
-            ) : (
-              candidates.map((candidate) => (
-                <div key={candidate.candidateId} className={`rounded-2xl border p-4 ${activeSelectedCandidateIds.includes(candidate.candidateId) ? "border-sky-300 bg-sky-50" : "border-slate-200 bg-slate-50"}`}>
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex flex-1 items-start gap-3 text-left">
-                      <input
-                        type="checkbox"
-                        checked={activeSelectedCandidateIds.includes(candidate.candidateId)}
-                        disabled={candidate.registrationMode !== "internal_registration" || Boolean(candidate.sidhCandidateId)}
-                        onChange={(event) => {
-                          setSelectedCandidateIds((current) =>
-                            event.target.checked
-                              ? [...current, candidate.candidateId]
-                              : current.filter((candidateId) => candidateId !== candidate.candidateId),
-                          );
-                        }}
-                        className="mt-1 h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
-                      />
-                      <div className="flex-1">
-                      <div className="text-sm font-semibold text-slate-900">{candidate.personalDetails.fullName}</div>
-                      <div className="mt-1 text-sm text-slate-600">{candidate.contactDetails.mobileNumber} • {candidate.candidateId}</div>
-                      <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
-                        <span>{candidate.registrationMode === "existing_sidh_link" ? "Already linked" : "Ready for submission"}</span>
-                        {candidate.sidhCandidateId ? <span>Skill India ID {candidate.sidhCandidateId}</span> : null}
+              <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <label className="inline-flex items-center gap-3 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    onChange={(event) => {
+                      setSelectedCandidateIds(event.target.checked ? selectableCandidateIds : []);
+                    }}
+                    className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+                  />
+                  Select all send-ready candidates on this page
+                </label>
+                <button
+                  type="button"
+                  onClick={() => void handleQueueSelectedCandidates()}
+                  disabled={activeSelectedCandidateIds.length === 0}
+                  className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Send className="h-4 w-4" /> Add selected to Skill India queue
+                </button>
+                <span className="text-sm text-slate-500">{activeSelectedCandidateIds.length} selected</span>
+              </div>
+
+              <div className="space-y-3">
+                {candidates.length === 0 ? (
+                  <EmptyState message={isLoading ? "Loading candidate records..." : "No candidates match the current filters."} />
+                ) : (
+                  candidates.map((candidate) => {
+                    const candidateStatus = candidate.syncState?.status ?? (candidate.sidhCandidateId ? "linked" : "not_queued");
+                    const canQueue = candidate.registrationMode !== "existing_sidh_link" && !candidate.sidhCandidateId;
+
+                    return (
+                      <div key={candidate.candidateId} className={`rounded-2xl border p-4 ${activeSelectedCandidateIds.includes(candidate.candidateId) ? "border-sky-300 bg-sky-50" : "border-slate-200 bg-slate-50"}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex flex-1 items-start gap-3 text-left">
+                            <input
+                              type="checkbox"
+                              checked={activeSelectedCandidateIds.includes(candidate.candidateId)}
+                              disabled={!canQueue}
+                              onChange={(event) => {
+                                setSelectedCandidateIds((current) =>
+                                  event.target.checked
+                                    ? [...current, candidate.candidateId]
+                                    : current.filter((candidateId) => candidateId !== candidate.candidateId),
+                                );
+                              }}
+                              className="mt-1 h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+                            />
+                            <div className="flex-1">
+                              <div className="text-sm font-semibold text-slate-900">{candidate.personalDetails.fullName}</div>
+                              <div className="mt-1 text-sm text-slate-600">{candidate.contactDetails.mobileNumber} • {candidate.candidateId}</div>
+                              <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+                                <span>{candidate.registrationMode === "existing_sidh_link" ? "Already linked from NSDC" : "Internal registration record"}</span>
+                                {candidate.syncState?.lastAttemptAt ? <span>Last sync {formatDateTime(candidate.syncState.lastAttemptAt)}</span> : null}
+                              </div>
+                            </div>
+                          </div>
+                          <StatusPill status={candidateStatus} />
+                        </div>
+
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                          <DetailMeta label="Candidate status" value={formatStatusLabel(candidateStatus)} />
+                          <DetailMeta label="NSDC candidate ID" value={candidate.sidhCandidateId ?? "Awaiting NSDC response"} />
+                          <DetailMeta label="Registration mode" value={candidate.registrationMode === "existing_sidh_link" ? "Existing NSDC link" : "Internal registration"} />
+                          <DetailMeta label="Last success" value={formatDateTime(candidate.syncState?.lastSuccessAt)} />
+                        </div>
+
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <button type="button" onClick={() => void handleQueueSync(candidate.candidateId)} disabled={!canQueue} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+                            <Send className="h-3.5 w-3.5" /> Add to Skill India queue
+                          </button>
+                          {candidate.syncState?.lastFailureMessage ? (
+                            <div className="rounded-2xl bg-rose-50 px-3 py-2 text-xs text-rose-700">Last issue: {candidate.syncState.lastFailureMessage}</div>
+                          ) : null}
+                        </div>
                       </div>
+                    );
+                  })
+                )}
+              </div>
+
+              <PaginationControls page={candidatePagination.page} pageSize={candidatePagination.pageSize} total={candidatePagination.total} onPageChange={(page) => setCandidateFilters((current) => ({ ...current, page }))} />
+            </div>
+          ) : null}
+
+          {activeTab === "create_candidate" ? (
+            <div className="space-y-6">
+              <div className="flex items-center gap-3">
+                <span className="rounded-2xl bg-sky-50 p-2 text-sky-600">
+                  <Users className="h-5 w-5" />
+                </span>
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">Create Individual Candidate</h2>
+                  <p className="text-sm text-slate-500">Add one candidate with the same fields used by the NSDC registration API.</p>
+                </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-3">
+                <MiniStat label="Step 1" value="Capture required identity" />
+                <MiniStat label="Step 2" value="Save locally" />
+                <MiniStat label="Step 3" value="Queue for NSDC" />
+              </div>
+
+              <form className="grid gap-4 md:grid-cols-2" onSubmit={handleCreateCandidate}>
+                <Field label="Name prefix">
+                  <input value={individualCandidateForm.namePrefix} onChange={(event) => setIndividualCandidateForm((current) => ({ ...current, namePrefix: event.target.value }))} className={inputClassName} placeholder="Mr" />
+                </Field>
+                <Field label="First name">
+                  <input value={individualCandidateForm.firstName} onChange={(event) => setIndividualCandidateForm((current) => ({ ...current, firstName: event.target.value }))} className={inputClassName} placeholder="Candidate first name" required />
+                </Field>
+                <Field label="Gender">
+                  <input value={individualCandidateForm.gender} onChange={(event) => setIndividualCandidateForm((current) => ({ ...current, gender: event.target.value }))} className={inputClassName} placeholder="Male" required />
+                </Field>
+                <Field label="DOB">
+                  <input type="date" value={individualCandidateForm.dob} onChange={(event) => setIndividualCandidateForm((current) => ({ ...current, dob: event.target.value }))} className={inputClassName} required />
+                </Field>
+                <Field label="Father name">
+                  <input value={individualCandidateForm.fatherName} onChange={(event) => setIndividualCandidateForm((current) => ({ ...current, fatherName: event.target.value }))} className={inputClassName} placeholder="Father name" />
+                </Field>
+                <Field label="Guardian name">
+                  <input value={individualCandidateForm.guardianName} onChange={(event) => setIndividualCandidateForm((current) => ({ ...current, guardianName: event.target.value }))} className={inputClassName} placeholder="Guardian name" />
+                </Field>
+                <Field label="Email">
+                  <input type="email" value={individualCandidateForm.email} onChange={(event) => setIndividualCandidateForm((current) => ({ ...current, email: event.target.value }))} className={inputClassName} placeholder="candidate@example.com" />
+                </Field>
+                <Field label="Phone">
+                  <input value={individualCandidateForm.phone} onChange={(event) => setIndividualCandidateForm((current) => ({ ...current, phone: event.target.value }))} className={inputClassName} inputMode="numeric" placeholder="9876543210" required />
+                </Field>
+                <Field label="Country code">
+                  <input value={individualCandidateForm.countryCode} onChange={(event) => setIndividualCandidateForm((current) => ({ ...current, countryCode: event.target.value }))} className={inputClassName} inputMode="numeric" placeholder="91" />
+                </Field>
+                <Field label="State">
+                  <input value={individualCandidateForm.state} onChange={(event) => setIndividualCandidateForm((current) => ({ ...current, state: event.target.value }))} className={inputClassName} placeholder="Odisha" />
+                </Field>
+                <Field label="City">
+                  <input value={individualCandidateForm.city} onChange={(event) => setIndividualCandidateForm((current) => ({ ...current, city: event.target.value }))} className={inputClassName} placeholder="Bhubaneswar" />
+                </Field>
+                <Field label="Center name">
+                  <input value={individualCandidateForm.centerName} onChange={(event) => setIndividualCandidateForm((current) => ({ ...current, centerName: event.target.value }))} className={inputClassName} placeholder="Center One" />
+                </Field>
+                <div className="md:col-span-2 flex flex-col gap-3 sm:flex-row">
+                  <button type="submit" disabled={isCreatingCandidate || !isIndividualCandidateReady} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
+                    {isCreatingCandidate ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />} Save candidate
+                  </button>
+                </div>
+              </form>
+            </div>
+          ) : null}
+
+          {activeTab === "bulk_upload" ? (
+            <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+              <div className="space-y-6">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6">
+                  <div className="flex items-center gap-3">
+                    <span className="rounded-2xl bg-emerald-50 p-2 text-emerald-600">
+                      <FileSpreadsheet className="h-5 w-5" />
+                    </span>
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-900">Bulk Upload</h2>
+                      <p className="text-sm text-slate-500">Upload the registration sheet, check the file, then save the valid rows into your candidate list.</p>
+                    </div>
+                  </div>
+
+                  <form className="mt-6 grid gap-4 md:grid-cols-2" onSubmit={handleImportUpload}>
+                    <Field label="Workbook">
+                      <input type="file" accept=".xlsx,.xls" onChange={(event) => setImportForm((current) => ({ ...current, file: event.target.files?.[0] ?? null }))} className={`${inputClassName} py-2`} required />
+                    </Field>
+                    <div className="md:col-span-2 flex flex-col gap-3 sm:flex-row">
+                      <button type="button" onClick={() => void handleDownloadImportTemplate()} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition-colors hover:border-emerald-300 hover:text-emerald-700">
+                        <Download className="h-4 w-4" /> Download sample sheet
+                      </button>
+                      <button type="submit" disabled={isUploadingImport || !isImportReady} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
+                        {isUploadingImport ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Check file
+                      </button>
+                      {currentImportJob ? (
+                        <button type="button" disabled={isCommittingImport || currentImportJob.status === "committed"} onClick={() => void handleCommitImport()} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60">
+                          {isCommittingImport ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />} Save valid candidates
+                        </button>
+                      ) : null}
+                    </div>
+                  </form>
+
+                  {currentImportJob ? (
+                    <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="text-sm font-semibold text-slate-900">{currentImportJob.fileName}</div>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-4">
+                        <MiniStat label="Total" value={currentImportJob.totalRows} />
+                        <MiniStat label="Valid" value={currentImportJob.validRows} />
+                        <MiniStat label="Invalid" value={currentImportJob.invalidRows} />
+                        <MiniStat label="Duplicate" value={currentImportJob.duplicateRows} />
                       </div>
                     </div>
-                    <StatusPill status={candidate.syncState?.status ?? "not_queued"} />
-                  </div>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <button type="button" onClick={() => void handleQueueSync(candidate.candidateId)} disabled={candidate.registrationMode === "existing_sidh_link" || Boolean(candidate.sidhCandidateId)} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
-                      <Send className="h-3.5 w-3.5" /> Add to Skill India queue
-                    </button>
-                    {candidate.syncState?.lastFailureMessage ? (
-                      <div className="rounded-2xl bg-rose-50 px-3 py-2 text-xs text-rose-700">Last issue: {candidate.syncState.lastFailureMessage}</div>
-                    ) : null}
-                  </div>
+                  ) : null}
+
+                  <p className="mt-4 text-sm text-slate-500">Use the sample sheet to confirm the column layout before uploading your own file.</p>
                 </div>
-              ))
-            )}
-          </div>
-
-          <div className="mt-5">
-            <PaginationControls page={candidatePagination.page} pageSize={candidatePagination.pageSize} total={candidatePagination.total} onPageChange={(page) => setCandidateFilters((current) => ({ ...current, page }))} />
-          </div>
-        </div>
-      </section>
-
-      <section className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
-        <div className="space-y-6">
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center gap-3">
-              <span className="rounded-2xl bg-sky-50 p-2 text-sky-600">
-                <Users className="h-5 w-5" />
-              </span>
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">Create Individual Candidate</h2>
-                <p className="text-sm text-slate-500">Add one candidate with the same fields used by the Skill India registration API.</p>
               </div>
-            </div>
 
-            <form className="mt-6 grid gap-4 md:grid-cols-2" onSubmit={handleCreateCandidate}>
-              <Field label="Name prefix">
-                <input value={individualCandidateForm.namePrefix} onChange={(event) => setIndividualCandidateForm((current) => ({ ...current, namePrefix: event.target.value }))} className={inputClassName} placeholder="Mr" />
-              </Field>
-              <Field label="First name">
-                <input value={individualCandidateForm.firstName} onChange={(event) => setIndividualCandidateForm((current) => ({ ...current, firstName: event.target.value }))} className={inputClassName} placeholder="Candidate first name" required />
-              </Field>
-              <Field label="Gender">
-                <input value={individualCandidateForm.gender} onChange={(event) => setIndividualCandidateForm((current) => ({ ...current, gender: event.target.value }))} className={inputClassName} placeholder="Male" required />
-              </Field>
-              <Field label="DOB">
-                <input type="date" value={individualCandidateForm.dob} onChange={(event) => setIndividualCandidateForm((current) => ({ ...current, dob: event.target.value }))} className={inputClassName} required />
-              </Field>
-              <Field label="Father name">
-                <input value={individualCandidateForm.fatherName} onChange={(event) => setIndividualCandidateForm((current) => ({ ...current, fatherName: event.target.value }))} className={inputClassName} placeholder="Father name" />
-              </Field>
-              <Field label="Guardian name">
-                <input value={individualCandidateForm.guardianName} onChange={(event) => setIndividualCandidateForm((current) => ({ ...current, guardianName: event.target.value }))} className={inputClassName} placeholder="Guardian name" />
-              </Field>
-              <Field label="Email">
-                <input type="email" value={individualCandidateForm.email} onChange={(event) => setIndividualCandidateForm((current) => ({ ...current, email: event.target.value }))} className={inputClassName} placeholder="candidate@example.com" />
-              </Field>
-              <Field label="Phone">
-                <input value={individualCandidateForm.phone} onChange={(event) => setIndividualCandidateForm((current) => ({ ...current, phone: event.target.value }))} className={inputClassName} inputMode="numeric" placeholder="9876543210" required />
-              </Field>
-              <Field label="Country code">
-                <input value={individualCandidateForm.countryCode} onChange={(event) => setIndividualCandidateForm((current) => ({ ...current, countryCode: event.target.value }))} className={inputClassName} inputMode="numeric" placeholder="91" />
-              </Field>
-              <div className="md:col-span-2 flex flex-col gap-3 sm:flex-row">
-                <button type="submit" disabled={isCreatingCandidate || !isIndividualCandidateReady} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
-                  {isCreatingCandidate ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />} Save candidate
-                </button>
-              </div>
-            </form>
-          </div>
-
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center gap-3">
-              <span className="rounded-2xl bg-emerald-50 p-2 text-emerald-600">
-                <FileSpreadsheet className="h-5 w-5" />
-              </span>
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">Bulk Upload</h2>
-                <p className="text-sm text-slate-500">Upload the registration sheet, check the file, then save the valid rows into your candidate list.</p>
-              </div>
-            </div>
-
-            <form className="mt-6 grid gap-4 md:grid-cols-2" onSubmit={handleImportUpload}>
-              <Field label="Workbook">
-                <input type="file" accept=".xlsx,.xls" onChange={(event) => setImportForm((current) => ({ ...current, file: event.target.files?.[0] ?? null }))} className={`${inputClassName} py-2`} required />
-              </Field>
-              <div className="md:col-span-2 flex flex-col gap-3 sm:flex-row">
-                <button type="button" onClick={() => void handleDownloadImportTemplate()} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition-colors hover:border-emerald-300 hover:text-emerald-700">
-                  <Download className="h-4 w-4" /> Download sample sheet
-                </button>
-                <button type="submit" disabled={isUploadingImport || !isImportReady} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
-                  {isUploadingImport ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Check file
-                </button>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900">Import Row Review</h2>
+                    <p className="text-sm text-slate-500">Inspect row validation, duplicate checks, and the saved payload preview before you keep the valid rows.</p>
+                  </div>
+                  {currentImportJob ? (
+                    <div className="w-full sm:w-44">
+                      <select value={importPagination.pageSize} onChange={(event) => setImportPagination((current) => ({ ...current, page: 1, pageSize: Number(event.target.value) }))} className={inputClassName}>
+                        {pageSizeOptions.map((size) => (
+                          <option key={size} value={size}>{size} rows</option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="mt-6 space-y-3">
+                  {importRows.length === 0 ? (
+                    <EmptyState message="Stage an import workbook to inspect row-level validation results." />
+                  ) : (
+                    importRows.map((row) => (
+                      <div key={row.rowId} className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-semibold text-slate-900">Row {row.rowNumber}</div>
+                            <div className="mt-1 flex flex-wrap gap-2 text-xs uppercase tracking-[0.16em] text-slate-400">
+                              <span>{formatStatusLabel(row.status)}</span>
+                              {row.duplicateOfCandidateId ? <span>Duplicate of {row.duplicateOfCandidateId}</span> : null}
+                              {row.candidateId ? <span>Candidate {row.candidateId}</span> : null}
+                            </div>
+                          </div>
+                          <button type="button" onClick={() => setExpandedImportRowId((current) => (current === row.rowId ? null : row.rowId))} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700">
+                            <Eye className="h-3.5 w-3.5" /> {expandedImportRowId === row.rowId ? "Hide row details" : "Show row details"}
+                          </button>
+                        </div>
+                        {row.errors.length > 0 ? (
+                          <div className="mt-3 space-y-2 text-sm text-rose-700">
+                            {row.errors.map((error, index) => (
+                              <div key={`${row.rowId}-${index}`}>{error.field ? `${error.field}: ` : ""}{error.message}</div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="mt-3 text-sm text-slate-600">Row is ready for commit.</div>
+                        )}
+                        {expandedImportRowId === row.rowId ? <JsonPanel className="mt-4" title="Row payload preview" value={row.normalized} /> : null}
+                      </div>
+                    ))
+                  )}
+                </div>
                 {currentImportJob ? (
-                  <button type="button" disabled={isCommittingImport || currentImportJob.status === "committed"} onClick={() => void handleCommitImport()} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60">
-                    {isCommittingImport ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />} Save valid candidates
-                  </button>
+                  <div className="mt-5">
+                    <PaginationControls page={importPagination.page} pageSize={importPagination.pageSize} total={importPagination.total} onPageChange={(page) => setImportPagination((current) => ({ ...current, page }))} />
+                  </div>
                 ) : null}
               </div>
-            </form>
+            </div>
+          ) : null}
 
-            {currentImportJob ? (
-              <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-sm font-semibold text-slate-900">{currentImportJob.fileName}</div>
-                <div className="mt-3 grid gap-3 sm:grid-cols-4">
-                  <MiniStat label="Total" value={currentImportJob.totalRows} />
-                  <MiniStat label="Valid" value={currentImportJob.validRows} />
-                  <MiniStat label="Invalid" value={currentImportJob.invalidRows} />
-                  <MiniStat label="Duplicate" value={currentImportJob.duplicateRows} />
+          {activeTab === "skill_india_queue" ? (
+            <div className="space-y-6">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">Skill India Queue</h2>
+                  <p className="text-sm text-slate-500">Review queued candidates, submit them to Skill India, retry failed submissions, and inspect the delivery history.</p>
                 </div>
-              </div>
-            ) : null}
-
-            <p className="mt-4 text-sm text-slate-500">
-              Use the sample sheet to confirm the column layout before uploading your own file.
-            </p>
-          </div>
-        </div>
-
-        <div className="space-y-6">
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">Import Row Review</h2>
-                <p className="text-sm text-slate-500">Inspect row validation, duplicate checks, and the saved payload preview before you keep the valid rows.</p>
-              </div>
-              {currentImportJob ? (
-                <div className="w-full sm:w-44">
-                  <select value={importPagination.pageSize} onChange={(event) => setImportPagination((current) => ({ ...current, page: 1, pageSize: Number(event.target.value) }))} className={inputClassName}>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <select value={syncFilters.status} onChange={(event) => setSyncFilters((current) => ({ ...current, page: 1, status: event.target.value }))} className="h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition-colors focus:border-sky-300">
+                    <option value="">All sync statuses</option>
+                    {syncJobStatusOptions.map((status) => (
+                      <option key={status} value={status}>{formatStatusLabel(status)}</option>
+                    ))}
+                  </select>
+                  <select value={syncFilters.pageSize} onChange={(event) => setSyncFilters((current) => ({ ...current, page: 1, pageSize: Number(event.target.value) }))} className="h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition-colors focus:border-sky-300">
                     {pageSizeOptions.map((size) => (
                       <option key={size} value={size}>{size} rows</option>
                     ))}
                   </select>
                 </div>
-              ) : null}
-            </div>
-            <div className="mt-6 space-y-3">
-              {importRows.length === 0 ? (
-                <EmptyState message="Stage an import workbook to inspect row-level validation results." />
-              ) : (
-                importRows.map((row) => (
-                  <div key={row.rowId} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-semibold text-slate-900">Row {row.rowNumber}</div>
-                        <div className="mt-1 flex flex-wrap gap-2 text-xs uppercase tracking-[0.16em] text-slate-400">
-                          <span>{row.status}</span>
-                          {row.duplicateOfCandidateId ? <span>Duplicate of {row.duplicateOfCandidateId}</span> : null}
-                          {row.candidateId ? <span>Candidate {row.candidateId}</span> : null}
-                        </div>
-                      </div>
-                      <button type="button" onClick={() => setExpandedImportRowId((current) => (current === row.rowId ? null : row.rowId))} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700">
-                        <Eye className="h-3.5 w-3.5" /> {expandedImportRowId === row.rowId ? "Hide row details" : "Show row details"}
-                      </button>
-                    </div>
-                    {row.errors.length > 0 ? (
-                      <div className="mt-3 space-y-2 text-sm text-rose-700">
-                        {row.errors.map((error, index) => (
-                          <div key={`${row.rowId}-${index}`}>{error.field ? `${error.field}: ` : ""}{error.message}</div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="mt-3 text-sm text-slate-600">Row is ready for commit.</div>
-                    )}
-                    {expandedImportRowId === row.rowId ? <JsonPanel className="mt-4" title="Row payload preview" value={row.normalized} /> : null}
-                  </div>
-                ))
-              )}
-            </div>
-            {currentImportJob ? (
-              <div className="mt-5">
-                <PaginationControls page={importPagination.page} pageSize={importPagination.pageSize} total={importPagination.total} onPageChange={(page) => setImportPagination((current) => ({ ...current, page }))} />
               </div>
-            ) : null}
-          </div>
 
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">Skill India Queue</h2>
-                <p className="text-sm text-slate-500">Review queued candidates, submit them to Skill India, retry failed submissions, and inspect the delivery history.</p>
+              <div className="grid gap-4 md:grid-cols-3">
+                <MiniStat label="Queued or processing" value={queuedJobs} />
+                <MiniStat label="Need review" value={flaggedJobs} />
+                <MiniStat label="Total queue jobs" value={syncPagination.total} />
               </div>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <select value={syncFilters.status} onChange={(event) => setSyncFilters((current) => ({ ...current, page: 1, status: event.target.value }))} className="h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition-colors focus:border-sky-300">
-                  <option value="">All sync statuses</option>
-                  {syncJobStatusOptions.map((status) => (
-                    <option key={status} value={status}>{status}</option>
-                  ))}
-                </select>
-                <select value={syncFilters.pageSize} onChange={(event) => setSyncFilters((current) => ({ ...current, page: 1, pageSize: Number(event.target.value) }))} className="h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition-colors focus:border-sky-300">
-                  {pageSizeOptions.map((size) => (
-                    <option key={size} value={size}>{size} rows</option>
-                  ))}
-                </select>
-              </div>
-            </div>
 
-            <div className="mt-5 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <div className="text-sm font-semibold text-slate-900">Submit queued candidates</div>
-                <div className="mt-1 text-sm text-slate-500">Run the background worker to send queued candidates and refresh their latest Skill India status.</div>
+              <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">Submit queued candidates</div>
+                  <div className="mt-1 text-sm text-slate-500">Run the background worker to send queued candidates and refresh their latest Skill India status.</div>
+                </div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <select value={processLimit} onChange={(event) => setProcessLimit(event.target.value)} className="h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition-colors focus:border-sky-300">
+                    {[1, 5, 10, 25].map((limit) => (
+                      <option key={limit} value={limit}>{limit} jobs</option>
+                    ))}
+                  </select>
+                  <button type="button" onClick={() => void handleProcessQueuedSyncJobs()} disabled={isProcessingSyncJobs} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
+                    {isProcessingSyncJobs ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />} Submit queued candidates
+                  </button>
+                </div>
               </div>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <select value={processLimit} onChange={(event) => setProcessLimit(event.target.value)} className="h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition-colors focus:border-sky-300">
-                  {[1, 5, 10, 25].map((limit) => (
-                    <option key={limit} value={limit}>{limit} jobs</option>
-                  ))}
-                </select>
-                <button type="button" onClick={() => void handleProcessQueuedSyncJobs()} disabled={isProcessingSyncJobs} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
-                  {isProcessingSyncJobs ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />} Submit queued candidates
-                </button>
-              </div>
-            </div>
 
-            <div className="mt-6 grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
-              <div className="space-y-3">
-                {syncJobs.length === 0 ? (
-                  <EmptyState message={isLoading ? "Loading sync jobs..." : "No sync jobs match the current filters."} />
-                ) : (
-                  syncJobs.map((job) => (
-                    <div key={job.syncJobId} className={`rounded-2xl border p-4 ${selectedSyncJobId === job.syncJobId ? "border-sky-300 bg-sky-50" : "border-slate-200 bg-slate-50"}`}>
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="text-sm font-semibold text-slate-900">{job.syncJobId}</div>
-                          <div className="mt-1 text-sm text-slate-600">Candidate {job.candidateId}</div>
-                          <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
-                            <span>Retries {job.retryCount}</span>
-                            {job.nextRunAt ? <span>Next run {formatDateTime(job.nextRunAt)}</span> : null}
-                            {job.latestRemoteCandidateId ? <span>SIDH {job.latestRemoteCandidateId}</span> : null}
+              <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+                <div className="space-y-3">
+                  {syncJobs.length === 0 ? (
+                    <EmptyState message={isLoading ? "Loading sync jobs..." : "No sync jobs match the current filters."} />
+                  ) : (
+                    syncJobs.map((job) => (
+                      <div key={job.syncJobId} className={`rounded-2xl border p-4 ${selectedSyncJobId === job.syncJobId ? "border-sky-300 bg-sky-50" : "border-slate-200 bg-slate-50"}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-semibold text-slate-900">{job.syncJobId}</div>
+                            <div className="mt-1 text-sm text-slate-600">Candidate {job.candidateId}</div>
+                            <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+                              <span>Retries {job.retryCount}</span>
+                              {job.nextRunAt ? <span>Next run {formatDateTime(job.nextRunAt)}</span> : null}
+                              {job.latestRemoteCandidateId ? <span>NSDC {job.latestRemoteCandidateId}</span> : null}
+                            </div>
                           </div>
+                          <StatusPill status={job.status} />
                         </div>
-                        <StatusPill status={job.status} />
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <button type="button" onClick={() => void loadSyncJobDetails(job.syncJobId)} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700">
+                            <Workflow className="h-3.5 w-3.5" /> View history
+                          </button>
+                          <button type="button" onClick={() => void handleRetrySyncJob(job.syncJobId)} disabled={job.status === "processing"} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+                            <RotateCcw className="h-3.5 w-3.5" /> Requeue candidate
+                          </button>
+                        </div>
                       </div>
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        <button type="button" onClick={() => void loadSyncJobDetails(job.syncJobId)} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700">
-                          <Workflow className="h-3.5 w-3.5" /> View history
-                        </button>
-                        <button type="button" onClick={() => void handleRetrySyncJob(job.syncJobId)} disabled={job.status === "processing"} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
-                          <RotateCcw className="h-3.5 w-3.5" /> Requeue candidate
-                        </button>
-                      </div>
-                    </div>
-                  ))
-                )}
-                <PaginationControls page={syncPagination.page} pageSize={syncPagination.pageSize} total={syncPagination.total} onPageChange={(page) => setSyncFilters((current) => ({ ...current, page }))} />
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-semibold text-slate-900">Sync job detail</div>
-                    <div className="mt-1 text-sm text-slate-500">Attempts, transaction history, and the payload snapshot used by the worker</div>
-                  </div>
-                  {isLoadingSyncDetail ? <LoaderCircle className="h-5 w-5 animate-spin text-slate-400" /> : null}
+                    ))
+                  )}
+                  <PaginationControls page={syncPagination.page} pageSize={syncPagination.pageSize} total={syncPagination.total} onPageChange={(page) => setSyncFilters((current) => ({ ...current, page }))} />
                 </div>
 
-                {!selectedSyncJob ? (
-                  <EmptyState message="Select a sync job to inspect attempts and SIDH transaction history." />
-                ) : (
-                  <div className="mt-5 space-y-5">
-                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="text-sm font-semibold text-slate-900">{selectedSyncJob.syncJobId}</div>
-                          <div className="mt-1 text-sm text-slate-600">Candidate {selectedSyncJob.candidateId}</div>
-                        </div>
-                        <StatusPill status={selectedSyncJob.status} />
-                      </div>
-                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                        <DetailMeta label="Created" value={formatDateTime(selectedSyncJob.createdAt)} />
-                        <DetailMeta label="Updated" value={formatDateTime(selectedSyncJob.updatedAt)} />
-                        <DetailMeta label="Retry count" value={String(selectedSyncJob.retryCount)} />
-                        <DetailMeta label="Latest SIDH candidate" value={selectedSyncJob.latestRemoteCandidateId ?? "Not available"} />
-                      </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">Sync job detail</div>
+                      <div className="mt-1 text-sm text-slate-500">Attempts, transaction history, and the payload snapshot used by the worker</div>
                     </div>
-
-                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                      <div className="text-sm font-semibold text-slate-900">Attempt history</div>
-                      <div className="mt-4 space-y-3">
-                        {selectedSyncJob.attempts.length === 0 ? (
-                          <EmptyState message="No attempts have been recorded yet." />
-                        ) : (
-                          selectedSyncJob.attempts.map((attempt, index) => (
-                            <div key={attempt.attemptId ?? `${selectedSyncJob.syncJobId}-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                              <div className="flex items-start justify-between gap-3">
-                                <div>
-                                  <div className="text-sm font-semibold text-slate-900">{attempt.attemptId ?? `Attempt ${index + 1}`}</div>
-                                  <div className="mt-1 text-xs text-slate-500">Started {formatDateTime(attempt.startedAt)} • Finished {formatDateTime(attempt.finishedAt)}</div>
-                                </div>
-                                <StatusPill status={attempt.status ?? "processing"} />
-                              </div>
-                              <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
-                                <span>Response code: {attempt.responseCode ?? "Not available"}</span>
-                                <span>Retryable: {attempt.retryable ? "Yes" : "No"}</span>
-                                <span>Failure code: {attempt.failureCode ?? "Not available"}</span>
-                                <span>Remote candidate: {attempt.remoteCandidateId ?? "Not available"}</span>
-                              </div>
-                              {attempt.failureMessage ? <div className="mt-3 rounded-2xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{attempt.failureMessage}</div> : null}
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                      <div className="text-sm font-semibold text-slate-900">Skill India transactions</div>
-                      <div className="mt-4 space-y-3">
-                        {(selectedSyncJob.transactions ?? []).length === 0 ? (
-                          <EmptyState message="No SIDH transaction logs are available for this job yet." />
-                        ) : (
-                          (selectedSyncJob.transactions ?? []).map((transaction) => (
-                            <div key={transaction.transactionId} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                              <div className="flex items-start justify-between gap-3">
-                                <div>
-                                  <div className="text-sm font-semibold text-slate-900">{transaction.operation}</div>
-                                  <div className="mt-1 text-xs text-slate-500">{transaction.endpoint} • {formatDateTime(transaction.createdAt)}</div>
-                                </div>
-                                <StatusPill status={transaction.success ? "succeeded" : "failed"} label={transaction.responseStatus ? `${transaction.responseStatus}` : transaction.success ? "ok" : "failed"} />
-                              </div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-
-                    <JsonPanel title="Submitted payload" value={selectedSyncJob.payloadSnapshot} />
+                    {isLoadingSyncDetail ? <LoaderCircle className="h-5 w-5 animate-spin text-slate-400" /> : null}
                   </div>
-                )}
+
+                  {!selectedSyncJob ? (
+                    <EmptyState message="Select a sync job to inspect attempts and SIDH transaction history." />
+                  ) : (
+                    <div className="mt-5 space-y-5">
+                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-semibold text-slate-900">{selectedSyncJob.syncJobId}</div>
+                            <div className="mt-1 text-sm text-slate-600">Candidate {selectedSyncJob.candidateId}</div>
+                          </div>
+                          <StatusPill status={selectedSyncJob.status} />
+                        </div>
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                          <DetailMeta label="Created" value={formatDateTime(selectedSyncJob.createdAt)} />
+                          <DetailMeta label="Updated" value={formatDateTime(selectedSyncJob.updatedAt)} />
+                          <DetailMeta label="Retry count" value={String(selectedSyncJob.retryCount)} />
+                          <DetailMeta label="Latest NSDC candidate" value={selectedSyncJob.latestRemoteCandidateId ?? "Not available"} />
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <div className="text-sm font-semibold text-slate-900">Attempt history</div>
+                        <div className="mt-4 space-y-3">
+                          {selectedSyncJob.attempts.length === 0 ? (
+                            <EmptyState message="No attempts have been recorded yet." />
+                          ) : (
+                            selectedSyncJob.attempts.map((attempt, index) => (
+                              <div key={attempt.attemptId ?? `${selectedSyncJob.syncJobId}-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <div className="text-sm font-semibold text-slate-900">{attempt.attemptId ?? `Attempt ${index + 1}`}</div>
+                                    <div className="mt-1 text-xs text-slate-500">Started {formatDateTime(attempt.startedAt)} • Finished {formatDateTime(attempt.finishedAt)}</div>
+                                  </div>
+                                  <StatusPill status={attempt.status ?? "processing"} />
+                                </div>
+                                <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
+                                  <span>Response code: {attempt.responseCode ?? "Not available"}</span>
+                                  <span>Retryable: {attempt.retryable ? "Yes" : "No"}</span>
+                                  <span>Failure code: {attempt.failureCode ?? "Not available"}</span>
+                                  <span>Remote candidate: {attempt.remoteCandidateId ?? "Not available"}</span>
+                                </div>
+                                {attempt.failureMessage ? <div className="mt-3 rounded-2xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{attempt.failureMessage}</div> : null}
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <div className="text-sm font-semibold text-slate-900">Skill India transactions</div>
+                        <div className="mt-4 space-y-3">
+                          {(selectedSyncJob.transactions ?? []).length === 0 ? (
+                            <EmptyState message="No SIDH transaction logs are available for this job yet." />
+                          ) : (
+                            (selectedSyncJob.transactions ?? []).map((transaction) => (
+                              <div key={transaction.transactionId} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <div className="text-sm font-semibold text-slate-900">{transaction.operation}</div>
+                                    <div className="mt-1 text-xs text-slate-500">{transaction.endpoint} • {formatDateTime(transaction.createdAt)}</div>
+                                  </div>
+                                  <StatusPill status={transaction.success ? "succeeded" : "failed"} label={transaction.responseStatus ? `${transaction.responseStatus}` : transaction.success ? "OK" : "Failed"} />
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+
+                      <JsonPanel title="Submitted payload" value={selectedSyncJob.payloadSnapshot} />
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
+          ) : null}
         </div>
       </section>
     </div>
@@ -1300,13 +1379,29 @@ function InlineField({ children, icon, label }: { children: React.ReactNode; ico
   );
 }
 
-function MetricCard({ icon, label, value }: { icon: React.ReactNode; label: string; value: number }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
+function MetricCard({ active = false, icon, label, onClick, value }: { active?: boolean; icon: React.ReactNode; label: string; onClick?: () => void; value: React.ReactNode }) {
+  const classes = `rounded-2xl border px-4 py-4 text-left shadow-sm transition ${
+    active
+      ? "border-slate-900 bg-slate-900 text-white"
+      : "border-slate-200 bg-white text-slate-900 hover:border-sky-300"
+  }`;
+
+  const content = (
+    <>
       <div className="flex items-center gap-2 text-sky-600">{icon}</div>
-      <div className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</div>
-      <div className="mt-1 text-2xl font-semibold text-slate-900">{value}</div>
-    </div>
+      <div className={`mt-3 text-xs font-semibold uppercase tracking-[0.18em] ${active ? "text-slate-300" : "text-slate-500"}`}>{label}</div>
+      <div className={`mt-1 text-2xl font-semibold ${active ? "text-white" : "text-slate-900"}`}>{value}</div>
+    </>
+  );
+
+  if (!onClick) {
+    return <div className={classes}>{content}</div>;
+  }
+
+  return (
+    <button type="button" onClick={onClick} className={classes}>
+      {content}
+    </button>
   );
 }
 
@@ -1342,7 +1437,7 @@ function PaginationControls({ onPageChange, page, pageSize, total }: { onPageCha
 }
 
 function StatusPill({ label, status }: { label?: string; status?: string | null }) {
-  return <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${getStatusPillClass(status)}`}>{label ?? status ?? "unknown"}</span>;
+  return <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${getStatusPillClass(status)}`}>{label ?? formatStatusLabel(status)}</span>;
 }
 
 function DetailMeta({ label, value }: { label: string; value: string }) {

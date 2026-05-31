@@ -64,6 +64,7 @@ type CommunicationAddressLike = AddressLike & {
 type CandidateLike = {
   candidateId: string;
   centerId: string;
+  centerName?: string | null;
   communicationAddress: CommunicationAddressLike;
   countryCode?: string | null;
   createdAt?: Date;
@@ -295,36 +296,22 @@ async function ensureTrainingCenterExists(centerId: string) {
   return center;
 }
 
-async function resolveDefaultCandidateContext(actor: AuthSession, overrides?: Partial<CandidateImportInput>) {
-  const scopedCenterFilter = actor.user.roles.includes("platform_admin")
-    ? { status: "active" }
-    : { centerId: { $in: actor.user.centerIds }, status: "active" };
+function createTechnicalCenterId(centerName?: string | null) {
+  const normalizedCenterName = normalizeWhitespace(centerName).toLowerCase();
 
-  const center = overrides?.centerId
-    ? await TrainingCenterModel.findOne({ centerId: overrides.centerId }).select({ centerId: 1, centerName: 1, status: 1, programIds: 1 })
-    : await TrainingCenterModel.findOne(scopedCenterFilter).sort({ centerName: 1 }).select({ centerId: 1, centerName: 1, status: 1, programIds: 1 });
-
-  if (!center) {
-    throw new ApiError(400, "CANDIDATE_CONTEXT_CENTER_NOT_FOUND", "No active training center is available for candidate registration");
+  if (!normalizedCenterName) {
+    return "candidate_registration";
   }
 
-  resolveScopedCenterFilter(actor, center.centerId);
+  return `candidate_center_${createHash("sha256").update(normalizedCenterName).digest("hex").slice(0, 12)}`;
+}
 
-  const programFilter = Array.isArray(center.programIds) && center.programIds.length > 0
-    ? { programId: { $in: center.programIds }, status: "active" }
-    : { status: "active" };
-
-  const program = overrides?.programId
-    ? await ProgramModel.findOne({ programId: overrides.programId }).select({ programId: 1, name: 1, status: 1 })
-    : await ProgramModel.findOne(programFilter).sort({ name: 1 }).select({ programId: 1, name: 1, status: 1 });
-
-  if (!program) {
-    throw new ApiError(400, "CANDIDATE_CONTEXT_PROGRAM_NOT_FOUND", "No active program is available for candidate registration");
-  }
+function resolveCandidateRegistrationContext(actor: AuthSession, overrides?: Partial<CandidateImportInput> & { centerName?: string }) {
+  const centerName = normalizeWhitespace(overrides?.centerName);
 
   return {
-    centerId: center.centerId,
-    programId: program.programId,
+    centerId: overrides?.centerId ?? actor.user.centerIds[0] ?? createTechnicalCenterId(centerName),
+    programId: overrides?.programId ?? "candidate_registration",
     registrationMode: overrides?.registrationMode ?? "internal_registration",
   } as const;
 }
@@ -357,6 +344,11 @@ function expandCandidateRegistrationInput(
       countryCode: registrationInput.contactDetails.countryCode,
       mobileNumber: registrationInput.contactDetails.phone,
     },
+    locationDetails: {
+      state: registrationInput.locationDetails?.state ?? "",
+      city: registrationInput.locationDetails?.city ?? "",
+      centerName: registrationInput.locationDetails?.centerName ?? "",
+    },
     identity: {
       idType: "UNSPECIFIED",
       typeOfAlternateId: "",
@@ -369,10 +361,10 @@ function expandCandidateRegistrationInput(
     },
     permanentAddress: {
       address: "",
-      state: "",
+      state: registrationInput.locationDetails?.state ?? "",
       district: "",
       pinCode: "",
-      city: "",
+      city: registrationInput.locationDetails?.city ?? "",
       tehsil: "",
       constituency: "",
     },
@@ -439,6 +431,11 @@ function serializeCandidate(candidate: CandidateLike) {
     contactDetails: {
       email: candidate.email ?? null,
       mobileNumber: candidate.mobileNumber,
+    },
+    locationDetails: {
+      state: candidate.permanentAddress?.state ?? null,
+      city: candidate.permanentAddress?.city ?? null,
+      centerName: candidate.centerName ?? null,
     },
     domicile: {
       state: candidate.domicileState ?? null,
@@ -547,6 +544,11 @@ function buildCandidateInputFromDocument(candidate: CandidateLike): CreateCandid
       countryCode: candidate.countryCode ?? "91",
       mobileNumber: candidate.mobileNumber,
     },
+    locationDetails: {
+      state: candidate.permanentAddress?.state ?? "",
+      city: candidate.permanentAddress?.city ?? "",
+      centerName: candidate.centerName ?? "",
+    },
     identity: {
       idType: candidate.idType,
       typeOfAlternateId: candidate.typeOfAlternateId ?? "",
@@ -602,6 +604,10 @@ function mergeCandidateInput(base: CreateCandidateInput, patch: UpdateCandidateI
       ...base.contactDetails,
       ...(patch.contactDetails ?? {}),
     },
+    locationDetails: {
+      ...base.locationDetails,
+      ...(patch.locationDetails ?? {}),
+    },
     identity: {
       ...base.identity,
       ...(patch.identity ?? {}),
@@ -636,10 +642,10 @@ function buildCandidateRecord(input: CreateCandidateInput) {
   });
   const permanentAddress = {
     address: normalizeWhitespace(input.permanentAddress.address) || null,
-    state: normalizeWhitespace(input.permanentAddress.state) || null,
+    state: normalizeWhitespace(input.permanentAddress.state || input.locationDetails?.state) || null,
     district: normalizeWhitespace(input.permanentAddress.district) || null,
     pinCode: normalizeWhitespace(input.permanentAddress.pinCode) || null,
-    city: normalizeWhitespace(input.permanentAddress.city) || null,
+    city: normalizeWhitespace(input.permanentAddress.city || input.locationDetails?.city) || null,
     tehsil: normalizeWhitespace(input.permanentAddress.tehsil) || null,
     constituency: normalizeWhitespace(input.permanentAddress.constituency) || null,
   };
@@ -696,6 +702,7 @@ function buildCandidateRecord(input: CreateCandidateInput) {
     heardAboutUs: normalizeWhitespace(input.experience.heardAboutUs) || null,
     programId: input.programId,
     centerId: input.centerId,
+    centerName: normalizeWhitespace(input.locationDetails?.centerName) || null,
     duplicateHash,
   };
 }
@@ -783,9 +790,6 @@ async function createQueuedSyncJob(actor: AuthSession, candidate: SerializedCand
 
 async function createCandidateRecord(actor: AuthSession, input: CreateCandidateInput, options: CandidateCreateOptions = {}) {
   ensureCanWriteCandidates(actor);
-  resolveScopedCenterFilter(actor, input.centerId);
-
-  await Promise.all([ensureProgramExists(input.programId), ensureTrainingCenterExists(input.centerId)]);
 
   const normalized = buildCandidateRecord(createCandidateSchema.parse(input));
   await ensureNoDuplicateCandidate(normalized.duplicateHash, input.programId, input.centerId);
@@ -868,13 +872,19 @@ function mapImportRowToCandidateInput(row: Record<string, unknown>): CreateCandi
       countryCode: String(getCellValue(row, ["Country Code", "CountryCode"])) || "91",
       phone: String(getCellValue(row, ["Phone", "MobileNo", "Mobile Number"])),
     },
+    locationDetails: {
+      state: String(getCellValue(row, ["State"])),
+      city: String(getCellValue(row, ["City"])),
+      centerName: String(getCellValue(row, ["Center Name", "Centre Name", "CenterName", "CentreName"])),
+    },
   };
 }
 
 export async function createCandidate(actor: AuthSession, input: CreateCandidateRegistrationInput, options?: CandidateCreateOptions) {
   await connectToDatabase();
-  const context = await resolveDefaultCandidateContext(actor);
-  return createCandidateRecord(actor, expandCandidateRegistrationInput(createCandidateRegistrationSchema.parse(input), context), options);
+  const registrationInput = createCandidateRegistrationSchema.parse(input);
+  const context = resolveCandidateRegistrationContext(actor, { centerName: registrationInput.locationDetails?.centerName });
+  return createCandidateRecord(actor, expandCandidateRegistrationInput(registrationInput, context), options);
 }
 
 export async function updateCandidate(actor: AuthSession, candidateId: string, patch: UpdateCandidateInput, requestId?: string) {
@@ -1090,8 +1100,7 @@ export async function createCandidateImportJob(
 ) {
   await connectToDatabase();
   ensureCanWriteCandidates(actor);
-  const context = await resolveDefaultCandidateContext(actor, input);
-  await Promise.all([ensureProgramExists(context.programId), ensureTrainingCenterExists(context.centerId)]);
+  const context = resolveCandidateRegistrationContext(actor, input);
 
   const workbookSheets = await readWorkbookSheetsFromArrayBuffer(workbookBuffer, { defaultValue: "" });
   const firstSheet = workbookSheets.find((sheet) => normalizeWhitespace(sheet.name).toLowerCase() === "candidate import template") ?? workbookSheets[0];

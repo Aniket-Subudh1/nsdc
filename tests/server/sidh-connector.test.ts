@@ -442,7 +442,8 @@ describe("SIDH connector", () => {
     const encryptedPassword = loginBody.get("password");
 
     expect(encryptedPassword).toBeTruthy();
-    expect(encryptedPassword).not.toBe(Buffer.from("uat-password:test-secret", "utf8").toString("base64"));
+    expect(encryptedPassword?.endsWith("test-secret")).toBe(true);
+    expect(encryptedPassword).not.toBe(`${Buffer.from("uat-password", "utf8").toString("base64")}test-secret`);
   });
 
   it("preserves plain-text auth errors instead of failing json parsing", async () => {

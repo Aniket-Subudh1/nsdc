@@ -389,10 +389,22 @@ const candidateRegistrationContactDetailsSchema = z.object({
   countryCode: z.string().trim().min(1).default("91"),
 });
 
+const candidateRegistrationLocationDetailsSchema = z.object({
+  state: nullableTrimmedStringSchema.default(""),
+  city: nullableTrimmedStringSchema.default(""),
+  centerName: nullableTrimmedStringSchema.default(""),
+});
+const emptyCandidateRegistrationLocationDetails = {
+  state: "",
+  city: "",
+  centerName: "",
+};
+
 export const createCandidateRegistrationSchema = z
   .object({
     personalDetails: candidateRegistrationPersonalDetailsSchema,
     contactDetails: candidateRegistrationContactDetailsSchema,
+    locationDetails: candidateRegistrationLocationDetailsSchema.optional().default(emptyCandidateRegistrationLocationDetails),
   })
   .superRefine((value, ctx) => {
     if (!value.personalDetails.fatherName?.trim() && !value.personalDetails.guardianName?.trim()) {
@@ -484,6 +496,7 @@ export const createCandidateSchema = z.object({
   registrationMode: registrationModeSchema.default("internal_registration"),
   personalDetails: candidatePersonalDetailsSchema,
   contactDetails: candidateContactDetailsSchema,
+  locationDetails: candidateRegistrationLocationDetailsSchema.optional().default(emptyCandidateRegistrationLocationDetails),
   identity: candidateIdentitySchema,
   domicile: candidateDomicileSchema,
   permanentAddress: candidateAddressSchema,
@@ -498,6 +511,7 @@ export const updateCandidateSchema = z
     registrationMode: registrationModeSchema.optional(),
     personalDetails: candidatePersonalDetailsBaseSchema.partial().optional(),
     contactDetails: candidateContactDetailsSchema.partial().optional(),
+    locationDetails: candidateRegistrationLocationDetailsSchema.partial().optional(),
     identity: candidateIdentityBaseSchema.partial().optional(),
     domicile: candidateDomicileSchema.partial().optional(),
     permanentAddress: candidateAddressSchema.partial().optional(),
@@ -525,10 +539,20 @@ export const candidateListQuerySchema = paginationQuerySchema.extend({
   registrationMode: registrationModeSchema.optional(),
 });
 
+const optionalFormStringSchema = z.preprocess(
+  (value) => (value === null || value === undefined || value === "" ? undefined : value),
+  z.string().trim().min(1).optional(),
+);
+
+const optionalRegistrationModeFormSchema = z.preprocess(
+  (value) => (value === null || value === undefined || value === "" ? undefined : value),
+  registrationModeSchema.optional(),
+).transform((value) => value ?? "internal_registration");
+
 export const candidateImportSchema = z.object({
-  programId: z.string().trim().min(1).optional(),
-  centerId: z.string().trim().min(1).optional(),
-  registrationMode: registrationModeSchema.default("internal_registration").optional(),
+  programId: optionalFormStringSchema,
+  centerId: optionalFormStringSchema,
+  registrationMode: optionalRegistrationModeFormSchema,
 });
 
 export const bulkQueueCandidateSyncSchema = z.object({

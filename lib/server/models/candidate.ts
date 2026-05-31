@@ -275,6 +275,11 @@ const candidateSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    centerName: {
+      type: String,
+      trim: true,
+      default: null,
+    },
     duplicateHash: {
       type: String,
       required: true,

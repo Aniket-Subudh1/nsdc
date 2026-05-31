@@ -407,15 +407,18 @@ function encryptPassword(password: string, publicKey: string, secretKey: string)
   const normalizedSecret = secretKey.trim();
 
   try {
-    return publicEncrypt(
+    const encryptedPassword = publicEncrypt(
       {
         key: normalizePublicKey(publicKey),
-        padding: constants.RSA_PKCS1_PADDING,
+        oaepHash: "sha256",
+        padding: constants.RSA_PKCS1_OAEP_PADDING,
       },
-      Buffer.from(JSON.stringify({ password, secretKey: normalizedSecret }), "utf8"),
+      Buffer.from(password, "utf8"),
     ).toString("base64");
+
+    return `${encryptedPassword}${normalizedSecret}`;
   } catch {
-    return Buffer.from(`${password}:${normalizedSecret}`, "utf8").toString("base64");
+    return `${Buffer.from(password, "utf8").toString("base64")}${normalizedSecret}`;
   }
 }
 

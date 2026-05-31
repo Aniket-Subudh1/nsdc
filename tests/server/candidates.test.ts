@@ -74,12 +74,13 @@ vi.mock("@/lib/server/models/sidh-api-transaction", () => ({
 
 import {
   commitCandidateImportJob,
+  createCandidate,
   createCandidateImportJob,
   linkExistingSidhCandidate,
   queueCandidateSyncBulk,
   queueCandidateSync,
 } from "@/lib/server/services/candidates";
-import { createCandidateSchema } from "@/lib/server/validation";
+import { candidateImportSchema, createCandidateSchema } from "@/lib/server/validation";
 
 function createSelectQuery<T>(value: T) {
   return {
@@ -171,6 +172,59 @@ describe("candidate services", () => {
     ).toThrow("Father name or guardian name is required");
   });
 
+  it("accepts file-only candidate import form fields", () => {
+    expect(
+      candidateImportSchema.parse({
+        centerId: null,
+        programId: null,
+        registrationMode: undefined,
+      }),
+    ).toEqual({
+      centerId: undefined,
+      programId: undefined,
+      registrationMode: "internal_registration",
+    });
+  });
+
+  it("creates a candidate from the registration payload without requiring active master data", async () => {
+    mocks.programFindOne.mockReturnValue(createSelectQuery(null));
+    mocks.trainingCenterFindOne.mockReturnValue(createSelectQuery(null));
+    mocks.candidateFindOne.mockReturnValue(createSelectQuery(null));
+    mocks.candidateCreate.mockImplementation(async (value: Record<string, unknown>) => value);
+
+    const result = await createCandidate(actor as never, {
+      personalDetails: {
+        namePrefix: "Mr",
+        firstName: "Rohit Kumar",
+        gender: "Male",
+        dob: "2005-06-10",
+        fatherName: "Suresh Kumar",
+        guardianName: "",
+      },
+      contactDetails: {
+        email: "rohit@example.com",
+        phone: "9876543210",
+        countryCode: "91",
+      },
+      locationDetails: {
+        state: "Odisha",
+        city: "Bhubaneswar",
+        centerName: "Center One",
+      },
+    });
+
+    expect(result.personalDetails.fullName).toBe("Rohit Kumar");
+    expect(result.locationDetails).toEqual({
+      centerName: "Center One",
+      city: "Bhubaneswar",
+      state: "Odisha",
+    });
+    expect(result.programId).toBe("candidate_registration");
+    expect(result.centerId).toBe("tc_001");
+    expect(mocks.programFindOne).not.toHaveBeenCalled();
+    expect(mocks.trainingCenterFindOne).not.toHaveBeenCalled();
+  });
+
   it("stages import rows with valid and invalid counts", async () => {
     mocks.candidateFindOne.mockReturnValue(createSelectQuery(null));
     mocks.importJobCreate.mockImplementation(async (value: Record<string, unknown>) => value);
@@ -214,6 +268,21 @@ describe("candidate services", () => {
     expect(result.validRows).toBe(1);
     expect(result.invalidRows).toBe(1);
     expect(mocks.importJobCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.importJobCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rows: expect.arrayContaining([
+          expect.objectContaining({
+            normalized: expect.objectContaining({
+              locationDetails: {
+                centerName: "Center One",
+                city: "Bhubaneswar",
+                state: "Odisha",
+              },
+            }),
+          }),
+        ]),
+      }),
+    );
   });
 
   it("links an existing SIDH candidate without queueing sync", async () => {

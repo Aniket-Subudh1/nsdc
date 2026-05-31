@@ -216,6 +216,37 @@ function StatusBadge({ tone = "slate", value }: { tone?: "emerald" | "slate" | "
   return <span className={classNames("rounded-full border px-2.5 py-1 text-xs font-semibold capitalize", tones[tone])}>{formatStatusLabel(value)}</span>;
 }
 
+function MetricCard({
+  active,
+  icon,
+  label,
+  onClick,
+  value,
+}: {
+  active?: boolean;
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  value: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={classNames(
+        "group rounded-3xl border p-5 text-left shadow-sm transition",
+        active ? "border-slate-900 bg-white" : "border-slate-200 bg-white hover:-translate-y-0.5 hover:border-sky-200",
+      )}
+    >
+      <div className="flex items-center justify-between gap-4">
+        <span className={classNames("rounded-2xl p-3", active ? "bg-slate-900 text-white" : "bg-sky-50 text-sky-600 group-hover:bg-sky-100")}>{icon}</span>
+        <span className={classNames("text-2xl font-bold tracking-tight", active ? "text-slate-950" : "text-slate-800")}>{value}</span>
+      </div>
+      <div className="mt-4 text-sm font-semibold text-slate-700">{label}</div>
+    </button>
+  );
+}
+
 function FieldSelect({
   children,
   id,
@@ -230,7 +261,7 @@ function FieldSelect({
   return (
     <select
       id={id}
-      className="h-11 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+      className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-900 outline-none transition focus:border-sky-300 focus:bg-white focus:ring-2 focus:ring-sky-100"
       value={value}
       onChange={(event) => onChange(event.target.value)}
     >
@@ -522,26 +553,34 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 px-4 py-5 text-slate-900 md:px-8 md:py-7">
-      <div className="mx-auto flex max-w-7xl flex-col gap-5">
-        <header className="flex flex-col gap-4 border-b border-slate-200 pb-5 md:flex-row md:items-end md:justify-between">
+    <div className="flex min-h-full flex-col gap-6 bg-slate-100 px-4 py-4 text-slate-900 md:px-8 md:py-8">
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-sm text-slate-500">Batch Details / {activeTab === "create" ? "Create Batch" : activeTab === "view" ? "View Batch Details" : "Assign Candidate To Batch"}</p>
-            <h1 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">{content.heading}</h1>
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-sky-600">Operations</p>
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-900">{content.heading}</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{content.description}</p>
           </div>
 
           <button
-            className="inline-flex w-fit items-center gap-2 rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-indigo-200 hover:text-indigo-700"
+            className="inline-flex w-fit items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:border-sky-300 hover:text-sky-700"
             onClick={() => startTransition(() => void loadData())}
             type="button"
           >
             <RefreshCw className="h-4 w-4" />
-            Refresh
+            Refresh visible data
           </button>
-        </header>
+        </div>
+      </section>
 
-        <nav className="flex flex-wrap gap-2 border-b border-slate-200">
+      <section className="grid gap-4 md:grid-cols-3">
+        <MetricCard icon={<Plus className="h-5 w-5" />} label="Create Batch" value="New" active={activeTab === "create"} onClick={() => setActiveTab("create")} />
+        <MetricCard icon={<LayoutList className="h-5 w-5" />} label="Saved Batches" value={batches.length} active={activeTab === "view"} onClick={() => setActiveTab("view")} />
+        <MetricCard icon={<Users className="h-5 w-5" />} label="Assign Candidates" value={selectedBatch?.candidates.length ?? 0} active={activeTab === "assign"} onClick={() => setActiveTab("assign")} />
+      </section>
+
+      <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <nav className="flex items-center gap-1 overflow-x-auto border-b border-slate-100 px-5 pt-3">
           {[
             { icon: Plus, key: "create" as const, label: "Create Batch" },
             { icon: LayoutList, key: "view" as const, label: "View All Batches" },
@@ -552,21 +591,25 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
               <button
                 key={tab.key}
                 className={classNames(
-                  "inline-flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-semibold transition",
-                  activeTab === tab.key ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-500 hover:text-slate-800",
+                  "inline-flex shrink-0 items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition",
+                  activeTab === tab.key ? "border-slate-900 text-slate-900" : "border-transparent text-slate-400 hover:text-slate-600",
                 )}
                 onClick={() => setActiveTab(tab.key)}
                 type="button"
               >
                 <Icon className="h-4 w-4" />
                 {tab.label}
+                <span className={classNames("rounded-full px-1.5 py-0.5 text-[10px] font-bold", activeTab === tab.key ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-500")}>
+                  {tab.key === "create" ? "1" : tab.key === "view" ? batches.length : selectedBatch?.candidates.length ?? 0}
+                </span>
               </button>
             );
           })}
         </nav>
+      </section>
 
         {activeTab === "create" ? (
-          <section className="rounded-md border border-slate-200 bg-white shadow-sm">
+          <section className="rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-100 px-5 py-4">
               <h2 className="text-lg font-semibold text-slate-950">Create Batch</h2>
             </div>
@@ -637,7 +680,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
 
             <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 px-5 py-5">
               <button
-                className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:opacity-60"
+                className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700 disabled:opacity-60"
                 disabled={isSaving}
                 onClick={() => void handleCreateBatch()}
                 type="button"
@@ -656,7 +699,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
 
         {activeTab === "view" ? (
           <section className="space-y-5">
-            <div className="rounded-md border border-slate-200 bg-white shadow-sm">
+            <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
               <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 md:flex-row md:items-center md:justify-between">
                 <h2 className="text-lg font-semibold text-slate-950">View Batch Details</h2>
                 <StatusBadge tone="sky" value={`${batches.length} batches`} />
@@ -708,7 +751,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                             <div className="flex justify-end gap-2">
                               <button
                                 aria-label="View enrolled candidates"
-                                className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-indigo-600 text-white transition hover:bg-indigo-700 disabled:opacity-60"
+                                className="inline-flex h-9 w-9 items-center justify-center rounded-2xl bg-slate-900 text-white transition hover:bg-slate-700 disabled:opacity-60"
                                 disabled={detailLoadingId === batch.batchId}
                                 onClick={() => void handleViewBatch(batch.batchId)}
                                 title="View enrolled candidates"
@@ -718,7 +761,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                               </button>
                               <button
                                 aria-label="Retry SIDH sync"
-                                className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-700 transition hover:border-indigo-200 hover:text-indigo-700 disabled:opacity-60"
+                                className="inline-flex h-9 w-9 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700 transition hover:border-sky-300 hover:text-sky-700 disabled:opacity-60"
                                 disabled={syncingBatchId === batch.batchId}
                                 onClick={() => void handleRetrySync(batch.batchId)}
                                 title="Retry SIDH sync"
@@ -739,7 +782,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
             </div>
 
             {selectedBatch ? (
-              <div className="rounded-md border border-slate-200 bg-white shadow-sm">
+              <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
                 <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 md:flex-row md:items-center md:justify-between">
                   <div>
                     <h3 className="text-base font-semibold text-slate-950">Enrolled Candidate Details</h3>
@@ -752,7 +795,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                     <StatusBadge tone={getSyncTone(selectedBatch)} value={selectedBatch.syncState.batchSync.status} />
                     <StatusBadge tone={selectedBatch.candidates.length > 0 ? "emerald" : "slate"} value={`${selectedBatch.candidates.length} enrolled`} />
                     <button
-                      className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-indigo-200 hover:text-indigo-700 disabled:opacity-60"
+                      className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-sky-300 hover:text-sky-700 disabled:opacity-60"
                       disabled={syncingBatchId === selectedBatch.batchId}
                       onClick={() => void handleRetrySync(selectedBatch.batchId)}
                       type="button"
@@ -761,7 +804,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                       Retry SIDH create
                     </button>
                     <button
-                      className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-emerald-200 hover:text-emerald-700 disabled:opacity-60"
+                      className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-emerald-300 hover:text-emerald-700 disabled:opacity-60"
                       disabled={syncingEnrollmentBatchId === selectedBatch.batchId || selectedBatch.candidates.length === 0}
                       onClick={() => void handleRetryEnrollment(selectedBatch.batchId)}
                       type="button"
@@ -812,7 +855,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
 
         {activeTab === "assign" ? (
           <section className="space-y-5">
-            <div className="rounded-md border border-slate-200 bg-white shadow-sm">
+            <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
               <div className="border-b border-slate-100 px-5 py-4">
                 <h2 className="text-lg font-semibold text-slate-950">Assign Candidate to Batch</h2>
               </div>
@@ -840,7 +883,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                 </div>
 
                 <button
-                  className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-indigo-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:opacity-60"
+                  className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-slate-900 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700 disabled:opacity-60"
                   disabled={!assignBatchId || activeSelectedCandidateIds.length === 0 || isAssigningCandidates}
                   onClick={() => void handleAssignCandidates()}
                   type="button"
@@ -851,7 +894,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
               </div>
             </div>
 
-            <div className="rounded-md border border-slate-200 bg-white shadow-sm">
+            <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
               <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 md:flex-row md:items-center md:justify-between">
                 <div>
                   <h2 className="text-lg font-semibold text-slate-950">Assign Candidate to Batch</h2>
@@ -873,7 +916,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                     />
                   </div>
                   <button
-                    className="inline-flex h-10 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:border-indigo-200 hover:text-indigo-700 disabled:opacity-60"
+                    className="inline-flex h-10 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:border-sky-300 hover:text-sky-700 disabled:opacity-60"
                     disabled={!assignBatchId || isLoadingCandidates}
                     onClick={() => void loadAssignableCandidates(assignBatchId, assignSearch)}
                     type="button"
@@ -916,7 +959,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                       const isSelected = activeSelectedCandidateIds.includes(candidate.candidateId);
 
                       return (
-                        <tr key={candidate.candidateId} className={classNames("align-top hover:bg-slate-50", isSelected ? "bg-indigo-50" : "bg-white")}>
+                        <tr key={candidate.candidateId} className={classNames("align-top hover:bg-slate-50", isSelected ? "bg-sky-50" : "bg-white")}>
                           <td className="px-3 py-4">
                             <input
                               aria-label={`Select ${candidate.candidateId}`}
@@ -948,7 +991,6 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
             </div>
           </section>
         ) : null}
-      </div>
     </div>
   );
 }

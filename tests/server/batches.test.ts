@@ -228,7 +228,7 @@ describe("batch services", () => {
   };
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mocks.batchCandidateCountDocuments.mockResolvedValue(2);
     mocks.batchCandidateAggregate.mockResolvedValue([{ _id: "queued", count: 1 }]);
     mocks.batchSyncStateFind.mockResolvedValue([]);
@@ -312,6 +312,102 @@ describe("batch services", () => {
     ).rejects.toThrow("Selected course mapping is not valid for the requested batch dates");
   });
 
+  it("rejects sync-enabled batch creation without an assigned center", async () => {
+    await expect(
+      createBatch(actor as never, {
+        assessmentDate: "2026-02-05",
+        assessmentEligibilityThreshold: 70,
+        allowAssessmentBeforeBatchEnd: false,
+        allowCandidateOverlap: false,
+        batchCode: "BAT-001",
+        batchName: "Retail Batch",
+        batchSize: 80,
+        candidateIds: [],
+        centerId: "",
+        courseId: "course_001",
+        endDate: "2026-02-01",
+        endTime: "17:00",
+        fee: 500,
+        schemeId: "scheme_001",
+        startDate: "2026-01-01",
+        startTime: "09:00",
+        status: "ready",
+        syncEnabled: true,
+        trainingHoursPerDay: 8,
+      }),
+    ).rejects.toThrow("Select a training center before enabling SIDH sync");
+
+    expect(mocks.batchCreate).not.toHaveBeenCalled();
+    expect(mocks.batchSyncStateCreate).not.toHaveBeenCalled();
+  });
+
+  it("does not create a batch when candidate assignment validation fails during creation", async () => {
+    mocks.batchFindOne.mockReturnValue(createSelectQuery(null));
+    mocks.courseFindOne.mockReturnValue(
+      createSelectQuery({
+        approvalStatus: "approved",
+        associatedQpOrJobRole: "Retail Sales Associate",
+        courseId: "course_001",
+        courseName: "Retail Course",
+        minimumAge: 18,
+        nsqfLevel: 4,
+        programIds: ["prg_001"],
+        qpCode: "QP001",
+        schemeIds: ["scheme_001"],
+        sidhCourseId: "SIDH_COURSE_001",
+        status: "active",
+        trainingHours: 240,
+        validityEndDate: new Date("2026-12-31T00:00:00.000Z"),
+        validityStartDate: new Date("2025-01-01T00:00:00.000Z"),
+      }),
+    );
+    mocks.batchCandidateFind.mockReturnValueOnce(createSelectQuery([])).mockReturnValueOnce(createSelectQuery([]));
+    mocks.candidateFind.mockReturnValue(
+      createSelectQuery([
+        {
+          candidateId: "cand_001",
+          centerId: "tc_999",
+          dateOfBirth: new Date("2000-01-01T00:00:00.000Z"),
+          fullName: "Asha",
+          mobileNumber: "9876543210",
+          programId: "prg_001",
+          registrationMode: "internal_registration",
+          sidhCandidateId: "CAN_001",
+          syncState: { status: "synced" },
+          trainingStatus: "ongoing",
+        },
+      ]),
+    );
+
+    await expect(
+      createBatch(actor as never, {
+        assessmentDate: "2026-02-05",
+        assessmentEligibilityThreshold: 70,
+        allowAssessmentBeforeBatchEnd: false,
+        allowCandidateOverlap: false,
+        batchCode: "BAT-001",
+        batchName: "Retail Batch",
+        batchSize: 80,
+        candidateIds: ["cand_001"],
+        centerId: "tc_001",
+        courseId: "course_001",
+        endDate: "2026-02-01",
+        endTime: "17:00",
+        fee: 500,
+        schemeId: "scheme_001",
+        startDate: "2026-01-01",
+        startTime: "09:00",
+        status: "draft",
+        syncEnabled: true,
+        trainingHoursPerDay: 8,
+      }),
+    ).rejects.toThrow("Candidate cand_001 is assigned to a different center");
+
+    expect(mocks.batchCreate).not.toHaveBeenCalled();
+    expect(mocks.batchCandidateInsertMany).not.toHaveBeenCalled();
+    expect(mocks.batchSyncStateCreate).not.toHaveBeenCalled();
+  });
+
   it("builds SIDH batch creation payloads with default NSDC metadata", async () => {
     const batch = createBatchDocument({ sidhBatchId: null });
     const claimedState = createSyncState({
@@ -375,6 +471,34 @@ describe("batch services", () => {
         }),
       }),
     );
+  });
+
+  it("moves unassigned sync-enabled batches to manual review during sync processing", async () => {
+    const batch = createBatchDocument({ centerId: "unassigned", sidhBatchId: null });
+    const claimedState = createSyncState({
+      batchSync: {
+        attempts: [],
+        lastJobId: "bsjob_001",
+        retryCount: 0,
+        status: "processing",
+      },
+      sidhBatchId: null,
+    });
+
+    mocks.batchSyncStateFindOneAndUpdate.mockResolvedValueOnce(claimedState).mockResolvedValueOnce(null);
+    mocks.batchFindOne.mockResolvedValue(batch);
+
+    const connector = {
+      createBatch: vi.fn(),
+    };
+
+    const result = await processQueuedBatchSyncJobs(actor as never, { limit: 1 }, { connector: connector as never, now: () => new Date("2026-01-15T00:00:00.000Z") });
+
+    expect(result.manualReviewCount).toBe(1);
+    expect(result.succeededCount).toBe(0);
+    expect(result.jobs[0]?.status).toBe("manual_review");
+    expect(result.jobs[0]?.message).toBe("Select a training center before enabling SIDH sync");
+    expect(connector.createBatch).not.toHaveBeenCalled();
   });
 
   it("allows enrollment sync only for sync-eligible batches and candidates", async () => {

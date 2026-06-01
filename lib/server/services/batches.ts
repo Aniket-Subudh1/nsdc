@@ -641,6 +641,12 @@ async function validateBatchMasterData(input: {
   return { center, course, scheme };
 }
 
+function ensureCenterAssignedForSync(centerId: string, syncEnabled: boolean) {
+  if (syncEnabled && centerId === UNASSIGNED_CENTER_ID) {
+    throw new ApiError(400, "CENTER_REQUIRED_FOR_SYNC", "Select a training center before enabling SIDH sync");
+  }
+}
+
 async function loadBatchRoster(batchId: string) {
   const batchCandidates = (await BatchCandidateModel.find({ batchId }).sort({ createdAt: 1 })) as ServiceBatchCandidate[];
   const candidateIds = batchCandidates.map((item) => item.candidateId);
@@ -673,7 +679,9 @@ async function refreshBatchCandidateCount(batchId: string) {
   return candidateCount;
 }
 
-async function validateCandidateAssignments(batch: ServiceBatch, candidateIds: string[]) {
+type BatchAssignmentContext = Pick<ServiceBatch, "allowCandidateOverlap" | "batchId" | "batchSize" | "centerId" | "courseId" | "endDate" | "startDate">;
+
+async function validateCandidateAssignments(batch: BatchAssignmentContext, candidateIds: string[]) {
   const uniqueCandidateIds = [...new Set(candidateIds.map((candidateId) => normalizeString(candidateId)).filter(Boolean))];
 
   if (uniqueCandidateIds.length === 0) {
@@ -770,6 +778,27 @@ async function validateCandidateAssignments(batch: ServiceBatch, candidateIds: s
   }
 
   return candidates;
+}
+
+async function insertBatchCandidates(
+  batchId: string,
+  actorUserId: string,
+  candidates: ServiceCandidate[],
+  options: { ordered?: boolean } = {},
+) {
+  if (candidates.length === 0) {
+    return;
+  }
+
+  await BatchCandidateModel.insertMany(
+    candidates.map((candidate) => ({
+      addedByUserId: actorUserId,
+      batchCandidateId: createPrefixedId("batc"),
+      batchId,
+      candidateId: candidate.candidateId,
+    })),
+    { ordered: options.ordered ?? false },
+  );
 }
 
 async function updateTrainingStatuses(rows: Array<{ attendanceDate: Date; candidateId: string; trainingStatus?: string | null }>, actorUserId: string, uploadId: string) {
@@ -949,6 +978,8 @@ function calculateNextRunAt(retryCount: number, now: Date) {
 }
 
 async function validateBatchSyncEligibility(batch: ServiceBatch) {
+  ensureCenterAssignedForSync(batch.centerId, batch.syncEnabled);
+
   if (batch.centerId !== UNASSIGNED_CENTER_ID) {
     return validateBatchMasterData({
       centerId: batch.centerId,
@@ -1027,6 +1058,7 @@ export async function createBatch(actor: AuthSession, input: CreateBatchInput, r
   ensureCanWriteBatches(actor);
   const centerId = normalizeString(input.centerId) || UNASSIGNED_CENTER_ID;
   const hasAssignedCenter = centerId !== UNASSIGNED_CENTER_ID;
+  ensureCenterAssignedForSync(centerId, input.syncEnabled);
 
   if (hasAssignedCenter) {
     resolveScopedCenterFilter(actor, centerId);
@@ -1053,15 +1085,32 @@ export async function createBatch(actor: AuthSession, input: CreateBatchInput, r
     throw new ApiError(409, "BATCH_EXISTS", "A batch with this code already exists");
   }
 
+  const batchId = createPrefixedId("bat");
+  const validatedCandidates = input.candidateIds.length
+    ? await validateCandidateAssignments(
+        {
+          allowCandidateOverlap: input.allowCandidateOverlap,
+          batchId,
+          batchSize: input.batchSize,
+          centerId,
+          courseId: input.courseId,
+          endDate,
+          startDate,
+        },
+        input.candidateIds,
+      )
+    : [];
+
   const batch = (await BatchModel.create({
     assessmentDate,
     assessmentEligibilityThreshold: input.assessmentEligibilityThreshold,
     allowAssessmentBeforeBatchEnd: input.allowAssessmentBeforeBatchEnd,
     allowCandidateOverlap: input.allowCandidateOverlap,
     batchCode: normalizeString(input.batchCode),
-    batchId: createPrefixedId("bat"),
+    batchId,
     batchName: normalizeString(input.batchName) || null,
     batchSize: input.batchSize,
+    candidateCount: validatedCandidates.length,
     centerId,
     courseId: input.courseId,
     createdByUserId: actor.user.id,
@@ -1076,6 +1125,8 @@ export async function createBatch(actor: AuthSession, input: CreateBatchInput, r
     trainingHoursPerDay: input.trainingHoursPerDay,
     updatedByUserId: actor.user.id,
   })) as ServiceBatch;
+
+  await insertBatchCandidates(batch.batchId, actor.user.id, validatedCandidates, { ordered: true });
 
   const syncState = await ensureBatchSyncState(batch.batchId, actor.user.id);
 
@@ -1094,10 +1145,6 @@ export async function createBatch(actor: AuthSession, input: CreateBatchInput, r
     syncState.updatedByUserId = actor.user.id;
     await syncState.save?.();
     await processQueuedBatchSyncJobs(actor, { limit: 5, requestId }).catch(() => undefined);
-  }
-
-  if (input.candidateIds.length > 0) {
-    await addCandidatesToBatch(actor, batch.batchId, { candidateIds: input.candidateIds }, requestId);
   }
 
   await writeAuditLog({
@@ -1293,17 +1340,7 @@ export async function addCandidatesToBatch(actor: AuthSession, batchId: string, 
   const existingIds = new Set(existingMemberships.map((item) => item.candidateId));
   const incomingCandidates = candidates.filter((candidate) => !existingIds.has(candidate.candidateId));
 
-  if (incomingCandidates.length > 0) {
-    await BatchCandidateModel.insertMany(
-      incomingCandidates.map((candidate) => ({
-        addedByUserId: actor.user.id,
-        batchCandidateId: createPrefixedId("batc"),
-        batchId: batch.batchId,
-        candidateId: candidate.candidateId,
-      })),
-      { ordered: false },
-    );
-  }
+  await insertBatchCandidates(batch.batchId, actor.user.id, incomingCandidates);
 
   batch.candidateCount = await refreshBatchCandidateCount(batch.batchId);
   batch.updatedByUserId = actor.user.id;
@@ -1319,15 +1356,20 @@ export async function addCandidatesToBatch(actor: AuthSession, batchId: string, 
   });
 
   if (incomingCandidates.length > 0) {
-    await queueEnrollmentSync(
-      actor,
-      batch.batchId,
-      {
-        candidateIds: incomingCandidates.map((candidate) => candidate.candidateId),
-        forceResync: true,
-      },
-      requestId,
-    );
+    const syncState = await ensureBatchSyncState(batch.batchId);
+    const effectiveSidhBatchId = batch.sidhBatchId ?? syncState.sidhBatchId ?? null;
+
+    if (effectiveSidhBatchId) {
+      await queueEnrollmentSync(
+        actor,
+        batch.batchId,
+        {
+          candidateIds: incomingCandidates.map((candidate) => candidate.candidateId),
+          forceResync: true,
+        },
+        requestId,
+      );
+    }
   }
 
   return getBatch(actor, batch.batchId);
@@ -1949,6 +1991,18 @@ export async function processQueuedBatchSyncJobs(actor: AuthSession, input: { li
         requestId: input.requestId,
       });
 
+      if (roster.batchCandidates.length > 0) {
+        await queueEnrollmentSync(
+          actor,
+          batch.batchId,
+          {
+            candidateIds: roster.batchCandidates.map((membership) => membership.candidateId),
+            forceResync: false,
+          },
+          input.requestId,
+        ).catch(() => undefined);
+      }
+
       jobs.push({
         batchId: batch.batchId,
         message: "Batch synced successfully",
@@ -1960,6 +2014,14 @@ export async function processQueuedBatchSyncJobs(actor: AuthSession, input: { li
       const connectorError =
         error instanceof SidhConnectorError
           ? error
+          : error instanceof ApiError
+            ? new SidhConnectorError({
+                code: error.errorCode,
+                manualReview: true,
+                message: error.message,
+                retryable: false,
+                status: error.status,
+              })
           : new SidhConnectorError({
               code: "BATCH_SYNC_FAILED",
               message: classifyMessage(error),

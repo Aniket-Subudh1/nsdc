@@ -347,7 +347,6 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
       </div>
 
       <div className="flex flex-col gap-5 p-6">
-        {/* ── Stats row ────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <StatCard
             icon={<Building2 className="h-5 w-5" />}

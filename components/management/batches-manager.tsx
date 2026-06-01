@@ -125,6 +125,7 @@ type BatchDetail = BatchListItem & {
 };
 
 type BatchFormState = {
+  centerId: string;
   categoryId: string;
   courseId: string;
   endDate: string;
@@ -138,6 +139,7 @@ type BatchFormState = {
 
 type TabKey = "create" | "view" | "assign";
 
+  centerId: "",
 const emptyBatchForm: BatchFormState = {
   categoryId: "",
   courseId: "",
@@ -336,6 +338,16 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
 
       setReferenceData({ ...refs, courses: coursePage.items });
       setBatches(batchPage.items);
+      setBatchForm((current) => {
+        if (current.centerId || refs.trainingCenters.length !== 1) {
+          return current;
+        }
+
+        return {
+          ...current,
+          centerId: refs.trainingCenters[0]?.centerId ?? "",
+        };
+      });
     } catch (error) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to load batch details");
     } finally {
@@ -407,8 +419,8 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
   async function handleCreateBatch() {
     const schemeId = selectedCourse?.schemeIds[0] ?? referenceData?.schemes[0]?.schemeId;
 
-    if (!batchForm.categoryId || !batchForm.sectorId || !batchForm.courseId || !batchForm.startDate || !batchForm.endDate || !batchForm.startTime || !batchForm.endTime) {
-      toast.error("Complete category, sector, course, date, and time fields before creating the batch");
+    if (!batchForm.centerId || !batchForm.categoryId || !batchForm.sectorId || !batchForm.courseId || !batchForm.startDate || !batchForm.endDate || !batchForm.startTime || !batchForm.endTime) {
+      toast.error("Complete center, category, sector, course, date, and time fields before creating the batch");
       return;
     }
 
@@ -429,6 +441,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
           batchCode,
           batchName,
           batchSize: Number(batchForm.size || 1),
+          centerId: batchForm.centerId,
           courseId: batchForm.courseId,
           endDate: batchForm.endDate,
           endTime: batchForm.endTime,
@@ -615,6 +628,16 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
             </div>
 
             <div className="grid gap-x-5 gap-y-8 p-5 md:grid-cols-2 xl:grid-cols-3">
+              <div className="space-y-2">
+                <Label htmlFor="centerId">Training Center</Label>
+                <FieldSelect id="centerId" value={batchForm.centerId} onChange={(value) => updateBatchForm({ centerId: value })}>
+                  <option value="">{(referenceData?.trainingCenters.length ?? 0) > 0 ? "Select Training Center" : "No Training Centers Available"}</option>
+                  {(referenceData?.trainingCenters ?? []).map((center) => (
+                    <option key={center.centerId} value={center.centerId}>{center.centerName} ({center.centerCode})</option>
+                  ))}
+                </FieldSelect>
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="categoryId">Select Category</Label>
                 <FieldSelect id="categoryId" value={batchForm.categoryId} onChange={(value) => updateBatchForm({ categoryId: value, courseId: "" })}>

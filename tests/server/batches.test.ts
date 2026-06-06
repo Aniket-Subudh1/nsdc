@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   candidateUpdateOne: vi.fn(),
   connectToDatabase: vi.fn(),
   courseFindOne: vi.fn(),
+  programFindOne: vi.fn(),
   schemeFindOne: vi.fn(),
   trainingCenterFindOne: vi.fn(),
   writeAuditLog: vi.fn(),
@@ -120,6 +121,12 @@ vi.mock("@/lib/server/models/course", () => ({
   },
 }));
 
+vi.mock("@/lib/server/models/program", () => ({
+  ProgramModel: {
+    findOne: mocks.programFindOne,
+  },
+}));
+
 vi.mock("@/lib/server/models/scheme", () => ({
   SchemeModel: {
     findOne: mocks.schemeFindOne,
@@ -176,7 +183,13 @@ function createBatchDocument(overrides: Record<string, unknown> = {}) {
     fee: 500,
     save: vi.fn().mockResolvedValue(undefined),
     schemeId: "scheme_001",
+    sidhAssessmentMode: "Self",
     sidhBatchId: "BATCH_REMOTE_001",
+    sidhBatchType: "Regular",
+    sidhCategoryType: "Fee Based",
+    sidhCreatedSource: "Created for NSDC Academy Partners",
+    sidhFeePaidBy: "Self-Paid",
+    sidhTpId: "TP054997",
     startDate: new Date("2026-01-01T00:00:00.000Z"),
     startTime: "09:00",
     status: "draft",
@@ -253,17 +266,30 @@ describe("batch services", () => {
     );
     mocks.schemeFindOne.mockReturnValue(
       createSelectQuery({
+        assessmentMode: "Self",
+        batchCategoryType: "Fee Based",
+        batchType: "Regular",
         beneficiaryType: "general",
-        fundingType: "grant",
+        createdSource: "Created for NSDC Academy Partners",
+        fundingType: "Self-Paid",
         name: "Scheme One",
         schemeId: "scheme_001",
-        sidhSchemeId: "SIDH_SCHEME_001",
+        sidhSchemeId: "44644",
+        sidhSchemeReferenceId: "Scheme_1159",
+        sidhSchemeType: "feeBased",
         status: "active",
         syncEnabled: true,
         validFrom: new Date("2025-01-01T00:00:00.000Z"),
         validTo: new Date("2026-12-31T00:00:00.000Z"),
       }),
     );
+    mocks.programFindOne.mockResolvedValue({
+      name: "NSDC Market led programme",
+      programId: "prg_001",
+      skillingCategoryId: 1,
+      skillingCategoryName: "NSDC Market led programme",
+      skillingCategoryScheme: "Fee Based",
+    });
   });
 
   it("rejects invalid course validity windows during batch creation", async () => {
@@ -463,8 +489,10 @@ describe("batch services", () => {
           batchType: "Regular",
           createdSource: "Created for NSDC Academy Partners",
           feePaidBy: "Self-Paid",
-          schemeReferenceId: "02R/2009-10/002IM",
+          schemeId: "44644",
+          schemeReferenceId: "Scheme_1159",
           schemeType: "feeBased",
+          tpId: "TP054997",
           skillingcategory: { id: 1, name: "NSDC Market led programme", scheme: "Fee Based" },
           trainingHoursPerDay: 8,
           type: "Fee Based",

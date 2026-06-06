@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { ROLE_KEYS } from "@/lib/server/rbac";
+import { parseUserDateInput } from "@/lib/server/sidh-payload";
 
 export const authPortalSchema = z.enum(["admin", "training_partner"]);
 const loginTextSchema = z.preprocess((value) => (typeof value === "string" ? value.trim() : ""), z.string());
@@ -23,6 +24,18 @@ const mobileNumberSchema = z
   .regex(/^\d{10}$/, "Mobile number must be a 10 digit value")
   .optional()
   .or(z.literal(""));
+
+const userDateSchema = z.preprocess(
+  (value) => {
+    if (value === null || value === undefined || value === "") {
+      return value;
+    }
+
+    const parsed = parseUserDateInput(value);
+    return parsed || value;
+  },
+  z.string().date(),
+);
 
 export const loginSchema = z.object({
   email: loginTextSchema,
@@ -131,6 +144,14 @@ export const createProgramSchema = z.object({
   code: z.string().trim().min(2).max(80),
   description: z.string().trim().max(500).optional(),
   syncToSidh: z.boolean().default(false),
+  skillingCategoryId: z.coerce.number().int().positive().default(1),
+  skillingCategoryName: z.string().trim().max(160).optional(),
+  skillingCategoryScheme: z.string().trim().max(80).optional(),
+  assessmentMode: z.string().trim().optional(),
+  batchType: z.string().trim().optional(),
+  batchCategoryType: z.string().trim().optional(),
+  feePaidBy: z.string().trim().optional(),
+  createdSource: z.string().trim().optional(),
   status: statusSchema.default("active"),
 });
 
@@ -140,6 +161,14 @@ export const updateProgramSchema = z
     code: z.string().trim().min(2).max(80).optional(),
     description: z.string().trim().max(500).optional(),
     syncToSidh: z.boolean().optional(),
+    skillingCategoryId: z.coerce.number().int().positive().optional(),
+    skillingCategoryName: z.string().trim().max(160).optional(),
+    skillingCategoryScheme: z.string().trim().max(80).optional(),
+    assessmentMode: z.string().trim().optional(),
+    batchType: z.string().trim().optional(),
+    batchCategoryType: z.string().trim().optional(),
+    feePaidBy: z.string().trim().optional(),
+    createdSource: z.string().trim().optional(),
     status: statusSchema.optional(),
   })
   .refine((value) => Object.values(value).some((entry) => entry !== undefined), {
@@ -172,6 +201,12 @@ export const createSchemeSchema = z
     status: statusSchema.default("active"),
     syncEnabled: z.boolean().default(false),
     sidhSchemeId: z.string().trim().optional(),
+    sidhSchemeReferenceId: z.string().trim().optional(),
+    sidhSchemeType: z.string().trim().optional(),
+    assessmentMode: z.string().trim().optional(),
+    batchType: z.string().trim().optional(),
+    batchCategoryType: z.string().trim().optional(),
+    createdSource: z.string().trim().optional(),
     fundingType: z.string().trim().optional(),
     beneficiaryType: z.string().trim().optional(),
     validFrom: optionalDateStringSchema,
@@ -182,7 +217,15 @@ export const createSchemeSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Sync-enabled schemes require a SIDH Scheme ID",
-        path: ["syncEnabled"],
+        path: ["sidhSchemeId"],
+      });
+    }
+
+    if (value.syncEnabled && !value.sidhSchemeReferenceId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Sync-enabled schemes require a SIDH Scheme Reference ID",
+        path: ["sidhSchemeReferenceId"],
       });
     }
   });
@@ -195,6 +238,12 @@ export const updateSchemeSchema = z
     status: statusSchema.optional(),
     syncEnabled: z.boolean().optional(),
     sidhSchemeId: z.string().trim().optional(),
+    sidhSchemeReferenceId: z.string().trim().optional(),
+    sidhSchemeType: z.string().trim().optional(),
+    assessmentMode: z.string().trim().optional(),
+    batchType: z.string().trim().optional(),
+    batchCategoryType: z.string().trim().optional(),
+    createdSource: z.string().trim().optional(),
     fundingType: z.string().trim().optional(),
     beneficiaryType: z.string().trim().optional(),
     validFrom: optionalDateStringSchema,
@@ -204,33 +253,51 @@ export const updateSchemeSchema = z
     message: "At least one field is required",
   });
 
-export const createCourseSchema = z.object({
-  sectorId: z.string().trim().min(1),
-  programIds: z.array(z.string().trim().min(1)).default([]),
-  schemeIds: z.array(z.string().trim().min(1)).default([]),
-  courseName: z.string().trim().min(2).max(200),
-  courseCode: z.string().trim().min(1).max(120).optional(),
-  internalCourseCode: z.string().trim().min(1).max(120).optional(),
-  sidhCourseId: z.string().trim().min(1).max(120).optional(),
-  jobRole: z.string().trim().min(1).max(200).optional(),
-  associatedQpOrJobRole: z.string().trim().min(1).max(200).optional(),
-  nsqfLevel: z.union([z.string().trim().min(1).max(40), z.coerce.number()]),
-  trainingPerDayHours: z.coerce.number().positive(),
-  totalHours: z.coerce.number().positive().optional(),
-  trainingHours: z.coerce.number().positive().optional(),
-  gtUploadedDurationHours: z.coerce.number().positive().optional(),
-  approvalStatus: approvalStatusSchema.default("pending"),
-  approvalDate: optionalDateStringSchema,
-  validity: z.coerce.number().positive(),
-  validityStartDate: optionalDateStringSchema,
-  validityEndDate: optionalDateStringSchema,
-  shortForm: z.string().trim().min(1).max(40),
-  minimumAge: z.coerce.number().int().min(0).default(0),
-  price: z.coerce.number().min(0).default(0),
-  qpCode: z.string().trim().max(120).optional(),
-  jobRoleMappingType: jobRoleMappingTypeSchema.default("JOB_ROLE"),
-  status: statusSchema.default("active"),
-});
+export const createCourseSchema = z
+  .object({
+    sectorId: z.string().trim().min(1),
+    programIds: z.array(z.string().trim().min(1)).default([]),
+    schemeIds: z.array(z.string().trim().min(1)).default([]),
+    courseName: z.string().trim().min(2).max(200),
+    courseCode: z.string().trim().min(1).max(120).optional(),
+    internalCourseCode: z.string().trim().min(1).max(120).optional(),
+    sidhCourseId: z.string().trim().min(1).max(120).optional(),
+    jobRole: z.string().trim().min(1).max(200).optional(),
+    associatedQpOrJobRole: z.string().trim().min(1).max(200).optional(),
+    nsqfLevel: z.union([z.string().trim().min(1).max(40), z.coerce.number()]),
+    trainingPerDayHours: z.coerce.number().positive(),
+    totalHours: z.coerce.number().positive().optional(),
+    trainingHours: z.coerce.number().positive().optional(),
+    gtUploadedDurationHours: z.coerce.number().positive().optional(),
+    approvalStatus: approvalStatusSchema.default("pending"),
+    approvalDate: optionalDateStringSchema,
+    validity: z.coerce.number().positive().optional(),
+    validityStartDate: optionalDateStringSchema,
+    validityEndDate: z.string().date(),
+    shortForm: z.string().trim().min(1).max(40),
+    minimumAge: z.coerce.number().int().min(0).default(0),
+    price: z.coerce.number().min(0).default(0),
+    qpCode: z.string().trim().max(120).optional(),
+    jobRoleMappingType: jobRoleMappingTypeSchema.default("JOB_ROLE"),
+    status: statusSchema.default("active"),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.sidhCourseId?.trim() && !value.courseCode?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "SIDH course ID from the approved course list is required",
+        path: ["sidhCourseId"],
+      });
+    }
+
+    if (value.validityStartDate && value.validityStartDate > value.validityEndDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Validity end date must be on or after the start date",
+        path: ["validityEndDate"],
+      });
+    }
+  });
 
 export const updateCourseSchema = z
   .object({
@@ -350,7 +417,7 @@ const candidatePersonalDetailsBaseSchema = z.object({
     salutation: nullableTrimmedStringSchema,
     fullName: z.string().trim().min(2).max(160),
     gender: z.string().trim().min(1).max(80),
-    dateOfBirth: z.string().date(),
+    dateOfBirth: userDateSchema,
     maritalStatus: nullableTrimmedStringSchema,
     fathersName: nullableTrimmedStringSchema,
     mothersName: nullableTrimmedStringSchema,
@@ -390,7 +457,7 @@ const candidateRegistrationPersonalDetailsSchema = z.object({
   namePrefix: nullableTrimmedStringSchema,
   firstName: z.string().trim().min(2).max(160),
   gender: z.string().trim().min(1).max(80),
-  dob: z.string().date(),
+  dob: userDateSchema,
   fatherName: nullableTrimmedStringSchema,
   guardianName: nullableTrimmedStringSchema,
 });
@@ -609,9 +676,9 @@ export const createBatchSchema = z
     courseId: z.string().trim().min(1),
     schemeId: z.string().trim().min(1),
     centerId: z.string().trim().min(1).optional(),
-    startDate: z.string().date(),
-    endDate: z.string().date(),
-    assessmentDate: z.string().date(),
+    startDate: userDateSchema,
+    endDate: userDateSchema,
+    assessmentDate: userDateSchema,
     startTime: timeSchema.default("09:00"),
     endTime: timeSchema.default("17:00"),
     trainingHoursPerDay: z.coerce.number().int().positive().max(24).default(8),
@@ -622,6 +689,12 @@ export const createBatchSchema = z
     allowCandidateOverlap: z.boolean().default(false),
     assessmentEligibilityThreshold: z.coerce.number().int().min(0).max(100).default(70),
     candidateIds: batchCandidateIdsSchema.default([]),
+    assessmentMode: z.string().trim().min(1).optional(),
+    batchType: z.string().trim().min(1).optional(),
+    categoryType: z.string().trim().min(1).optional(),
+    createdSource: z.string().trim().min(1).optional(),
+    feePaidBy: z.string().trim().min(1).optional(),
+    tpId: z.string().trim().min(1).optional(),
   })
   .superRefine((value, ctx) => {
     if (value.endDate < value.startDate) {
@@ -639,6 +712,14 @@ export const createBatchSchema = z
         path: ["assessmentDate"],
       });
     }
+
+    if (value.syncEnabled && !value.centerId?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Training center is required when SIDH sync is enabled",
+        path: ["centerId"],
+      });
+    }
   });
 
 export const updateBatchSchema = z
@@ -649,9 +730,9 @@ export const updateBatchSchema = z
     courseId: z.string().trim().min(1).optional(),
     schemeId: z.string().trim().min(1).optional(),
     centerId: z.string().trim().min(1).optional(),
-    startDate: z.string().date().optional(),
-    endDate: z.string().date().optional(),
-    assessmentDate: z.string().date().optional(),
+    startDate: userDateSchema.optional(),
+    endDate: userDateSchema.optional(),
+    assessmentDate: userDateSchema.optional(),
     startTime: timeSchema.optional(),
     endTime: timeSchema.optional(),
     trainingHoursPerDay: z.coerce.number().int().positive().max(24).optional(),
@@ -661,6 +742,12 @@ export const updateBatchSchema = z
     allowAssessmentBeforeBatchEnd: z.boolean().optional(),
     allowCandidateOverlap: z.boolean().optional(),
     assessmentEligibilityThreshold: z.coerce.number().int().min(0).max(100).optional(),
+    assessmentMode: z.string().trim().min(1).optional(),
+    batchType: z.string().trim().min(1).optional(),
+    categoryType: z.string().trim().min(1).optional(),
+    createdSource: z.string().trim().min(1).optional(),
+    feePaidBy: z.string().trim().min(1).optional(),
+    tpId: z.string().trim().min(1).optional(),
   })
   .refine((value) => Object.values(value).some((entry) => entry !== undefined), {
     message: "At least one field is required",
@@ -725,7 +812,7 @@ export const trainingAssessmentSubmissionSchema = z.object({
           assessmentStatus: requiredStringSchema,
           assessmentPercentage: z.coerce.number().int().min(0).max(100),
           grade: requiredStringSchema.optional(),
-          assessmentDataUploadedOn: requiredStringSchema,
+          assessmentDataUploadedOn: userDateSchema,
           assessmentAgency: requiredStringSchema.default("Self"),
           assessorID: requiredStringSchema,
           assessorName: requiredStringSchema,
@@ -734,7 +821,7 @@ export const trainingAssessmentSubmissionSchema = z.object({
           certificationName: requiredStringSchema,
           isCertified: z.boolean(),
           certifyingAgency: requiredStringSchema,
-          certificationDate: requiredStringSchema,
+          certificationDate: userDateSchema,
         }),
       }),
     )
@@ -762,7 +849,7 @@ export const attendanceImportFormSchema = z.object({
 
 export const attendanceImportRowSchema = z.object({
   candidateId: z.string().trim().min(1),
-  attendanceDate: z.string().date(),
+  attendanceDate: userDateSchema,
   attendanceStatus: attendanceStatusSchema,
   trainingStatus: candidateTrainingStatusSchema.optional(),
 });

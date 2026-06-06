@@ -1,225 +1,553 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useState } from "react";
-import { Building2, ShieldCheck, Users, Workflow } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  IconAlertCircle,
+  IconBuildingCommunity,
+  IconCalendarEvent,
+  IconCircleCheck,
+  IconClipboardList,
+  IconClock,
+  IconFileUpload,
+  IconRefresh,
+  IconSchool,
+  IconUserPlus,
+  IconUsers,
+} from "@tabler/icons-react";
 
 import { apiFetch, ClientApiError } from "@/lib/client/api";
+import { cn } from "@/lib/utils";
 
 type DashboardOverviewProps = {
   portal: "admin" | "training_partner";
 };
 
-type AuthMeResponse = {
-  permissions: string[];
-  user: {
-    centerIds: string[];
-    email: string;
-    name: string;
-    roles: string[];
+type DashboardSummary = {
+  userName: string;
+  totals: {
+    learners: number;
+    activeBatches: number;
+    trainingCenters: number;
+    enrolledInBatches: number;
   };
-};
-
-type PagedUsers = {
-  items: Array<{ id: string }>;
-  page: number;
-  pageSize: number;
-  total: number;
-};
-
-type PagedCenters = {
-  items: Array<{ id: string }>;
-  page: number;
-  pageSize: number;
-  total: number;
+  highlights: {
+    currentlyTraining: number;
+    trainingCompleted: number;
+    pendingGovernmentSync: number;
+    upcomingAssessments: number;
+  };
+  batchStatus: Record<string, number>;
+  learnerProgress: Record<string, number>;
+  enrollmentStatus: Record<string, number>;
+  topCenters: Array<{ centerId: string; centerName: string; learnerCount: number }>;
+  recentActivity: Array<{
+    id: string;
+    action: string;
+    entityType: string;
+    createdAt: string;
+  }>;
 };
 
 const portalContent = {
   admin: {
-    heading: "Admin Command Center",
-    description: "Manage internal users, role assignments, and training centers from the platform side.",
-    links: [
-      { href: "/admin/users", label: "Manage Users" },
-      { href: "/admin/training-centers", label: "Manage Training Centers" },
-      { href: "/api-docs", label: "Open API Docs" },
-    ],
+    subtitle: "Your overview of learners, batches, and training centers across the platform.",
+    prefix: "/admin",
   },
   training_partner: {
-    heading: "Training Partner Operations",
-    description: "Work within your assigned scope to manage operational users and training centers.",
-    links: [
-      { href: "/training-partner/users", label: "Scoped Users" },
-      { href: "/training-partner/training-centers", label: "Scoped Training Centers" },
-      { href: "/api-docs", label: "Open API Docs" },
-    ],
+    subtitle: "See how your assigned centers are doing — learners, batches, and upcoming assessments.",
+    prefix: "/training-partner",
   },
 } as const;
 
+const BATCH_STATUS_LABELS: Record<string, string> = {
+  draft: "Being prepared",
+  ready: "Ready to start",
+  active: "Currently running",
+  completed: "Finished",
+  cancelled: "Cancelled",
+};
+
+const BATCH_STATUS_COLORS: Record<string, string> = {
+  draft: "bg-neutral-400",
+  ready: "bg-blue-400",
+  active: "bg-emerald-500",
+  completed: "bg-sky-600",
+  cancelled: "bg-red-400",
+};
+
+const LEARNER_PROGRESS_LABELS: Record<string, string> = {
+  ongoing: "Currently training",
+  completed: "Training completed",
+  dropout: "Dropped out",
+  notStarted: "Not started yet",
+};
+
+const LEARNER_PROGRESS_COLORS: Record<string, string> = {
+  ongoing: "bg-emerald-500",
+  completed: "bg-sky-600",
+  dropout: "bg-amber-400",
+  notStarted: "bg-neutral-300",
+};
+
+const ENROLLMENT_LABELS: Record<string, string> = {
+  synced: "Enrolled on portal",
+  queued: "Waiting to enroll",
+  processing: "Enrollment in progress",
+  failed: "Enrollment failed",
+  manual_review: "Needs review",
+  not_enrolled: "Not enrolled yet",
+};
+
+const ENROLLMENT_COLORS: Record<string, string> = {
+  synced: "bg-emerald-500",
+  queued: "bg-blue-400",
+  processing: "bg-sky-400",
+  failed: "bg-red-400",
+  manual_review: "bg-amber-400",
+  not_enrolled: "bg-neutral-300",
+};
+
+const ACTIVITY_LABELS: Record<string, string> = {
+  "auth.login.success": "Someone signed in",
+  "auth.logout": "Someone signed out",
+  "batch.created": "A new training batch was created",
+  "batch.updated": "Training batch details were updated",
+  "batch.candidates.added": "Learners were added to a batch",
+  "batch.candidate.removed": "A learner was removed from a batch",
+  "batch.sync.queued": "Batch sync to government portal was started",
+  "batch.sync.succeeded": "Batch synced successfully to government portal",
+  "batch.enrollment_sync.queued": "Learner enrollment sync was started",
+  "attendance.import.staged": "An attendance file was uploaded",
+  "attendance.import.committed": "Attendance records were saved",
+  "candidate.created": "A new learner was registered",
+  "candidate.updated": "Learner details were updated",
+  "candidate.sync.queued": "Learner sync to government portal was started",
+  "candidate.sync.succeeded": "Learner synced successfully",
+  "candidate.import.committed": "Bulk learner import was completed",
+  "masters.program.created": "A new program was added",
+  "masters.scheme.created": "A new scheme was added",
+  "masters.scheme.verified": "A scheme was verified",
+};
+
+function formatActivityLabel(action: string) {
+  if (ACTIVITY_LABELS[action]) {
+    return ACTIVITY_LABELS[action];
+  }
+
+  return action
+    .replace(/\./g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatEntityType(entityType: string) {
+  const labels: Record<string, string> = {
+    batch: "Training batch",
+    candidate: "Learner",
+    program: "Program",
+    scheme: "Scheme",
+    course: "Course",
+    user: "User account",
+    training_center: "Training center",
+  };
+
+  return labels[entityType] ?? entityType.replace(/_/g, " ");
+}
+
 export default function DashboardOverview({ portal }: DashboardOverviewProps) {
-  const [state, setState] = useState<{
-    centerCount: number;
-    error: string | null;
-    permissionsCount: number;
-    roleCount: number;
-    userCount: number;
-    userName: string;
-  }>({
-    centerCount: 0,
-    error: null,
-    permissionsCount: 0,
-    roleCount: 0,
-    userCount: 0,
-    userName: "",
-  });
-  const [isLoading, setIsLoading] = useState(true);
+  const router = useRouter();
+  const content = portalContent[portal];
+  const base = content.prefix;
 
-  useEffect(() => {
-    let isMounted = true;
+  const [stats, setStats] = useState<DashboardSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-    async function load() {
-      setIsLoading(true);
+  const loadStats = useCallback(async () => {
+    setLoading(true);
 
-      try {
-        const [auth, users, centers] = await Promise.all([
-          apiFetch<AuthMeResponse>("/api/v1/auth/me"),
-          apiFetch<PagedUsers>("/api/v1/admin/users?page=1&pageSize=1"),
-          apiFetch<PagedCenters>("/api/v1/masters/training-centers?page=1&pageSize=1"),
-        ]);
-
-        if (!isMounted) {
-          return;
-        }
-
-        setState({
-          centerCount: centers.total,
-          error: null,
-          permissionsCount: auth.permissions.length,
-          roleCount: auth.user.roles.length,
-          userCount: users.total,
-          userName: auth.user.name,
-        });
-      } catch (error) {
-        if (!isMounted) {
-          return;
-        }
-
-        setState((current) => ({
-          ...current,
-          error: error instanceof ClientApiError ? error.message : "Unable to load dashboard data",
-        }));
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      }
+    try {
+      const data = await apiFetch<DashboardSummary>("/api/v1/dashboard/summary");
+      setStats(data);
+      setError(null);
+    } catch (fetchError) {
+      setError(fetchError instanceof ClientApiError ? fetchError.message : "Unable to load dashboard");
+    } finally {
+      setLoading(false);
     }
-
-    void load();
-
-    return () => {
-      isMounted = false;
-    };
   }, []);
 
-  const content = portalContent[portal];
+  useEffect(() => {
+    void loadStats();
+  }, [loadStats]);
+
+  const batchChartItems = Object.entries(BATCH_STATUS_LABELS).map(([key, label]) => ({
+    label,
+    value: stats?.batchStatus[key] ?? 0,
+    colorClass: BATCH_STATUS_COLORS[key] ?? "bg-neutral-400",
+  }));
+
+  const progressChartItems = Object.entries(LEARNER_PROGRESS_LABELS).map(([key, label]) => ({
+    label,
+    value: stats?.learnerProgress[key] ?? 0,
+    colorClass: LEARNER_PROGRESS_COLORS[key] ?? "bg-neutral-400",
+  }));
+
+  const enrollmentChartItems = Object.entries(ENROLLMENT_LABELS)
+    .map(([key, label]) => ({
+      label,
+      value: stats?.enrollmentStatus[key] ?? 0,
+      colorClass: ENROLLMENT_COLORS[key] ?? "bg-neutral-400",
+    }))
+    .filter((item) => item.value > 0 || loading);
+
+  const topCenterItems = (stats?.topCenters ?? []).map((center) => ({
+    label: center.centerName,
+    value: center.learnerCount,
+    colorClass: "bg-sky-500",
+  }));
 
   return (
     <div className="flex flex-1 flex-col gap-6 bg-slate-100 px-4 py-4 md:px-8 md:py-8">
-      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-sky-600">Overview</p>
-        <div className="mt-3 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h1 className="text-3xl font-semibold tracking-tight text-slate-900">{content.heading}</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{content.description}</p>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-            Signed in as <span className="font-semibold text-slate-900">{state.userName || "Loading user"}</span>
-          </div>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-neutral-900">
+            Welcome back{stats?.userName ? `, ${stats.userName.split(" ")[0]}` : ""}
+          </h1>
+          <p className="mt-1 text-sm text-neutral-500">{content.subtitle}</p>
         </div>
-      </section>
+        <button
+          type="button"
+          onClick={() => void loadStats()}
+          disabled={loading}
+          className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-50"
+        >
+          <IconRefresh className={cn("h-4 w-4", loading && "animate-spin")} />
+          Refresh
+        </button>
+      </div>
 
-      {state.error ? (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          {state.error}
+      {error ? (
+        <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <IconAlertCircle className="h-4 w-4 shrink-0" />
+          {error}
         </div>
       ) : null}
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard
-          label="Visible Users"
-          value={isLoading ? "..." : String(state.userCount)}
-          description="Users you can manage through the current scope"
-          icon={<Users className="h-5 w-5 text-sky-600" />}
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+        <StatCard
+          label="Total learners"
+          value={loading ? null : stats?.totals.learners ?? 0}
+          icon={<IconUsers className="h-5 w-5" />}
+          onClick={() => router.push(`${base}/candidates`)}
         />
-        <MetricCard
-          label="Visible Centers"
-          value={isLoading ? "..." : String(state.centerCount)}
-          description="Training centers returned by the scoped master API"
-          icon={<Building2 className="h-5 w-5 text-emerald-600" />}
+        <StatCard
+          label="Active batches"
+          value={loading ? null : stats?.totals.activeBatches ?? 0}
+          icon={<IconSchool className="h-5 w-5" />}
+          onClick={() => router.push(`${base}/batches`)}
         />
-        <MetricCard
-          label="Assigned Roles"
-          value={isLoading ? "..." : String(state.roleCount)}
-          description="Number of roles on the active user session"
-          icon={<ShieldCheck className="h-5 w-5 text-violet-600" />}
+        <StatCard
+          label="Training centers"
+          value={loading ? null : stats?.totals.trainingCenters ?? 0}
+          icon={<IconBuildingCommunity className="h-5 w-5" />}
+          onClick={() => router.push(`${base}/training-centers`)}
         />
-        <MetricCard
-          label="Permissions"
-          value={isLoading ? "..." : String(state.permissionsCount)}
-          description="Permissions returned by the auth/me API"
-          icon={<Workflow className="h-5 w-5 text-amber-600" />}
+        <StatCard
+          label="Enrolled in batches"
+          value={loading ? null : stats?.totals.enrolledInBatches ?? 0}
+          icon={<IconClipboardList className="h-5 w-5" />}
+          onClick={() => router.push(`${base}/batches`)}
         />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+        <StatusCard
+          label="Currently training"
+          value={loading ? null : stats?.highlights.currentlyTraining ?? 0}
+          icon={<IconClock className="h-4 w-4 text-emerald-600" />}
+          color="green"
+        />
+        <StatusCard
+          label="Training completed"
+          value={loading ? null : stats?.highlights.trainingCompleted ?? 0}
+          icon={<IconCircleCheck className="h-4 w-4 text-sky-600" />}
+          color="green"
+        />
+        <StatusCard
+          label="Pending government sync"
+          value={loading ? null : stats?.highlights.pendingGovernmentSync ?? 0}
+          icon={<IconAlertCircle className="h-4 w-4 text-amber-600" />}
+          color="amber"
+          highlight={!!stats?.highlights.pendingGovernmentSync}
+        />
+        <StatusCard
+          label="Assessments in next 30 days"
+          value={loading ? null : stats?.highlights.upcomingAssessments ?? 0}
+          icon={<IconCalendarEvent className="h-4 w-4 text-blue-600" />}
+          color="blue"
+        />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ChartPanel title="Where are your batches?">
+          <BarChart items={batchChartItems} loading={loading} emptyMessage="No batches in your scope yet." />
+        </ChartPanel>
+        <ChartPanel title="How are learners progressing?">
+          <BarChart items={progressChartItems} loading={loading} emptyMessage="No learner progress data yet." />
+        </ChartPanel>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ChartPanel title="Batch enrollment on government portal">
+          <BarChart
+            items={enrollmentChartItems.length > 0 ? enrollmentChartItems : [{ label: "No enrollments yet", value: 0, colorClass: "bg-neutral-300" }]}
+            loading={loading}
+            emptyMessage="No enrollment activity yet."
+          />
+        </ChartPanel>
+        <ChartPanel title="Top centers by learners">
+          {loading ? (
+            <BarSkeleton rows={4} />
+          ) : topCenterItems.length > 0 ? (
+            <BarChart items={topCenterItems} loading={false} emptyMessage="" />
+          ) : (
+            <EmptyState message="Learner counts will appear once centers have registrations." />
+          )}
+        </ChartPanel>
+      </div>
+
+      <section>
+        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-neutral-500">Quick actions</h2>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+          <QuickAction
+            label="Register learner"
+            icon={<IconUserPlus className="h-5 w-5" />}
+            onClick={() => router.push(`${base}/candidates`)}
+          />
+          <QuickAction
+            label="Manage batches"
+            icon={<IconSchool className="h-5 w-5" />}
+            onClick={() => router.push(`${base}/batches`)}
+          />
+          <QuickAction
+            label="Upload attendance"
+            icon={<IconFileUpload className="h-5 w-5" />}
+            onClick={() => router.push(`${base}/batches`)}
+          />
+          <QuickAction
+            label="Training centers"
+            icon={<IconBuildingCommunity className="h-5 w-5" />}
+            onClick={() => router.push(`${base}/training-centers`)}
+          />
+          <QuickAction
+            label="Course catalog"
+            icon={<IconClipboardList className="h-5 w-5" />}
+            onClick={() => router.push(`${base}/master-data`)}
+          />
+        </div>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-semibold text-slate-900">What is available now</h2>
-          <div className="mt-4 grid gap-4 md:grid-cols-3">
-            {content.links.map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm font-medium text-slate-700 transition-colors hover:border-sky-300 hover:bg-sky-50 hover:text-sky-700"
+      <section>
+        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-neutral-500">Recent activity</h2>
+        <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+          {loading ? (
+            <div className="p-4 text-sm text-neutral-500">Loading recent updates...</div>
+          ) : (stats?.recentActivity.length ?? 0) === 0 ? (
+            <div className="p-4 text-sm text-neutral-500">
+              Activity from registrations, batches, and attendance will show up here.
+            </div>
+          ) : (
+            stats?.recentActivity.map((activity) => (
+              <div
+                key={activity.id}
+                className="flex flex-col gap-1 border-b border-neutral-100 px-4 py-3 text-sm last:border-0 md:flex-row md:items-center md:justify-between"
               >
-                {link.label}
-              </Link>
-            ))}
-          </div>
-        </div>
-
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-semibold text-slate-900">Platform Scope</h2>
-          <ul className="mt-4 space-y-3 text-sm leading-6 text-slate-600">
-            <li>Authentication and forgot-password are live.</li>
-            <li>User management supports profile updates, role assignment, and center access controls.</li>
-            <li>Training center management supports creation, review, and scoped operations.</li>
-            <li>Health and OpenAPI remain docs/operator surfaces rather than dashboard widgets.</li>
-          </ul>
+                <div>
+                  <p className="font-medium text-neutral-900">{formatActivityLabel(activity.action)}</p>
+                  <p className="text-xs text-neutral-500">{formatEntityType(activity.entityType)}</p>
+                </div>
+                <span className="text-xs text-neutral-500">
+                  {new Date(activity.createdAt).toLocaleString(undefined, {
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                  })}
+                </span>
+              </div>
+            ))
+          )}
         </div>
       </section>
     </div>
   );
 }
 
-function MetricCard({
-  description,
-  icon,
+function StatCard({
   label,
   value,
+  icon,
+  onClick,
+  highlight = false,
 }: {
-  description: string;
-  icon: React.ReactNode;
   label: string;
-  value: string;
+  value: number | null;
+  icon: React.ReactNode;
+  onClick: () => void;
+  highlight?: boolean;
 }) {
   return (
-    <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-slate-600">{label}</span>
-        <span className="rounded-xl bg-slate-100 p-2">{icon}</span>
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex flex-col gap-3 rounded-3xl border bg-white p-4 text-left shadow-sm transition-shadow hover:shadow-md sm:p-5",
+        highlight ? "border-amber-300" : "border-slate-200"
+      )}
+    >
+      <span className="text-neutral-400">{icon}</span>
+      <div>
+        <p className="text-2xl font-bold text-neutral-900">
+          {value === null ? (
+            <span className="inline-block h-7 w-10 animate-pulse rounded bg-neutral-200" />
+          ) : (
+            value.toLocaleString()
+          )}
+        </p>
+        <p className="mt-0.5 text-xs text-neutral-500">{label}</p>
       </div>
-      <div className="mt-5 text-3xl font-semibold tracking-tight text-slate-900">{value}</div>
-      <p className="mt-2 text-sm leading-6 text-slate-500">{description}</p>
+    </button>
+  );
+}
+
+function StatusCard({
+  label,
+  value,
+  icon,
+  color,
+  highlight = false,
+}: {
+  label: string;
+  value: number | null;
+  icon: React.ReactNode;
+  color: "amber" | "green" | "red" | "blue" | "neutral";
+  highlight?: boolean;
+}) {
+  const styles: Record<string, string> = {
+    amber: "bg-amber-50 border-amber-200",
+    green: "bg-green-50 border-green-200",
+    red: "bg-red-50 border-red-200",
+    blue: "bg-blue-50 border-blue-200",
+    neutral: "bg-neutral-50 border-neutral-200",
+  };
+
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-3 rounded-lg border p-3",
+        styles[color],
+        highlight && "ring-1 ring-amber-300"
+      )}
+    >
+      <span className="shrink-0">{icon}</span>
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-neutral-800">
+          {value === null ? (
+            <span className="inline-block h-4 w-6 animate-pulse rounded bg-neutral-200" />
+          ) : (
+            value.toLocaleString()
+          )}
+        </p>
+        <p className="text-xs leading-tight text-neutral-500">{label}</p>
+      </div>
     </div>
   );
+}
+
+function QuickAction({
+  label,
+  icon,
+  onClick,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex flex-col items-center gap-2 rounded-2xl border border-slate-200 bg-white p-4 text-center text-sm font-medium text-slate-700 transition-colors hover:border-sky-300 hover:bg-sky-50 hover:text-sky-700"
+    >
+      <span className="text-neutral-400">{icon}</span>
+      {label}
+    </button>
+  );
+}
+
+function ChartPanel({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+      <h3 className="mb-4 text-sm font-semibold text-neutral-800">{title}</h3>
+      {children}
+    </div>
+  );
+}
+
+function BarChart({
+  items,
+  loading,
+  emptyMessage,
+}: {
+  items: Array<{ label: string; value: number; colorClass: string; suffix?: string }>;
+  loading: boolean;
+  emptyMessage: string;
+}) {
+  if (loading) {
+    return <BarSkeleton rows={4} />;
+  }
+
+  const nonZeroItems = items.filter((item) => item.value > 0);
+  if (nonZeroItems.length === 0) {
+    return <EmptyState message={emptyMessage} />;
+  }
+
+  const max = Math.max(...items.map((item) => item.value), 1);
+
+  return (
+    <div className="space-y-3">
+      {items.map((item, index) => (
+        <div key={`${item.label}-${index}`} className="flex items-center gap-3">
+          <span className="w-28 shrink-0 truncate text-xs text-neutral-600 sm:w-36">{item.label}</span>
+          <div className="h-4 flex-1 overflow-hidden rounded-full bg-neutral-100">
+            <div
+              className={cn("h-full rounded-full transition-all duration-500", item.colorClass)}
+              style={{ width: `${Math.max(Math.round((item.value / max) * 100), item.value > 0 ? 8 : 0)}%` }}
+            />
+          </div>
+          <span className="w-8 shrink-0 text-right text-xs font-medium text-neutral-700">
+            {item.value.toLocaleString()}
+            {item.suffix ?? ""}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BarSkeleton({ rows }: { rows: number }) {
+  return (
+    <div className="space-y-3">
+      {Array.from({ length: rows }).map((_, index) => (
+        <div key={index} className="flex items-center gap-3">
+          <div className="h-3 w-24 animate-pulse rounded bg-neutral-200" />
+          <div className="h-4 flex-1 animate-pulse rounded-full bg-neutral-100" />
+          <div className="h-3 w-6 animate-pulse rounded bg-neutral-200" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EmptyState({ message }: { message: string }) {
+  return <p className="py-6 text-center text-sm text-neutral-500">{message}</p>;
 }

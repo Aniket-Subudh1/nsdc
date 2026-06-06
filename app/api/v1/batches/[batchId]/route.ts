@@ -1,6 +1,6 @@
 import { handleRoute } from "@/lib/server/http";
 import { requireAuth } from "@/lib/server/services/session";
-import { getBatch, updateBatch } from "@/lib/server/services/batches";
+import { deleteBatch, getBatch, updateBatch } from "@/lib/server/services/batches";
 import { updateBatchSchema } from "@/lib/server/validation";
 
 export const runtime = "nodejs";
@@ -37,6 +37,21 @@ export async function PATCH(request: Request, context: RouteContext) {
     },
     {
       message: "Batch updated successfully",
+    },
+  );
+}
+
+export async function DELETE(request: Request, context: RouteContext) {
+  return handleRoute(
+    request,
+    async () => {
+      const session = await requireAuth(request);
+      const { batchId } = await context.params;
+
+      return deleteBatch(session, batchId, request.headers.get("x-request-id") ?? undefined);
+    },
+    {
+      message: "Batch deleted successfully",
     },
   );
 }

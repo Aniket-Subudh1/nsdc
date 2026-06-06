@@ -29,6 +29,45 @@ const programSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    skillingCategoryId: {
+      type: Number,
+      default: 1,
+    },
+    skillingCategoryName: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    skillingCategoryScheme: {
+      type: String,
+      default: "Fee Based",
+      trim: true,
+    },
+    assessmentMode: {
+      type: String,
+      default: "Self",
+      trim: true,
+    },
+    batchType: {
+      type: String,
+      default: "Regular",
+      trim: true,
+    },
+    batchCategoryType: {
+      type: String,
+      default: "Fee Based",
+      trim: true,
+    },
+    feePaidBy: {
+      type: String,
+      default: "Self-Paid",
+      trim: true,
+    },
+    createdSource: {
+      type: String,
+      default: "Created for NSDC Academy Partners",
+      trim: true,
+    },
     verifiedForSidh: {
       type: Boolean,
       default: false,

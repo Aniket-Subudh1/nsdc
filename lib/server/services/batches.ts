@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 
+import { getSidhBatchContext } from "@/lib/server/env";
 import { ApiError } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
 import { connectToDatabase } from "@/lib/server/mongodb";
 import { readWorkbookSheetsFromArrayBuffer } from "@/lib/spreadsheet/node";
 import { excelSerialToDate } from "@/lib/spreadsheet/shared";
+import { parseUserDateInput } from "@/lib/server/sidh-payload";
 import { AttendanceRecordModel } from "@/lib/server/models/attendance-record";
 import { AttendanceUploadModel } from "@/lib/server/models/attendance-upload";
 import { BatchCandidateModel } from "@/lib/server/models/batch-candidate";
@@ -14,6 +16,7 @@ import { BatchSyncStateModel } from "@/lib/server/models/batch-sync-state";
 import { CandidateModel } from "@/lib/server/models/candidate";
 import { CandidateTrainingStatusHistoryModel } from "@/lib/server/models/candidate-training-status-history";
 import { CourseModel } from "@/lib/server/models/course";
+import { ProgramModel } from "@/lib/server/models/program";
 import { SchemeModel } from "@/lib/server/models/scheme";
 import { TrainingCenterModel } from "@/lib/server/models/training-center";
 import {
@@ -23,7 +26,8 @@ import {
   canManageBatches,
   getPermissionsForRoles,
 } from "@/lib/server/rbac";
-import { SIDH_BATCH_DEFAULTS } from "@/lib/server/sidh-defaults";
+import { isTrainingPartnerId, resolveSidhBatchId } from "@/lib/server/sidh-payload";
+import { buildSidhBatchPayload, resolveSidhBatchFieldSelection } from "@/lib/sidh-batch-payload";
 import { writeAuditLog } from "@/lib/server/services/audit";
 import { createSidhConnector, SidhConnectorError } from "@/lib/server/services/sidh-connector";
 import { type AuthSession } from "@/lib/server/services/session";
@@ -61,7 +65,13 @@ type ServiceBatch = {
   endDate: Date;
   endTime?: string;
   fee?: number;
+  sidhAssessmentMode?: string | null;
   sidhBatchId?: string | null;
+  sidhBatchType?: string | null;
+  sidhCategoryType?: string | null;
+  sidhCreatedSource?: string | null;
+  sidhFeePaidBy?: string | null;
+  sidhTpId?: string | null;
   schemeId: string;
   startDate: Date;
   startTime?: string;
@@ -98,20 +108,40 @@ type ServiceCourse = {
   sidhCourseId: string;
   status: string;
   trainingHours: number;
+  trainingPerDayHours?: number | null;
   validityEndDate: Date;
   validityStartDate: Date;
 };
 
 type ServiceScheme = {
+  assessmentMode?: string | null;
+  batchCategoryType?: string | null;
+  batchType?: string | null;
   beneficiaryType?: string | null;
+  createdSource?: string | null;
   fundingType?: string | null;
   name: string;
   schemeId: string;
   sidhSchemeId?: string | null;
+  sidhSchemeReferenceId?: string | null;
+  sidhSchemeType?: string | null;
   status: string;
   syncEnabled: boolean;
   validFrom?: Date | null;
   validTo?: Date | null;
+};
+
+type ServiceProgram = {
+  assessmentMode?: string | null;
+  batchCategoryType?: string | null;
+  batchType?: string | null;
+  createdSource?: string | null;
+  feePaidBy?: string | null;
+  name: string;
+  programId: string;
+  skillingCategoryId?: number | null;
+  skillingCategoryName?: string | null;
+  skillingCategoryScheme?: string | null;
 };
 
 type ServiceCenter = {
@@ -293,25 +323,6 @@ function toIsoDate(value?: Date | string | null) {
   return Number.isNaN(dateValue.getTime()) ? null : dateValue.toISOString();
 }
 
-function toRfc3339Seconds(value?: Date | string | null) {
-  return toIsoDate(value)?.replace(/\.\d{3}Z$/, "Z") ?? null;
-}
-
-function toRfc3339DateTime(value: Date | string | null | undefined, time: string | null | undefined, fallbackTime: string) {
-  const dateValue = value instanceof Date ? value : value ? new Date(value) : null;
-
-  if (!dateValue || Number.isNaN(dateValue.getTime())) {
-    return "";
-  }
-
-  const [hours = 0, minutes = 0] = (time || fallbackTime).split(":").map((part) => Number.parseInt(part, 10));
-  const dateTime = new Date(
-    Date.UTC(dateValue.getUTCFullYear(), dateValue.getUTCMonth(), dateValue.getUTCDate(), hours, minutes, 0),
-  );
-
-  return toRfc3339Seconds(dateTime) ?? "";
-}
-
 function parseDate(value: string) {
   const parsed = new Date(`${value}T00:00:00.000Z`);
 
@@ -432,6 +443,12 @@ function serializeBatch(batch: ServiceBatch, syncState?: ServiceBatchSyncState |
     endTime: batch.endTime ?? "17:00",
     trainingHoursPerDay: batch.trainingHoursPerDay ?? 8,
     fee: batch.fee ?? 0,
+    sidhAssessmentMode: batch.sidhAssessmentMode ?? null,
+    sidhBatchType: batch.sidhBatchType ?? null,
+    sidhCategoryType: batch.sidhCategoryType ?? null,
+    sidhCreatedSource: batch.sidhCreatedSource ?? null,
+    sidhFeePaidBy: batch.sidhFeePaidBy ?? null,
+    sidhTpId: batch.sidhTpId ?? null,
     status: batch.status,
     syncEnabled: batch.syncEnabled,
     allowAssessmentBeforeBatchEnd: batch.allowAssessmentBeforeBatchEnd ?? false,
@@ -543,6 +560,7 @@ async function ensureCourse(courseId: string) {
     sidhCourseId: 1,
     status: 1,
     trainingHours: 1,
+    trainingPerDayHours: 1,
     validityEndDate: 1,
     validityStartDate: 1,
   })) as ServiceCourse | null;
@@ -556,11 +574,17 @@ async function ensureCourse(courseId: string) {
 
 async function ensureScheme(schemeId: string) {
   const scheme = (await SchemeModel.findOne({ schemeId }).select({
+    assessmentMode: 1,
+    batchCategoryType: 1,
+    batchType: 1,
     beneficiaryType: 1,
+    createdSource: 1,
     fundingType: 1,
     name: 1,
     schemeId: 1,
     sidhSchemeId: 1,
+    sidhSchemeReferenceId: 1,
+    sidhSchemeType: 1,
     status: 1,
     syncEnabled: 1,
     validFrom: 1,
@@ -591,6 +615,9 @@ async function validateBatchMasterData(input: {
     ensureCourse(input.courseId),
     ensureScheme(input.schemeId),
   ]);
+  const program = course.programIds?.[0]
+    ? ((await ProgramModel.findOne({ programId: course.programIds[0] })) as ServiceProgram | null)
+    : null;
 
   if (course.status !== "active" || course.approvalStatus !== "approved") {
     throw new ApiError(400, "COURSE_NOT_SYNC_ELIGIBLE", "Selected course mapping is not approved and active");
@@ -621,8 +648,16 @@ async function validateBatchMasterData(input: {
   }
 
   if (input.syncEnabled) {
-    if (!center.sidhTcId) {
+    if (!center.sidhTcId?.trim()) {
       throw new ApiError(400, "CENTER_SIDH_TC_ID_MISSING", "Selected training center is missing SIDH TC metadata");
+    }
+
+    if (isTrainingPartnerId(center.sidhTcId)) {
+      throw new ApiError(
+        400,
+        "CENTER_SIDH_TC_ID_INVALID",
+        "Training center SIDH TC ID must be the SIDH training center ID, not the training partner ID",
+      );
     }
 
     if (!center.verifiedForSidh) {
@@ -633,12 +668,12 @@ async function validateBatchMasterData(input: {
       throw new ApiError(400, "COURSE_SIDH_MAPPING_MISSING", "Selected course is missing SIDH mapping metadata");
     }
 
-    if (!scheme.syncEnabled || !scheme.sidhSchemeId) {
+    if (!scheme.syncEnabled || !scheme.sidhSchemeId || !scheme.sidhSchemeReferenceId) {
       throw new ApiError(400, "SCHEME_SYNC_METADATA_INCOMPLETE", "Selected scheme is missing required SIDH sync metadata");
     }
   }
 
-  return { center, course, scheme };
+  return { center, course, program, scheme };
 }
 
 function ensureCenterAssignedForSync(centerId: string, syncEnabled: boolean) {
@@ -897,25 +932,10 @@ function parseExcelDate(value: unknown) {
       return "";
     }
 
-    return parsed.toISOString().slice(0, 10);
+    return parseUserDateInput(parsed);
   }
 
-  if (value instanceof Date) {
-    return value.toISOString().slice(0, 10);
-  }
-
-  const normalized = normalizeString(String(value ?? ""));
-  if (!normalized) {
-    return "";
-  }
-
-  const slashMatch = normalized.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (slashMatch) {
-    return `${slashMatch[3]}-${slashMatch[2]}-${slashMatch[1]}`;
-  }
-
-  const parsed = new Date(normalized);
-  return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString().slice(0, 10);
+  return parseUserDateInput(value);
 }
 
 function normalizeAttendanceStatus(value: unknown) {
@@ -980,32 +1000,14 @@ function calculateNextRunAt(retryCount: number, now: Date) {
 async function validateBatchSyncEligibility(batch: ServiceBatch) {
   ensureCenterAssignedForSync(batch.centerId, batch.syncEnabled);
 
-  if (batch.centerId !== UNASSIGNED_CENTER_ID) {
-    return validateBatchMasterData({
-      centerId: batch.centerId,
-      courseId: batch.courseId,
-      endDate: batch.endDate,
-      schemeId: batch.schemeId,
-      startDate: batch.startDate,
-      syncEnabled: batch.syncEnabled,
-    });
-  }
-
-  const [course, scheme] = await Promise.all([ensureCourse(batch.courseId), ensureScheme(batch.schemeId)]);
-
-  if (course.status !== "active" || course.approvalStatus !== "approved") {
-    throw new ApiError(400, "COURSE_NOT_SYNC_ELIGIBLE", "Selected course mapping is not approved and active");
-  }
-
-  if (course.validityStartDate.getTime() > batch.startDate.getTime() || course.validityEndDate.getTime() < batch.endDate.getTime()) {
-    throw new ApiError(400, "COURSE_VALIDITY_INVALID", "Selected course mapping is not valid for the requested batch dates");
-  }
-
-  if ((course.schemeIds ?? []).length > 0 && !(course.schemeIds ?? []).includes(batch.schemeId)) {
-    throw new ApiError(400, "COURSE_SCHEME_MISMATCH", "Selected course is not mapped to the chosen scheme");
-  }
-
-  return { center: null, course, scheme };
+  return validateBatchMasterData({
+    centerId: batch.centerId,
+    courseId: batch.courseId,
+    endDate: batch.endDate,
+    schemeId: batch.schemeId,
+    startDate: batch.startDate,
+    syncEnabled: batch.syncEnabled,
+  });
 }
 
 async function validateEnrollmentEligibility(batch: ServiceBatch, selectedBatchCandidates?: ServiceBatchCandidate[]) {
@@ -1101,6 +1103,41 @@ export async function createBatch(actor: AuthSession, input: CreateBatchInput, r
       )
     : [];
 
+  const course = await ensureCourse(input.courseId);
+  const scheme = await ensureScheme(input.schemeId);
+  const program = course.programIds?.[0]
+    ? ((await ProgramModel.findOne({ programId: course.programIds[0] }).select({
+        assessmentMode: 1,
+        batchCategoryType: 1,
+        batchType: 1,
+        createdSource: 1,
+        feePaidBy: 1,
+        name: 1,
+        programId: 1,
+        skillingCategoryId: 1,
+        skillingCategoryName: 1,
+        skillingCategoryScheme: 1,
+      })) as ServiceProgram | null)
+    : null;
+
+  const sidhFields = resolveSidhBatchFieldSelection({
+    batch: {
+      assessmentMode: input.assessmentMode,
+      batchType: input.batchType,
+      categoryType: input.categoryType,
+      createdSource: input.createdSource,
+      feePaidBy: input.feePaidBy,
+      tpId: input.tpId,
+    },
+    configuredTpId: getSidhBatchContext().tpId,
+    program,
+    scheme,
+  });
+
+  if (input.syncEnabled && !sidhFields.tpId) {
+    throw new ApiError(400, "SIDH_TP_ID_REQUIRED", "SIDH TP ID is required when batch sync is enabled");
+  }
+
   const batch = (await BatchModel.create({
     assessmentDate,
     assessmentEligibilityThreshold: input.assessmentEligibilityThreshold,
@@ -1118,6 +1155,12 @@ export async function createBatch(actor: AuthSession, input: CreateBatchInput, r
     endTime: input.endTime,
     fee: input.fee,
     schemeId: input.schemeId,
+    sidhAssessmentMode: sidhFields.assessmentMode,
+    sidhBatchType: sidhFields.batchType,
+    sidhCategoryType: sidhFields.categoryType,
+    sidhCreatedSource: sidhFields.createdSource,
+    sidhFeePaidBy: sidhFields.feePaidBy,
+    sidhTpId: sidhFields.tpId || null,
     startDate,
     startTime: input.startTime,
     status: input.status,
@@ -1128,24 +1171,7 @@ export async function createBatch(actor: AuthSession, input: CreateBatchInput, r
 
   await insertBatchCandidates(batch.batchId, actor.user.id, validatedCandidates, { ordered: true });
 
-  const syncState = await ensureBatchSyncState(batch.batchId, actor.user.id);
-
-  if (input.syncEnabled) {
-    syncState.batchSync = {
-      ...(syncState.batchSync ?? {}),
-      lastFailureCode: null,
-      lastFailureMessage: null,
-      lastJobId: createPrefixedId("bsjob"),
-      lockId: null,
-      lockedAt: null,
-      nextRunAt: new Date(),
-      retryCount: 0,
-      status: "queued",
-    };
-    syncState.updatedByUserId = actor.user.id;
-    await syncState.save?.();
-    await processQueuedBatchSyncJobs(actor, { limit: 5, requestId }).catch(() => undefined);
-  }
+  await ensureBatchSyncState(batch.batchId, actor.user.id);
 
   await writeAuditLog({
     action: "batch.created",
@@ -1164,11 +1190,32 @@ export async function createBatch(actor: AuthSession, input: CreateBatchInput, r
   return getBatch(actor, batch.batchId);
 }
 
+async function ensureBatchEditable(batch: ServiceBatch) {
+  if (batch.sidhBatchId) {
+    throw new ApiError(409, "BATCH_ALREADY_SYNCED", "This batch is already synced to SIDH and cannot be edited");
+  }
+
+  const syncState = await ensureBatchSyncState(batch.batchId);
+  const syncStatus = syncState.batchSync?.status ?? "not_synced";
+
+  if (["synced", "queued", "processing"].includes(syncStatus)) {
+    throw new ApiError(
+      409,
+      "BATCH_SYNC_IN_PROGRESS",
+      syncStatus === "synced"
+        ? "This batch is already synced to SIDH and cannot be edited"
+        : "This batch is currently syncing to SIDH. Wait for the push to finish before editing",
+    );
+  }
+}
+
 export async function updateBatch(actor: AuthSession, batchId: string, input: UpdateBatchInput, requestId?: string) {
   await connectToDatabase();
   ensureCanWriteBatches(actor);
 
   const batch = await loadBatchWithScope(actor, batchId);
+  await ensureBatchEditable(batch);
+
   const nextStartDate = input.startDate ? parseDate(input.startDate) : batch.startDate;
   const nextEndDate = input.endDate ? parseDate(input.endDate) : batch.endDate;
   const nextAssessmentDate = input.assessmentDate ? parseDate(input.assessmentDate) : batch.assessmentDate ?? null;
@@ -1177,6 +1224,7 @@ export async function updateBatch(actor: AuthSession, batchId: string, input: Up
   const nextSchemeId = input.schemeId ?? batch.schemeId;
   const nextSyncEnabled = input.syncEnabled ?? batch.syncEnabled;
 
+  ensureCenterAssignedForSync(nextCenterId, nextSyncEnabled);
   resolveScopedCenterFilter(actor, nextCenterId);
   await validateBatchMasterData({
     centerId: nextCenterId,
@@ -1247,6 +1295,56 @@ export async function updateBatch(actor: AuthSession, batchId: string, input: Up
   }
   if (input.assessmentEligibilityThreshold !== undefined) {
     batch.assessmentEligibilityThreshold = input.assessmentEligibilityThreshold;
+  }
+
+  if (
+    input.assessmentMode !== undefined ||
+    input.batchType !== undefined ||
+    input.categoryType !== undefined ||
+    input.createdSource !== undefined ||
+    input.feePaidBy !== undefined ||
+    input.tpId !== undefined
+  ) {
+    const course = await ensureCourse(batch.courseId);
+    const scheme = await ensureScheme(batch.schemeId);
+    const program = course.programIds?.[0]
+      ? ((await ProgramModel.findOne({ programId: course.programIds[0] }).select({
+          assessmentMode: 1,
+          batchCategoryType: 1,
+          batchType: 1,
+          createdSource: 1,
+          feePaidBy: 1,
+          name: 1,
+          programId: 1,
+          skillingCategoryId: 1,
+          skillingCategoryName: 1,
+          skillingCategoryScheme: 1,
+        })) as ServiceProgram | null)
+      : null;
+    const sidhFields = resolveSidhBatchFieldSelection({
+      batch: {
+        assessmentMode: input.assessmentMode ?? batch.sidhAssessmentMode ?? undefined,
+        batchType: input.batchType ?? batch.sidhBatchType ?? undefined,
+        categoryType: input.categoryType ?? batch.sidhCategoryType ?? undefined,
+        createdSource: input.createdSource ?? batch.sidhCreatedSource ?? undefined,
+        feePaidBy: input.feePaidBy ?? batch.sidhFeePaidBy ?? undefined,
+        tpId: input.tpId ?? batch.sidhTpId ?? undefined,
+      },
+      configuredTpId: getSidhBatchContext().tpId,
+      program,
+      scheme,
+    });
+
+    if (nextSyncEnabled && !sidhFields.tpId) {
+      throw new ApiError(400, "SIDH_TP_ID_REQUIRED", "SIDH TP ID is required when batch sync is enabled");
+    }
+
+    batch.sidhAssessmentMode = sidhFields.assessmentMode;
+    batch.sidhBatchType = sidhFields.batchType;
+    batch.sidhCategoryType = sidhFields.categoryType;
+    batch.sidhCreatedSource = sidhFields.createdSource;
+    batch.sidhFeePaidBy = sidhFields.feePaidBy;
+    batch.sidhTpId = sidhFields.tpId || null;
   }
 
   batch.updatedByUserId = actor.user.id;
@@ -1375,11 +1473,95 @@ export async function addCandidatesToBatch(actor: AuthSession, batchId: string, 
   return getBatch(actor, batch.batchId);
 }
 
+export async function resolveSidhBatchIdForActor(actor: AuthSession, batchId: string) {
+  await connectToDatabase();
+  ensureCanReadBatches(actor);
+
+  const batch = await loadBatchWithScope(actor, batchId);
+  const syncState = await ensureBatchSyncState(batch.batchId);
+  const sidhBatchId = batch.sidhBatchId ?? syncState.sidhBatchId ?? null;
+
+  if (!sidhBatchId) {
+    throw new ApiError(
+      400,
+      "BATCH_NOT_SYNCED",
+      "Batch must be synced to SIDH before certificates or assessments can be submitted",
+    );
+  }
+
+  return { batch, sidhBatchId, syncState };
+}
+
+async function ensureBatchDeletable(batch: ServiceBatch) {
+  if (batch.sidhBatchId) {
+    throw new ApiError(409, "BATCH_ALREADY_SYNCED", "Synced batches cannot be deleted");
+  }
+
+  const syncState = await ensureBatchSyncState(batch.batchId);
+  const syncStatus = syncState.batchSync?.status ?? "not_synced";
+
+  if (["synced", "queued", "processing"].includes(syncStatus)) {
+    throw new ApiError(
+      409,
+      "BATCH_SYNC_IN_PROGRESS",
+      syncStatus === "synced"
+        ? "Synced batches cannot be deleted"
+        : "This batch is currently syncing to SIDH and cannot be deleted yet",
+    );
+  }
+}
+
+export async function deleteBatch(actor: AuthSession, batchId: string, requestId?: string) {
+  await connectToDatabase();
+  ensureCanWriteBatches(actor);
+
+  const batch = await loadBatchWithScope(actor, batchId);
+  await ensureBatchDeletable(batch);
+
+  await Promise.all([
+    BatchCandidateModel.deleteMany({ batchId: batch.batchId }),
+    AttendanceRecordModel.deleteMany({ batchId: batch.batchId }),
+    CandidateTrainingStatusHistoryModel.deleteMany({ batchId: batch.batchId }),
+    BatchDailySessionModel.deleteMany({ batchId: batch.batchId }),
+    AttendanceUploadModel.deleteMany({ batchId: batch.batchId }),
+    BatchSyncStateModel.deleteOne({ batchId: batch.batchId }),
+    BatchModel.deleteOne({ batchId: batch.batchId }),
+  ]);
+
+  await writeAuditLog({
+    action: "batch.deleted",
+    actorUserId: actor.user.id,
+    entityId: batch.batchId,
+    entityType: "batch",
+    metadata: { batchCode: batch.batchCode },
+    requestId,
+  });
+
+  return { batchId: batch.batchId, deleted: true };
+}
+
 export async function removeCandidateFromBatch(actor: AuthSession, batchId: string, candidateId: string, requestId?: string) {
   await connectToDatabase();
   ensureCanWriteBatches(actor);
 
   const batch = await loadBatchWithScope(actor, batchId);
+  const batchCandidate = (await BatchCandidateModel.findOne({
+    batchId: batch.batchId,
+    candidateId: normalizeString(candidateId),
+  })) as ServiceBatchCandidate | null;
+
+  if (!batchCandidate) {
+    throw new ApiError(404, "BATCH_CANDIDATE_NOT_FOUND", "Candidate is not assigned to the batch");
+  }
+
+  if (batch.sidhBatchId && batchCandidate.enrollmentStatus === "synced") {
+    throw new ApiError(
+      409,
+      "CANDIDATE_ALREADY_ENROLLED",
+      "This learner is already enrolled in SIDH and cannot be removed from the batch",
+    );
+  }
+
   const deleteResult = await BatchCandidateModel.deleteOne({ batchId: batch.batchId, candidateId: normalizeString(candidateId) });
 
   if (!deleteResult.deletedCount) {
@@ -1401,6 +1583,44 @@ export async function removeCandidateFromBatch(actor: AuthSession, batchId: stri
     entityId: batch.batchId,
     entityType: "batch",
     metadata: { candidateId: normalizeString(candidateId) },
+    requestId,
+  });
+
+  return getBatch(actor, batch.batchId);
+}
+
+export async function removeAllCandidatesFromBatch(actor: AuthSession, batchId: string, requestId?: string) {
+  await connectToDatabase();
+  ensureCanWriteBatches(actor);
+
+  const batch = await loadBatchWithScope(actor, batchId);
+  const filter = batch.sidhBatchId
+    ? { batchId: batch.batchId, enrollmentStatus: { $ne: "synced" } }
+    : { batchId: batch.batchId };
+  const removableCandidates = (await BatchCandidateModel.find(filter).select({ candidateId: 1 })) as Array<{ candidateId: string }>;
+
+  if (removableCandidates.length === 0) {
+    throw new ApiError(404, "NO_REMOVABLE_CANDIDATES", "No removable learners were found in this batch");
+  }
+
+  const candidateIds = removableCandidates.map((candidate) => candidate.candidateId);
+
+  await Promise.all([
+    BatchCandidateModel.deleteMany(filter),
+    AttendanceRecordModel.deleteMany({ batchId: batch.batchId, candidateId: { $in: candidateIds } }),
+    CandidateTrainingStatusHistoryModel.deleteMany({ batchId: batch.batchId, candidateId: { $in: candidateIds } }),
+  ]);
+
+  batch.candidateCount = await refreshBatchCandidateCount(batch.batchId);
+  batch.updatedByUserId = actor.user.id;
+  await (batch as never as { save: () => Promise<void> }).save();
+
+  await writeAuditLog({
+    action: "batch.candidates.removed_all",
+    actorUserId: actor.user.id,
+    entityId: batch.batchId,
+    entityType: "batch",
+    metadata: { candidateIds, removableOnly: Boolean(batch.sidhBatchId) },
     requestId,
   });
 
@@ -1498,6 +1718,8 @@ export async function queueEnrollmentSync(actor: AuthSession, batchId: string, i
     metadata: { candidateIds: batchCandidates.map((item) => item.candidateId), forceResync: input.forceResync },
     requestId,
   });
+
+  await processQueuedEnrollmentSyncJobs(actor, { limit: 5, requestId }).catch(() => undefined);
 
   return getBatchStatus(actor, batch.batchId);
 }
@@ -1822,44 +2044,74 @@ function classifyMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unknown sync failure";
 }
 
-function buildBatchPayload(batch: ServiceBatch, center: ServiceCenter | null, course: ServiceCourse, scheme: ServiceScheme, candidateCount: number) {
-  const assessmentDate = toRfc3339Seconds(batch.assessmentDate) ?? "";
-
-  return {
-    assessmentEndDate: assessmentDate,
-    assessmentMode: SIDH_BATCH_DEFAULTS.assessmentMode,
-    assessmentStartDate: assessmentDate,
-    batchEndDate: toRfc3339Seconds(batch.endDate) ?? "",
-    batchEndTime: toRfc3339DateTime(batch.endDate, batch.endTime, "17:00"),
-    batchFee: {
-      totalFees: batch.fee ?? 0,
-    },
+function buildBatchPayload(
+  batch: ServiceBatch,
+  center: ServiceCenter | null,
+  course: ServiceCourse,
+  scheme: ServiceScheme,
+  program: ServiceProgram | null,
+  candidateCount: number,
+) {
+  return buildSidhBatchPayload({
+    assessmentDate: batch.assessmentDate ?? batch.endDate,
     batchName: batch.batchName ?? batch.batchCode,
-    batchStartDate: toRfc3339Seconds(batch.startDate) ?? "",
-    batchStartTime: toRfc3339DateTime(batch.startDate, batch.startTime, "09:00"),
-    batchType: SIDH_BATCH_DEFAULTS.batchType,
-    courseId: course.sidhCourseId,
-    createdSource: SIDH_BATCH_DEFAULTS.createdSource,
-    feePaidBy: SIDH_BATCH_DEFAULTS.feePaidBy,
-    schemeId: scheme.sidhSchemeId ?? SIDH_BATCH_DEFAULTS.schemeId,
-    schemeReferenceId: SIDH_BATCH_DEFAULTS.schemeReferenceId,
-    schemeType: SIDH_BATCH_DEFAULTS.schemeType,
-    size: Math.min(batch.batchSize ?? candidateCount, 80),
-    skillingcategory: {
-      id: SIDH_BATCH_DEFAULTS.skillingCategoryId,
-      name: SIDH_BATCH_DEFAULTS.skillingCategoryName,
-      scheme: SIDH_BATCH_DEFAULTS.scheme,
+    batchSize: batch.batchSize ?? candidateCount,
+    candidateCount,
+    configuredTpId: getSidhBatchContext().tpId,
+    course: {
+      sidhCourseId: course.sidhCourseId,
+      trainingPerDayHours: batch.trainingHoursPerDay ?? course.trainingPerDayHours,
     },
-    tcId: center?.sidhTcId ?? "",
-    trainingHoursPerDay: batch.trainingHoursPerDay ?? 8,
-    type: SIDH_BATCH_DEFAULTS.type,
-  };
+    endDate: batch.endDate,
+    endTime: batch.endTime,
+    fee: batch.fee,
+    options: {
+      assessmentMode: batch.sidhAssessmentMode ?? undefined,
+      batchType: batch.sidhBatchType ?? undefined,
+      categoryType: batch.sidhCategoryType ?? undefined,
+      createdSource: batch.sidhCreatedSource ?? undefined,
+      feePaidBy: batch.sidhFeePaidBy ?? undefined,
+      tpId: batch.sidhTpId ?? undefined,
+    },
+    program: program
+      ? {
+          name: program.name,
+          skillingCategoryId: program.skillingCategoryId,
+          skillingCategoryName: program.skillingCategoryName,
+          skillingCategoryScheme: program.skillingCategoryScheme,
+          assessmentMode: program.assessmentMode,
+          batchCategoryType: program.batchCategoryType,
+          batchType: program.batchType,
+          createdSource: program.createdSource,
+          feePaidBy: program.feePaidBy,
+        }
+      : null,
+    scheme: {
+      assessmentMode: scheme.assessmentMode,
+      batchCategoryType: scheme.batchCategoryType,
+      batchType: scheme.batchType,
+      createdSource: scheme.createdSource,
+      fundingType: scheme.fundingType,
+      sidhSchemeId: scheme.sidhSchemeId,
+      sidhSchemeReferenceId: scheme.sidhSchemeReferenceId,
+      sidhSchemeType: scheme.sidhSchemeType,
+    },
+    startDate: batch.startDate,
+    startTime: batch.startTime,
+    tcId: center?.sidhTcId,
+  });
 }
 
-function buildEnrollmentPayload(batch: ServiceBatch, syncState: ServiceBatchSyncState, _batchCandidate: ServiceBatchCandidate, candidate: ServiceCandidate) {
+function buildEnrollmentPayload(batch: ServiceBatch, syncState: ServiceBatchSyncState, candidateIds: string[]) {
+  const sidhBatchId = resolveSidhBatchId(syncState.sidhBatchId ?? batch.sidhBatchId);
+
+  if (sidhBatchId === null) {
+    throw new ApiError(400, "BATCH_NOT_SYNCED", "Batch must have a SIDH batch ID before enrollment sync");
+  }
+
   return {
-    batchId: syncState.sidhBatchId ?? batch.sidhBatchId,
-    candidateIds: [candidate.sidhCandidateId as string],
+    batchId: sidhBatchId,
+    candidateIds,
   };
 }
 
@@ -1941,11 +2193,11 @@ export async function processQueuedBatchSyncJobs(actor: AuthSession, input: { li
     }
 
     try {
-      const [{ center, course, scheme }, roster] = await Promise.all([
+      const [{ center, course, program, scheme }, roster] = await Promise.all([
         validateBatchSyncEligibility(batch),
         loadBatchRoster(batch.batchId),
       ]);
-      const payload = buildBatchPayload(batch, center, course, scheme, roster.batchCandidates.length);
+      const payload = buildBatchPayload(batch, center, course, scheme, program, roster.batchCandidates.length);
       const fingerprint = computeFingerprint(payload);
       state.requestFingerprint = fingerprint;
       claimedState.batchSync = state;
@@ -2221,9 +2473,12 @@ export async function processQueuedEnrollmentSyncJobs(actor: AuthSession, input:
       let failedCount = 0;
       let cancelledCount = 0;
       let terminalJob: ProcessEnrollmentSyncJobsResult["jobs"][number] | null = null;
+      const eligibleMemberships: ServiceBatchCandidate[] = [];
+      const sidhCandidateIds: string[] = [];
 
       for (const membership of queuedMemberships) {
         const candidate = candidateMap.get(membership.candidateId);
+
         if (!candidate?.sidhCandidateId) {
           membership.enrollmentStatus = "manual_review";
           membership.lastEnrollmentFailureCode = "CANDIDATE_NOT_SYNCED";
@@ -2234,9 +2489,13 @@ export async function processQueuedEnrollmentSyncJobs(actor: AuthSession, input:
           continue;
         }
 
-        const payload = buildEnrollmentPayload(batch, claimedState, membership, candidate);
-        const fingerprint = computeFingerprint(payload);
-        state.requestFingerprint = fingerprint;
+        eligibleMemberships.push(membership);
+        sidhCandidateIds.push(candidate.sidhCandidateId);
+      }
+
+      if (eligibleMemberships.length > 0) {
+        const payload = buildEnrollmentPayload(batch, claimedState, sidhCandidateIds);
+        state.requestFingerprint = computeFingerprint(payload);
 
         try {
           const result = await connector.enrollCandidate({
@@ -2245,19 +2504,30 @@ export async function processQueuedEnrollmentSyncJobs(actor: AuthSession, input:
             syncJobId: state.lastJobId ?? claimedState.batchSyncStateId,
           });
 
-          membership.enrollmentStatus = "synced";
-          membership.enrolledAt = now();
-          membership.lastEnrollmentFailureCode = null;
-          membership.lastEnrollmentFailureMessage = null;
-          membership.lastEnrollmentSyncAt = now();
-          membership.remoteStatus = "active";
-          membership.sidhEnrollmentId = result.remoteEnrollmentId;
-          await (membership as never as { save: () => Promise<void> }).save();
-          succeededCount += 1;
+          for (const membership of eligibleMemberships) {
+            membership.enrollmentStatus = "synced";
+            membership.enrolledAt = now();
+            membership.lastEnrollmentFailureCode = null;
+            membership.lastEnrollmentFailureMessage = null;
+            membership.lastEnrollmentSyncAt = now();
+            membership.remoteStatus = "active";
+            membership.sidhEnrollmentId = result.remoteEnrollmentId;
+            await (membership as never as { save: () => Promise<void> }).save();
+          }
+
+          succeededCount = eligibleMemberships.length;
         } catch (error) {
           const connectorError =
             error instanceof SidhConnectorError
               ? error
+              : error instanceof ApiError
+                ? new SidhConnectorError({
+                    code: error.errorCode,
+                    manualReview: true,
+                    message: error.message,
+                    retryable: false,
+                    status: error.status,
+                  })
               : new SidhConnectorError({
                   code: "ENROLLMENT_SYNC_FAILED",
                   message: classifyMessage(error),
@@ -2307,29 +2577,27 @@ export async function processQueuedEnrollmentSyncJobs(actor: AuthSession, input:
               succeededCount,
               syncStateId: claimedState.batchSyncStateId,
             };
-            break;
-          }
-
-          if (connectorError.code === "SIDH_CONFLICT") {
-            membership.enrollmentStatus = "synced";
-            membership.enrolledAt = now();
-            membership.lastEnrollmentFailureCode = null;
-            membership.lastEnrollmentFailureMessage = null;
-            membership.lastEnrollmentSyncAt = now();
-            await (membership as never as { save: () => Promise<void> }).save();
-            succeededCount += 1;
-            continue;
-          }
-
-          if (connectorError.retryable) {
+          } else if (connectorError.code === "SIDH_CONFLICT") {
+            for (const membership of eligibleMemberships) {
+              membership.enrollmentStatus = "synced";
+              membership.enrolledAt = now();
+              membership.lastEnrollmentFailureCode = null;
+              membership.lastEnrollmentFailureMessage = null;
+              membership.lastEnrollmentSyncAt = now();
+              await (membership as never as { save: () => Promise<void> }).save();
+            }
+            succeededCount = eligibleMemberships.length;
+          } else if (connectorError.retryable) {
             const nextRetryCount = (state.retryCount ?? 0) + 1;
             const maxAttempts = Math.max(1, Math.min(state.maxAttempts ?? 3, 3));
 
-            membership.enrollmentStatus = "queued";
-            membership.lastEnrollmentFailureCode = connectorError.code;
-            membership.lastEnrollmentFailureMessage = connectorError.message;
-            membership.lastEnrollmentSyncAt = now();
-            await (membership as never as { save: () => Promise<void> }).save();
+            for (const membership of eligibleMemberships) {
+              membership.enrollmentStatus = "queued";
+              membership.lastEnrollmentFailureCode = connectorError.code;
+              membership.lastEnrollmentFailureMessage = connectorError.message;
+              membership.lastEnrollmentSyncAt = now();
+              await (membership as never as { save: () => Promise<void> }).save();
+            }
 
             state.lastAttemptAt = now();
             state.lastFailureCode = connectorError.code;
@@ -2352,22 +2620,23 @@ export async function processQueuedEnrollmentSyncJobs(actor: AuthSession, input:
             terminalJob = {
               batchId: batch.batchId,
               cancelledCount,
-              failedCount: failedCount + 1,
+              failedCount: failedCount + eligibleMemberships.length,
               message: connectorError.message,
               queuedCount: await BatchCandidateModel.countDocuments({ batchId: batch.batchId, enrollmentStatus: "queued" }),
               status: state.status ?? "failed",
               succeededCount,
               syncStateId: claimedState.batchSyncStateId,
             };
-            break;
+          } else {
+            for (const membership of eligibleMemberships) {
+              membership.enrollmentStatus = "manual_review";
+              membership.lastEnrollmentFailureCode = connectorError.code;
+              membership.lastEnrollmentFailureMessage = connectorError.message;
+              membership.lastEnrollmentSyncAt = now();
+              await (membership as never as { save: () => Promise<void> }).save();
+            }
+            failedCount += eligibleMemberships.length;
           }
-
-          membership.enrollmentStatus = "manual_review";
-          membership.lastEnrollmentFailureCode = connectorError.code;
-          membership.lastEnrollmentFailureMessage = connectorError.message;
-          membership.lastEnrollmentSyncAt = now();
-          await (membership as never as { save: () => Promise<void> }).save();
-          failedCount += 1;
         }
       }
 

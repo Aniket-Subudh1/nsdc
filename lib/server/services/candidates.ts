@@ -5,6 +5,7 @@ import { createPrefixedId } from "@/lib/server/ids";
 import { connectToDatabase } from "@/lib/server/mongodb";
 import { readWorkbookSheetsFromArrayBuffer } from "@/lib/spreadsheet/node";
 import { CandidateModel } from "@/lib/server/models/candidate";
+import { CandidateImportRowModel } from "@/lib/server/models/candidate-import-row";
 import { ImportJobModel } from "@/lib/server/models/import-job";
 import { OutboxEventModel } from "@/lib/server/models/outbox-event";
 import { ProgramModel } from "@/lib/server/models/program";
@@ -19,6 +20,7 @@ import {
 } from "@/lib/server/rbac";
 import { writeAuditLog } from "@/lib/server/services/audit";
 import { type AuthSession } from "@/lib/server/services/session";
+import { parseUserDateInput } from "@/lib/server/sidh-payload";
 import {
   bulkQueueCandidateSyncSchema,
   createCandidateSchema,
@@ -199,34 +201,17 @@ function toIsoDate(value?: Date | string | null) {
 }
 
 function parseDate(value: string) {
-  const parsed = new Date(`${value}T00:00:00.000Z`);
+  const normalized = parseUserDateInput(value);
 
-  if (Number.isNaN(parsed.getTime())) {
+  if (!normalized) {
     throw new ApiError(400, "INVALID_DATE", "Invalid date provided");
   }
 
-  return parsed;
+  return new Date(`${normalized}T00:00:00.000Z`);
 }
 
 function parseTemplateDate(value: unknown) {
-  const normalized = normalizeWhitespace(String(value ?? ""));
-
-  if (!normalized) {
-    return "";
-  }
-
-  const slashMatch = normalized.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-
-  if (slashMatch) {
-    return `${slashMatch[3]}-${slashMatch[2]}-${slashMatch[1]}`;
-  }
-
-  const parsed = new Date(normalized);
-  if (Number.isNaN(parsed.getTime())) {
-    return "";
-  }
-
-  return parsed.toISOString().slice(0, 10);
+  return parseUserDateInput(value);
 }
 
 function createDuplicateHash(input: {
@@ -494,6 +479,53 @@ function serializeImportRow(row: Record<string, unknown>) {
     duplicateOfCandidateId: row.duplicateOfCandidateId ?? null,
     candidateId: row.candidateId ?? null,
     normalized: row.normalized ?? {},
+  };
+}
+
+const IMPORT_ROW_BATCH_SIZE = 1000;
+
+async function persistImportRows(importJobId: string, rows: Array<Record<string, unknown>>) {
+  for (let index = 0; index < rows.length; index += IMPORT_ROW_BATCH_SIZE) {
+    const chunk = rows.slice(index, index + IMPORT_ROW_BATCH_SIZE).map((row) => ({
+      importJobId,
+      rowId: row.rowId,
+      rowNumber: row.rowNumber,
+      raw: row.raw ?? {},
+      normalized: row.normalized ?? {},
+      status: row.status,
+      errors: row.errors ?? [],
+      duplicateOfCandidateId: row.duplicateOfCandidateId ?? null,
+      candidateId: row.candidateId ?? null,
+    }));
+
+    await CandidateImportRowModel.insertMany(chunk, { ordered: false });
+  }
+}
+
+async function importJobUsesExternalRows(importJobId: string) {
+  return Boolean(await CandidateImportRowModel.exists({ importJobId }));
+}
+
+function listEmbeddedImportRows(
+  job: { rows?: unknown },
+  page: number,
+  pageSize: number,
+  status?: string,
+) {
+  let rows = Array.from(job.rows as unknown as Array<Record<string, unknown>>);
+
+  if (status) {
+    rows = rows.filter((row) => row.status === status);
+  }
+
+  const start = (page - 1) * pageSize;
+  const items = rows.slice(start, start + pageSize).map((row) => serializeImportRow(row));
+
+  return {
+    items,
+    page,
+    pageSize,
+    total: rows.length,
   };
 }
 
@@ -1196,9 +1228,11 @@ export async function createCandidateImportJob(
     invalidRows,
     duplicateRows,
     committedRows: 0,
-    rows,
+    rows: [],
     createdByUserId: actor.user.id,
   });
+
+  await persistImportRows(job.importJobId, rows);
 
   await writeAuditLog({
     action: "candidate.import.staged",
@@ -1226,7 +1260,13 @@ export async function getCandidateImportJob(actor: AuthSession, importJobId: str
   return serializeImportJob(job);
 }
 
-export async function listCandidateImportRows(actor: AuthSession, importJobId: string, page: number, pageSize: number) {
+export async function listCandidateImportRows(
+  actor: AuthSession,
+  importJobId: string,
+  page: number,
+  pageSize: number,
+  status?: string,
+) {
   await connectToDatabase();
   ensureCanReadCandidates(actor);
 
@@ -1238,16 +1278,27 @@ export async function listCandidateImportRows(actor: AuthSession, importJobId: s
 
   resolveScopedCenterFilter(actor, job.centerId);
 
-  const rows = Array.from(job.rows as unknown as Array<Record<string, unknown>>);
-  const start = (page - 1) * pageSize;
-  const items = rows.slice(start, start + pageSize).map((row) => serializeImportRow(row));
+  if (await importJobUsesExternalRows(importJobId)) {
+    const filter: Record<string, unknown> = { importJobId };
+    if (status) {
+      filter.status = status;
+    }
 
-  return {
-    items,
-    page,
-    pageSize,
-    total: rows.length,
-  };
+    const start = (page - 1) * pageSize;
+    const [items, total] = await Promise.all([
+      CandidateImportRowModel.find(filter).sort({ rowNumber: 1 }).skip(start).limit(pageSize).lean(),
+      CandidateImportRowModel.countDocuments(filter),
+    ]);
+
+    return {
+      items: items.map((row) => serializeImportRow(row as Record<string, unknown>)),
+      page,
+      pageSize,
+      total,
+    };
+  }
+
+  return listEmbeddedImportRows(job, page, pageSize, status);
 }
 
 export async function commitCandidateImportJob(actor: AuthSession, importJobId: string, requestId?: string) {
@@ -1266,49 +1317,108 @@ export async function commitCandidateImportJob(actor: AuthSession, importJobId: 
     throw new ApiError(409, "IMPORT_ALREADY_COMMITTED", "This import job has already been committed");
   }
 
-  const updatedRows: Array<Record<string, unknown>> = [];
   let committedRows = 0;
 
-  for (const row of Array.from(job.rows as unknown as Array<Record<string, unknown>>)) {
-    if (row.status !== "valid") {
-      updatedRows.push(row);
-      continue;
+  if (await importJobUsesExternalRows(importJobId)) {
+    const COMMIT_BATCH_SIZE = 100;
+
+    while (true) {
+      const batch = await CandidateImportRowModel.find({ importJobId, status: "valid" })
+        .sort({ rowNumber: 1 })
+        .limit(COMMIT_BATCH_SIZE)
+        .lean();
+
+      if (batch.length === 0) {
+        break;
+      }
+
+      for (const row of batch) {
+        try {
+          const candidateInput = normalizeImportedRowToCandidateInput(row.normalized as Record<string, unknown>, {
+            centerId: job.centerId,
+            programId: job.programId,
+            registrationMode: job.registrationMode as "internal_registration" | "existing_sidh_link",
+          });
+          const createdCandidate = await createCandidateRecord(actor, candidateInput, {
+            queueSync: false,
+            requestId,
+            skipAudit: true,
+            sourceImportJobId: importJobId,
+          });
+
+          committedRows += 1;
+          await CandidateImportRowModel.updateOne(
+            { rowId: row.rowId },
+            {
+              $set: {
+                status: "committed",
+                candidateId: createdCandidate.candidateId,
+              },
+            },
+          );
+        } catch (error) {
+          await CandidateImportRowModel.updateOne(
+            { rowId: row.rowId },
+            {
+              $set: {
+                status: "skipped",
+                errors: [
+                  ...(Array.isArray(row.errors) ? row.errors : []),
+                  {
+                    message: error instanceof Error ? error.message : "Unable to commit row",
+                  },
+                ],
+              },
+            },
+          );
+        }
+      }
+    }
+  } else {
+    const updatedRows: Array<Record<string, unknown>> = [];
+
+    for (const row of Array.from(job.rows as unknown as Array<Record<string, unknown>>)) {
+      if (row.status !== "valid") {
+        updatedRows.push(row);
+        continue;
+      }
+
+      try {
+        const candidateInput = normalizeImportedRowToCandidateInput(row.normalized as Record<string, unknown>, {
+          centerId: job.centerId,
+          programId: job.programId,
+          registrationMode: job.registrationMode as "internal_registration" | "existing_sidh_link",
+        });
+        const createdCandidate = await createCandidateRecord(actor, candidateInput, {
+          queueSync: false,
+          requestId,
+          skipAudit: true,
+          sourceImportJobId: importJobId,
+        });
+
+        committedRows += 1;
+        updatedRows.push({
+          ...row,
+          status: "committed",
+          candidateId: createdCandidate.candidateId,
+        });
+      } catch (error) {
+        updatedRows.push({
+          ...row,
+          status: "skipped",
+          errors: [
+            ...(Array.isArray(row.errors) ? (row.errors as Array<Record<string, unknown>>) : []),
+            {
+              message: error instanceof Error ? error.message : "Unable to commit row",
+            },
+          ],
+        });
+      }
     }
 
-    try {
-      const candidateInput = normalizeImportedRowToCandidateInput(row.normalized as Record<string, unknown>, {
-        centerId: job.centerId,
-        programId: job.programId,
-        registrationMode: job.registrationMode as "internal_registration" | "existing_sidh_link",
-      });
-      const createdCandidate = await createCandidateRecord(actor, candidateInput, {
-        queueSync: false,
-        requestId,
-        skipAudit: true,
-        sourceImportJobId: importJobId,
-      });
-
-      committedRows += 1;
-      updatedRows.push({
-        ...row,
-        status: "committed",
-        candidateId: createdCandidate.candidateId,
-      });
-    } catch (error) {
-      updatedRows.push({
-        ...row,
-        status: "skipped",
-        errors: [
-          ...(Array.isArray(row.errors) ? (row.errors as Array<Record<string, unknown>>) : []),
-          {
-            message: error instanceof Error ? error.message : "Unable to commit row",
-          },
-        ],
-      });
-    }
+    job.rows = updatedRows as never;
   }
 
-  job.rows = updatedRows as never;
   job.status = "committed";
   job.committedRows = committedRows;
   job.committedAt = new Date();

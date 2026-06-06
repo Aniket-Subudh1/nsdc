@@ -4,6 +4,11 @@ import { type AppEnv, getEnv, getSidhCredentials } from "@/lib/server/env";
 import { ApiError } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
 import { SidhApiTransactionModel } from "@/lib/server/models/sidh-api-transaction";
+import {
+  normalizeBatchCreationPayload,
+  normalizeCandidateRegistrationPayload,
+  normalizeTrainingAssessmentPayload,
+} from "@/lib/server/sidh-outbound";
 
 export type CandidateRegistrationPayload = {
   PersonalDetails: {
@@ -53,7 +58,7 @@ export type BatchCreationPayload = {
 };
 
 export type EnrollmentPayload = {
-  batchId: string | null | undefined;
+  batchId: number | string;
   candidateIds: string[];
 };
 
@@ -193,6 +198,12 @@ export class SidhConnectorError extends Error {
     this.retryable = input.retryable ?? false;
     this.status = input.status ?? null;
   }
+}
+
+export function toApiErrorFromSidh(error: SidhConnectorError) {
+  const status = error.status && error.status >= 400 && error.status < 600 ? error.status : 502;
+
+  return new ApiError(status, error.code, error.message);
 }
 
 type ConnectorSession = {
@@ -796,10 +807,12 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
 
   return {
     async registerCandidate(input: RegisterCandidateInput): Promise<RegisterCandidateResult> {
+      const payload = normalizeCandidateRegistrationPayload(input.payload);
+
       const runRegistration = async (session: ConnectorSession) => {
         const response = await requestJson({
           attemptId: input.attemptId,
-          body: input.payload,
+          body: payload,
           operation: "candidate.register",
           path: "/api/user/v1/register/Candidate/v1",
           session,
@@ -834,12 +847,14 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
     },
 
     async createBatch(input: CreateBatchInput): Promise<CreateBatchResult> {
+      const payload = normalizeBatchCreationPayload(input.payload);
+
       const runCreateBatch = async (session: ConnectorSession) => {
         const response = await requestJson({
           attemptId: input.attemptId,
           body: {
-            ...input.payload,
-            tpId: input.payload.tpId?.trim() || credentials.tpId,
+            ...payload,
+            tpId: payload.tpId?.trim() || credentials.tpId,
           },
           operation: "batch.create",
           path: "/api/batch/v1/create",
@@ -876,9 +891,10 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
 
     async enrollCandidate(input: EnrollCandidateInput): Promise<EnrollCandidateResult> {
       const runEnrollment = async (session: ConnectorSession) => {
-        const batchId = input.payload.batchId?.trim();
+        const batchId = input.payload.batchId;
+        const candidateIds = input.payload.candidateIds.map((candidateId) => candidateId.trim()).filter(Boolean);
 
-        if (!batchId) {
+        if (batchId === null || batchId === undefined || batchId === "") {
           throw new SidhConnectorError({
             code: "SIDH_BATCH_ID_MISSING",
             manualReview: true,
@@ -886,13 +902,22 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
           });
         }
 
+        if (candidateIds.length === 0) {
+          throw new SidhConnectorError({
+            code: "SIDH_CANDIDATE_IDS_MISSING",
+            manualReview: true,
+            message: "At least one SIDH candidate ID is required for enrollment",
+          });
+        }
+
         const response = await requestJson({
           attemptId: input.attemptId,
           body: {
-            candidateIds: input.payload.candidateIds.join(","),
+            batchId,
+            candidateIds,
           },
           operation: "batch.enroll_candidate",
-          path: `/api/v1/candidate/batch/${encodeURIComponent(batchId)}/enrollCandidate`,
+          path: "/api/thirdparty/v1/enroll/Candidate",
           session,
           syncJobId: input.syncJobId,
         });
@@ -925,10 +950,12 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
     },
 
     async submitTrainingAndAssessment(input: SubmitTrainingAssessmentInput): Promise<SubmitTrainingAssessmentResult> {
+      const payload = normalizeTrainingAssessmentPayload(input.payload);
+
       const runSubmission = async (session: ConnectorSession) => {
         const response = await requestJson({
           attemptId: input.attemptId,
-          body: input.payload,
+          body: payload,
           operation: "batch.training_assessment_submit",
           path: "/v1/candidates/candidate/pushBatchEachCandidate",
           session,

@@ -86,3 +86,21 @@ export function getSidhCredentials(env: AppEnv) {
     username,
   };
 }
+
+export function getSidhBatchContext(source: NodeJS.ProcessEnv = process.env) {
+  try {
+    const env = createEnv(source);
+    return {
+      environment: env.SIDH_ENV,
+      tpId: getSidhCredentials(env).tpId,
+    };
+  } catch {
+    const environment = source.SIDH_ENV === "production" ? "production" : "uat";
+    const tpId = (environment === "production" ? source.SIDH_PROD_TP_ID : source.SIDH_UAT_TP_ID)?.trim() || "";
+
+    return {
+      environment,
+      tpId,
+    };
+  }
+}

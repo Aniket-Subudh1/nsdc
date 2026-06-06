@@ -31,7 +31,7 @@ function createCandidatePayload() {
       Phone: "9876543210",
     },
     PersonalDetails: {
-      DOB: "2005-06-10",
+      DOB: "2005-06-10T00:00:00Z",
       FatherName: "Suresh Kumar",
       FirstName: "Rohit Kumar",
       Gender: "Male",
@@ -170,7 +170,7 @@ describe("SIDH connector", () => {
     });
   });
 
-  it("enrolls candidates against the documented UAT SIDH batch enrollment endpoint", async () => {
+  it("enrolls candidates against the documented SIDH enrollment endpoint", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token" }, status: 200 }))
@@ -183,7 +183,7 @@ describe("SIDH connector", () => {
     const result = await connector.enrollCandidate({
       attemptId: "enatt_001",
       payload: {
-        batchId: "BATCH_REMOTE_001",
+        batchId: 2237653,
         candidateIds: ["CAN_001", "CAN_002"],
       },
       syncJobId: "enjob_001",
@@ -192,9 +192,10 @@ describe("SIDH connector", () => {
     const enrollmentCall = fetchImpl.mock.calls[4];
 
     expect(result.remoteEnrollmentId).toBe("ENROLL_REMOTE_001");
-    expect(enrollmentCall?.[0]).toBe("https://backend.itrackglobal.com/api/v1/candidate/batch/BATCH_REMOTE_001/enrollCandidate");
+    expect(enrollmentCall?.[0]).toBe("https://backend.itrackglobal.com/api/thirdparty/v1/enroll/Candidate");
     expect(JSON.parse(String(enrollmentCall?.[1]?.body))).toEqual({
-      candidateIds: "CAN_001,CAN_002",
+      batchId: 2237653,
+      candidateIds: ["CAN_001", "CAN_002"],
     });
   });
 

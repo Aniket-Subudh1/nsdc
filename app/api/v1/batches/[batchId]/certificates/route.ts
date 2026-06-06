@@ -1,8 +1,9 @@
 import { ApiError, apiError, getRequestId, handleRoute } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
 import { canManageBatchSync } from "@/lib/server/rbac";
+import { resolveSidhBatchIdForActor } from "@/lib/server/services/batches";
 import { requireAuth } from "@/lib/server/services/session";
-import { createSidhConnector } from "@/lib/server/services/sidh-connector";
+import { createSidhConnector, SidhConnectorError, toApiErrorFromSidh } from "@/lib/server/services/sidh-connector";
 import { certificateDownloadQuerySchema, certificateGenerationRequestSchema } from "@/lib/server/validation";
 
 export const runtime = "nodejs";
@@ -29,16 +30,25 @@ export async function POST(request: Request, context: RouteContext) {
       const requestId = request.headers.get("x-request-id") ?? createPrefixedId("certjob");
       const { batchId } = await context.params;
       const body = certificateGenerationRequestSchema.parse(await request.json());
+      const { sidhBatchId } = await resolveSidhBatchIdForActor(session, batchId);
       const connector = createSidhConnector();
 
-      return connector.generateCertificate({
-        attemptId: createPrefixedId("certatt"),
-        payload: {
-          batchId,
-          userName: body.userName ?? body.candidateId ?? "",
-        },
-        syncJobId: requestId,
-      });
+      try {
+        return await connector.generateCertificate({
+          attemptId: createPrefixedId("certatt"),
+          payload: {
+            batchId: sidhBatchId,
+            userName: body.userName ?? body.candidateId ?? "",
+          },
+          syncJobId: requestId,
+        });
+      } catch (error) {
+        if (error instanceof SidhConnectorError) {
+          throw toApiErrorFromSidh(error);
+        }
+
+        throw error;
+      }
     },
     {
       message: "Certificate generation requested in SIDH",
@@ -55,16 +65,28 @@ export async function GET(request: Request, context: RouteContext) {
 
     const { batchId } = await context.params;
     const query = certificateDownloadQuerySchema.parse(Object.fromEntries(new URL(request.url).searchParams.entries()));
+    const { sidhBatchId } = await resolveSidhBatchIdForActor(session, batchId);
     const connector = createSidhConnector();
-    const result = await connector.downloadCertificate({
-      attemptId: createPrefixedId("certdownatt"),
-      payload: {
-        batchId,
-        candidateId: query.candidateId,
-        type: query.type,
-      },
-      syncJobId: requestId,
-    });
+
+    let result;
+
+    try {
+      result = await connector.downloadCertificate({
+        attemptId: createPrefixedId("certdownatt"),
+        payload: {
+          batchId: sidhBatchId,
+          candidateId: query.candidateId,
+          type: query.type,
+        },
+        syncJobId: requestId,
+      });
+    } catch (error) {
+      if (error instanceof SidhConnectorError) {
+        throw toApiErrorFromSidh(error);
+      }
+
+      throw error;
+    }
 
     return new Response(result.responseBody, {
       headers: {

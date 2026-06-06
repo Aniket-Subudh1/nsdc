@@ -106,6 +106,36 @@ const batchSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    sidhAssessmentMode: {
+      type: String,
+      default: "Self",
+      trim: true,
+    },
+    sidhBatchType: {
+      type: String,
+      default: "Regular",
+      trim: true,
+    },
+    sidhCategoryType: {
+      type: String,
+      default: "Fee Based",
+      trim: true,
+    },
+    sidhCreatedSource: {
+      type: String,
+      default: "Created for NSDC Academy Partners",
+      trim: true,
+    },
+    sidhFeePaidBy: {
+      type: String,
+      default: "Self-Paid",
+      trim: true,
+    },
+    sidhTpId: {
+      type: String,
+      default: null,
+      trim: true,
+    },
     createdByUserId: {
       type: String,
       default: null,

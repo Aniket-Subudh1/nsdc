@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   candidateUpdateOne: vi.fn(),
   importJobCreate: vi.fn(),
   importJobFindOne: vi.fn(),
+  importRowInsertMany: vi.fn(),
   syncJobFindOne: vi.fn(),
   syncJobCreate: vi.fn(),
   outboxEventCreate: vi.fn(),
@@ -38,6 +39,16 @@ vi.mock("@/lib/server/models/import-job", () => ({
   ImportJobModel: {
     create: mocks.importJobCreate,
     findOne: mocks.importJobFindOne,
+  },
+}));
+
+vi.mock("@/lib/server/models/candidate-import-row", () => ({
+  CandidateImportRowModel: {
+    insertMany: mocks.importRowInsertMany,
+    exists: vi.fn().mockResolvedValue(null),
+    find: vi.fn(),
+    countDocuments: vi.fn(),
+    updateOne: vi.fn(),
   },
 }));
 
@@ -228,6 +239,7 @@ describe("candidate services", () => {
   it("stages import rows with valid and invalid counts", async () => {
     mocks.candidateFindOne.mockReturnValue(createSelectQuery(null));
     mocks.importJobCreate.mockImplementation(async (value: Record<string, unknown>) => value);
+    mocks.importRowInsertMany.mockResolvedValue([]);
 
     const workbook = await buildWorkbook([
       {
@@ -267,21 +279,28 @@ describe("candidate services", () => {
     expect(result.totalRows).toBe(2);
     expect(result.validRows).toBe(1);
     expect(result.invalidRows).toBe(1);
-    expect(mocks.importJobCreate).toHaveBeenCalledTimes(1);
     expect(mocks.importJobCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        rows: expect.arrayContaining([
-          expect.objectContaining({
-            normalized: expect.objectContaining({
-              locationDetails: {
-                centerName: "Center One",
-                city: "Bhubaneswar",
-                state: "Odisha",
-              },
-            }),
-          }),
-        ]),
+        rows: [],
+        totalRows: 2,
+        validRows: 1,
+        invalidRows: 1,
       }),
+    );
+    expect(mocks.importRowInsertMany).toHaveBeenCalledTimes(1);
+    expect(mocks.importRowInsertMany).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          normalized: expect.objectContaining({
+            locationDetails: {
+              centerName: "Center One",
+              city: "Bhubaneswar",
+              state: "Odisha",
+            },
+          }),
+        }),
+      ]),
+      { ordered: false },
     );
   });
 

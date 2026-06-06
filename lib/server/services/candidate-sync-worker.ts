@@ -5,6 +5,7 @@ import { CandidateModel } from "@/lib/server/models/candidate";
 import { SyncJobModel } from "@/lib/server/models/sync-job";
 import { canManageSync } from "@/lib/server/rbac";
 import { createSidhConnector, type CandidateRegistrationPayload, SidhConnectorError } from "@/lib/server/services/sidh-connector";
+import { parseUserDateInput, toSidhDate } from "@/lib/server/sidh-payload";
 import { writeAuditLog } from "@/lib/server/services/audit";
 import { type AuthSession } from "@/lib/server/services/session";
 
@@ -139,7 +140,7 @@ function buildRegistrationPayload(candidate: WorkerCandidate): CandidateRegistra
       Phone: candidate.mobileNumber,
     },
     PersonalDetails: {
-      DOB: toRfc3339Seconds(candidate.dateOfBirth) ?? "",
+      DOB: toSidhDate(candidate.dateOfBirth),
       ...(candidate.fathersName?.trim() ? { FatherName: candidate.fathersName.trim() } : {}),
       FirstName: candidate.fullName,
       ...(candidate.gender?.trim() ? { Gender: candidate.gender.trim() } : {}),

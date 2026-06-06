@@ -1,8 +1,9 @@
 import { ApiError, handleRoute } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
 import { canManageBatchSync } from "@/lib/server/rbac";
+import { resolveSidhBatchIdForActor } from "@/lib/server/services/batches";
 import { requireAuth } from "@/lib/server/services/session";
-import { createSidhConnector } from "@/lib/server/services/sidh-connector";
+import { createSidhConnector, SidhConnectorError, toApiErrorFromSidh } from "@/lib/server/services/sidh-connector";
 import { trainingAssessmentSubmissionSchema } from "@/lib/server/validation";
 
 export const runtime = "nodejs";
@@ -25,16 +26,25 @@ export async function POST(request: Request, context: RouteContext) {
       const requestId = request.headers.get("x-request-id") ?? createPrefixedId("tasjob");
       const { batchId } = await context.params;
       const body = trainingAssessmentSubmissionSchema.parse(await request.json());
+      const { sidhBatchId } = await resolveSidhBatchIdForActor(session, batchId);
       const connector = createSidhConnector();
 
-      return connector.submitTrainingAndAssessment({
-        attemptId: createPrefixedId("taatt"),
-        payload: {
-          ...body,
-          batchId: body.batchId ?? batchId,
-        },
-        syncJobId: requestId,
-      });
+      try {
+        return await connector.submitTrainingAndAssessment({
+          attemptId: createPrefixedId("taatt"),
+          payload: {
+            ...body,
+            batchId: body.batchId ?? sidhBatchId,
+          },
+          syncJobId: requestId,
+        });
+      } catch (error) {
+        if (error instanceof SidhConnectorError) {
+          throw toApiErrorFromSidh(error);
+        }
+
+        throw error;
+      }
     },
     {
       message: "Training and assessment data submitted to SIDH",

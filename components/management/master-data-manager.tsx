@@ -2,34 +2,47 @@
 
 import { startTransition, useEffect, useMemo, useState } from "react";
 import {
-  BookOpenText,
-  BriefcaseBusiness,
-  Layers3,
-  LoaderCircle,
-  Network,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Save,
-  Search,
-  Sparkles,
-  Trash2,
-  X,
-} from "lucide-react";
+  IconBook,
+  IconBriefcase,
+  IconChevronLeft,
+  IconChevronRight,
+  IconCircleCheck,
+  IconHierarchy,
+  IconLoader2,
+  IconPencil,
+  IconPlus,
+  IconRefresh,
+  IconSearch,
+  IconSparkles,
+  IconStack2,
+  IconTrash,
+  IconX,
+} from "@tabler/icons-react";
+import { Save } from "lucide-react";
 import { toast } from "sonner";
 
 import { apiFetch, ClientApiError } from "@/lib/client/api";
+import { SIDH_BATCH_FIELD_OPTIONS } from "@/lib/sidh-batch-field-options";
+import { cn } from "@/lib/utils";
 
 type MasterDataManagerProps = {
   portal: "admin" | "training_partner";
 };
 
 type ProgramRecord = {
+  assessmentMode: string | null;
+  batchCategoryType: string | null;
+  batchType: string | null;
   code: string;
+  createdSource: string | null;
   description: string | null;
+  feePaidBy: string | null;
   id: string;
   name: string;
   programId: string;
+  skillingCategoryId: number;
+  skillingCategoryName: string | null;
+  skillingCategoryScheme: string | null;
   status: "active" | "inactive";
   syncToSidh: boolean;
   verifiedAt: string | null;
@@ -46,14 +59,20 @@ type SectorRecord = {
 };
 
 type SchemeRecord = {
+  assessmentMode: string | null;
+  batchCategoryType: string | null;
+  batchType: string | null;
   beneficiaryType: string | null;
   code: string;
+  createdSource: string | null;
   description: string | null;
   fundingType: string | null;
   id: string;
   name: string;
   schemeId: string;
   sidhSchemeId: string | null;
+  sidhSchemeReferenceId: string | null;
+  sidhSchemeType: string | null;
   status: "active" | "inactive";
   syncEnabled: boolean;
   validFrom: string | null;
@@ -71,8 +90,11 @@ type CourseRecord = {
   id: string;
   jobRole: string;
   nsqfLevel: string;
+  programIds: string[];
+  schemeIds: string[];
   sectorId: string;
   shortForm: string | null;
+  sidhCourseId: string;
   status: "active" | "inactive";
   totalHours: number;
   trainingPerDayHours: number | null;
@@ -92,11 +114,24 @@ type PagedResponse<T> = {
 type Tab = "programs" | "sectors" | "schemes" | "courses";
 
 const TABS: Array<{ icon: React.ReactNode; id: Tab; label: string }> = [
-  { icon: <BriefcaseBusiness className="h-4 w-4" />, id: "programs", label: "Programs" },
-  { icon: <Layers3 className="h-4 w-4" />, id: "sectors", label: "Sectors" },
-  { icon: <Network className="h-4 w-4" />, id: "schemes", label: "Schemes" },
-  { icon: <BookOpenText className="h-4 w-4" />, id: "courses", label: "Courses" },
+  { icon: <IconBriefcase className="h-4 w-4" />, id: "programs", label: "Programs" },
+  { icon: <IconStack2 className="h-4 w-4" />, id: "sectors", label: "Sectors" },
+  { icon: <IconHierarchy className="h-4 w-4" />, id: "schemes", label: "Schemes" },
+  { icon: <IconBook className="h-4 w-4" />, id: "courses", label: "Courses" },
 ];
+
+const portalContent = {
+  admin: {
+    description:
+      "Set up programs, sectors, schemes, and courses — the building blocks used when creating training batches.",
+    heading: "Course Catalog",
+  },
+  training_partner: {
+    description:
+      "View and manage the course catalog available for your training operations and batch setup.",
+    heading: "Course Catalog",
+  },
+} as const;
 
 // Default seed values from NsdcConstants.java / sidh-defaults.ts
 const SIDH_SEED = {
@@ -121,7 +156,7 @@ const SIDH_SEED = {
     name: "Fee Based",
     sidhSchemeId: "Scheme_2",
     status: "active" as const,
-    syncEnabled: false,
+    syncEnabled: true,
   },
 };
 
@@ -140,9 +175,17 @@ function resolveSidhWorkflowState(verifiedForSidh: boolean, readyForSidh: boolea
 }
 
 const emptyProgramForm = {
+  assessmentMode: SIDH_BATCH_FIELD_OPTIONS.assessmentMode[0],
+  batchCategoryType: SIDH_BATCH_FIELD_OPTIONS.categoryType[0],
+  batchType: SIDH_BATCH_FIELD_OPTIONS.batchType[0],
   code: "",
+  createdSource: SIDH_BATCH_FIELD_OPTIONS.createdSource[0],
   description: "",
+  feePaidBy: SIDH_BATCH_FIELD_OPTIONS.feePaidBy[0],
   name: "",
+  skillingCategoryId: "1",
+  skillingCategoryName: "",
+  skillingCategoryScheme: "Fee Based",
   status: "active" as "active" | "inactive",
   syncToSidh: false,
 };
@@ -161,6 +204,8 @@ const emptySchemeForm = {
   fundingType: "",
   name: "",
   sidhSchemeId: "",
+  sidhSchemeReferenceId: "",
+  sidhSchemeType: "feeBased",
   status: "active" as "active" | "inactive",
   syncEnabled: false,
   validFrom: "",
@@ -170,15 +215,17 @@ const emptySchemeForm = {
 const emptyCourseForm = {
   approvalDate: "",
   approvalStatus: "pending" as "approved" | "pending",
-  courseCode: "",
   courseName: "",
   jobRole: "",
   nsqfLevel: "",
+  programId: "",
+  schemeId: "",
   sectorId: "",
   shortForm: "",
+  sidhCourseId: "",
   totalHours: "",
   trainingPerDayHours: "",
-  validity: "",
+  validUntil: "",
 };
 
 export default function MasterDataManager({ portal }: MasterDataManagerProps) {
@@ -378,9 +425,17 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
       if (!prog) return;
       setSelectedProgramId(prog.programId);
       setProgramForm({
+        assessmentMode: prog.assessmentMode ?? SIDH_BATCH_FIELD_OPTIONS.assessmentMode[0],
+        batchCategoryType: prog.batchCategoryType ?? SIDH_BATCH_FIELD_OPTIONS.categoryType[0],
+        batchType: prog.batchType ?? SIDH_BATCH_FIELD_OPTIONS.batchType[0],
         code: prog.code,
+        createdSource: prog.createdSource ?? SIDH_BATCH_FIELD_OPTIONS.createdSource[0],
         description: prog.description ?? "",
+        feePaidBy: prog.feePaidBy ?? SIDH_BATCH_FIELD_OPTIONS.feePaidBy[0],
         name: prog.name,
+        skillingCategoryId: String(prog.skillingCategoryId ?? 1),
+        skillingCategoryName: prog.skillingCategoryName ?? "",
+        skillingCategoryScheme: prog.skillingCategoryScheme ?? "Fee Based",
         status: prog.status,
         syncToSidh: prog.syncToSidh,
       });
@@ -395,6 +450,8 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
         fundingType: scheme.fundingType ?? "",
         name: scheme.name,
         sidhSchemeId: scheme.sidhSchemeId ?? "",
+        sidhSchemeReferenceId: scheme.sidhSchemeReferenceId ?? "",
+        sidhSchemeType: scheme.sidhSchemeType ?? "feeBased",
         status: scheme.status,
         syncEnabled: scheme.syncEnabled,
         validFrom: scheme.validFrom ? scheme.validFrom.slice(0, 10) : "",
@@ -407,15 +464,17 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
       setCourseForm({
         approvalDate: course.approvalDate ? course.approvalDate.slice(0, 10) : "",
         approvalStatus: course.approvalStatus === "approved" ? "approved" : "pending",
-        courseCode: course.courseCode,
         courseName: course.courseName,
         jobRole: course.jobRole,
         nsqfLevel: String(course.nsqfLevel ?? ""),
+        programId: course.programIds[0] ?? "",
+        schemeId: course.schemeIds[0] ?? "",
         sectorId: course.sectorId,
         shortForm: course.shortForm ?? "",
+        sidhCourseId: course.sidhCourseId || course.courseCode,
         totalHours: String(course.totalHours ?? ""),
         trainingPerDayHours: String(course.trainingPerDayHours ?? ""),
-        validity: String(course.validity ?? ""),
+        validUntil: course.validityEndDate ? course.validityEndDate.slice(0, 10) : "",
       });
     }
     setShowEditModal(true);
@@ -424,18 +483,22 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
   async function handleProgramSave(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setIsSaving(true);
+    const payload = {
+      ...programForm,
+      skillingCategoryId: Number(programForm.skillingCategoryId || 1),
+    };
     try {
       if (selectedProgram) {
         await apiFetch(`/api/v1/masters/programs/${selectedProgram.programId}`, {
           method: "PATCH",
-          body: JSON.stringify(programForm),
+          body: JSON.stringify(payload),
         });
         toast.success("Program updated");
         setShowEditModal(false);
       } else {
         await apiFetch("/api/v1/masters/programs", {
           method: "POST",
-          body: JSON.stringify(programForm),
+          body: JSON.stringify(payload),
         });
         toast.success("Program created");
         setShowCreateModal(false);
@@ -501,12 +564,22 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
   async function handleCourseSave(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setIsSaving(true);
+    const validityStartDate = courseForm.approvalDate || new Date().toISOString().slice(0, 10);
     const payload = {
-      ...courseForm,
       approvalDate: courseForm.approvalDate || undefined,
+      approvalStatus: courseForm.approvalStatus,
+      courseName: courseForm.courseName,
+      jobRole: courseForm.jobRole,
+      nsqfLevel: courseForm.nsqfLevel,
+      programIds: courseForm.programId ? [courseForm.programId] : [],
+      schemeIds: courseForm.schemeId ? [courseForm.schemeId] : [],
+      sectorId: courseForm.sectorId,
+      shortForm: courseForm.shortForm,
+      sidhCourseId: courseForm.sidhCourseId,
       totalHours: Number(courseForm.totalHours),
       trainingPerDayHours: Number(courseForm.trainingPerDayHours),
-      validity: Number(courseForm.validity),
+      validityEndDate: courseForm.validUntil,
+      validityStartDate,
       ...(selectedCourse ? { currentVersion: selectedCourse.version } : {}),
     };
 
@@ -567,12 +640,14 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
 
   const addLabel =
     activeTab === "programs"
-      ? "New Program"
+      ? "Add program"
       : activeTab === "sectors"
-        ? "New Sector"
-          : activeTab === "schemes"
-            ? "New Scheme"
-            : "Add Course";
+        ? "Add sector"
+        : activeTab === "schemes"
+          ? "Add scheme"
+          : "Add course";
+
+  const content = portalContent[portal];
 
   const statusCounts = {
     active: activeList.filter((i) => i.status === "active").length,
@@ -581,211 +656,229 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
   };
 
   return (
-    <div className="flex min-h-full flex-col bg-slate-50">
-      {/* ── Sticky header ───────────────────────────────────────────── */}
-      <div className="sticky top-0 z-10 border-b border-slate-200 bg-white px-6 py-4 shadow-sm">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-sky-600">
-              {portal === "admin" ? "Operations" : "Scoped Operations"}
-            </p>
-            <h1 className="mt-0.5 text-xl font-bold tracking-tight text-slate-900">Master Data</h1>
-            <p className="mt-1 text-sm text-slate-500">
-              Save records to the local database first, then explicitly mark eligible items ready for SIDH.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => startTransition(() => void loadData())}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-              Refresh
-            </button>
-            <button
-              type="button"
-              title="Seeds the default local DB values from the legacy SIDH constants; mark them ready later after verification"
-              onClick={() => void handleSeedDefaults()}
-              disabled={isSeeding}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700 transition hover:border-amber-300 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isSeeding ? (
-                <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Sparkles className="h-3.5 w-3.5" />
-              )}
-              Seed Defaults
-            </button>
-            <button
-              type="button"
-              onClick={openCreateModal}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700"
-            >
-              <Plus className="h-4 w-4" />
-              {addLabel}
-            </button>
-          </div>
+    <div className="flex flex-1 flex-col gap-6 bg-slate-100 px-4 py-4 md:px-8 md:py-8">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-neutral-900">{content.heading}</h1>
+          <p className="mt-1 max-w-2xl text-sm text-neutral-500">{content.description}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => startTransition(() => void loadData())}
+            disabled={isLoading}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-neutral-600 transition-colors hover:bg-slate-50 disabled:opacity-50"
+          >
+            <IconRefresh className={cn("h-4 w-4", isLoading && "animate-spin")} />
+            Refresh
+          </button>
+          <button
+            type="button"
+            title="Creates starter program, sector, and scheme records if they do not exist yet"
+            onClick={() => void handleSeedDefaults()}
+            disabled={isSeeding}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-700 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isSeeding ? (
+              <IconLoader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <IconSparkles className="h-4 w-4" />
+            )}
+            Load starter data
+          </button>
+          <button
+            type="button"
+            onClick={openCreateModal}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700"
+          >
+            <IconPlus className="h-4 w-4" />
+            {addLabel}
+          </button>
         </div>
       </div>
 
-      <div className="flex flex-col gap-5 p-6">
-        {/* ── Stat cards ──────────────────────────────────────────────── */}
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-          <StatCard
-            icon={<BriefcaseBusiness className="h-5 w-5" />}
-            iconBg="bg-violet-100 text-violet-600"
-            label="Programs"
-            value={programs.length}
-            accent="text-violet-600"
-            active={activeTab === "programs"}
-            onClick={() => switchTab("programs")}
-          />
-          <StatCard
-            icon={<Layers3 className="h-5 w-5" />}
-            iconBg="bg-sky-100 text-sky-600"
-            label="Sectors"
-            value={sectors.length}
-            accent="text-sky-600"
-            active={activeTab === "sectors"}
-            onClick={() => switchTab("sectors")}
-          />
-          <StatCard
-            icon={<Network className="h-5 w-5" />}
-            iconBg="bg-emerald-100 text-emerald-600"
-            label="Schemes"
-            value={schemes.length}
-            accent="text-emerald-600"
-            active={activeTab === "schemes"}
-            onClick={() => switchTab("schemes")}
-          />
-          <StatCard
-            icon={<BookOpenText className="h-5 w-5" />}
-            iconBg="bg-indigo-100 text-indigo-600"
-            label="Courses"
-            value={courseTotal}
-            accent="text-indigo-600"
-            active={activeTab === "courses"}
-            onClick={() => switchTab("courses")}
-          />
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+        <StatCard
+          label="Programs"
+          value={isLoading ? null : programs.length}
+          icon={<IconBriefcase className="h-5 w-5" />}
+          active={activeTab === "programs"}
+          onClick={() => switchTab("programs")}
+        />
+        <StatCard
+          label="Sectors"
+          value={isLoading ? null : sectors.length}
+          icon={<IconStack2 className="h-5 w-5" />}
+          active={activeTab === "sectors"}
+          onClick={() => switchTab("sectors")}
+        />
+        <StatCard
+          label="Schemes"
+          value={isLoading ? null : schemes.length}
+          icon={<IconHierarchy className="h-5 w-5" />}
+          active={activeTab === "schemes"}
+          onClick={() => switchTab("schemes")}
+        />
+        <StatCard
+          label="Courses"
+          value={isLoading ? null : courseTotal}
+          icon={<IconBook className="h-5 w-5" />}
+          active={activeTab === "courses"}
+          onClick={() => switchTab("courses")}
+        />
+      </div>
+
+      <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex items-center gap-1 overflow-x-auto border-b border-slate-100 px-4 pt-3 sm:px-5">
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => switchTab(tab.id)}
+              className={cn(
+                "inline-flex shrink-0 items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition",
+                activeTab === tab.id
+                  ? "border-sky-600 text-sky-700"
+                  : "border-transparent text-neutral-400 hover:text-neutral-600"
+              )}
+            >
+              {tab.icon}
+              {tab.label}
+              <span
+                className={cn(
+                  "rounded-full px-1.5 py-0.5 text-[10px] font-bold",
+                  activeTab === tab.id ? "bg-sky-100 text-sky-700" : "bg-neutral-100 text-neutral-500"
+                )}
+              >
+                {{ programs: programs.length, sectors: sectors.length, schemes: schemes.length, courses: courseTotal }[tab.id]}
+              </span>
+            </button>
+          ))}
         </div>
 
-        {/* ── Main table card ─────────────────────────────────────────── */}
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          {/* Tab bar */}
-          <div className="flex items-center gap-1 overflow-x-auto border-b border-slate-100 px-5 pt-3">
-            {TABS.map((tab) => (
+        <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-4 sm:px-5 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-wrap gap-1">
+            {(["all", "active", "inactive"] as const).map((s) => (
               <button
-                key={tab.id}
+                key={s}
                 type="button"
-                onClick={() => switchTab(tab.id)}
-                className={`inline-flex shrink-0 items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition ${
-                  activeTab === tab.id
-                    ? "border-slate-900 text-slate-900"
-                    : "border-transparent text-slate-400 hover:text-slate-600"
-                }`}
+                onClick={() => setStatusFilter(s)}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold capitalize transition",
+                  statusFilter === s
+                    ? "bg-sky-100 text-sky-700"
+                    : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
+                )}
               >
-                {tab.icon}
-                {tab.label}
+                {s === "all" ? "All items" : s}
                 <span
-                  className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                    activeTab === tab.id
-                      ? "bg-slate-900 text-white"
-                      : "bg-slate-100 text-slate-500"
-                  }`}
+                  className={cn(
+                    "rounded-full px-1.5 py-0.5 text-[10px] font-bold",
+                    statusFilter === s ? "bg-sky-200/70 text-sky-800" : "bg-neutral-100 text-neutral-500"
+                  )}
                 >
-                  {{ programs: programs.length, sectors: sectors.length, schemes: schemes.length, courses: courseTotal }[tab.id]}
+                  {statusCounts[s]}
                 </span>
               </button>
             ))}
           </div>
-
-          {/* Filter bar */}
-          <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex gap-1">
-              {(["all", "active", "inactive"] as const).map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => setStatusFilter(s)}
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold capitalize transition ${
-                    statusFilter === s
-                      ? "bg-slate-900 text-white"
-                      : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
-                  }`}
-                >
-                  {s}
-                  <span
-                    className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                      statusFilter === s ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"
-                    }`}
-                  >
-                    {statusCounts[s]}
-                  </span>
-                </button>
-              ))}
-            </div>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search name or code…"
-                className="h-9 w-72 rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-8 text-sm text-slate-800 outline-none transition focus:border-sky-300 focus:bg-white"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery("")}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
+          <div className="relative min-w-0 flex-1 sm:max-w-xs md:max-w-sm">
+            <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search by name or code"
+              className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-8 text-sm text-slate-800 outline-none transition focus:border-sky-300 focus:bg-white"
+            />
+            {searchQuery ? (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
+              >
+                <IconX className="h-4 w-4" />
+              </button>
+            ) : null}
           </div>
+        </div>
 
-          {/* Table content per tab */}
-          <div className="overflow-x-auto">
-            {activeTab === "programs" && (
-              <ProgramsTable
-                isLoading={isLoading}
-                onDelete={handleDelete}
-                programs={filteredPrograms}
-                onEdit={(id) => openEditModal(id)}
-                onVerify={handleVerify}
-                onSync={handleSync}
-              />
-            )}
-            {activeTab === "sectors" && (
-              <SectorsTable isLoading={isLoading} onDelete={handleDelete} sectors={filteredSectors} />
-            )}
-            {activeTab === "schemes" && (
-              <SchemesTable
-                isLoading={isLoading}
-                onDelete={handleDelete}
-                schemes={filteredSchemes}
-                onEdit={(id) => openEditModal(id)}
-                onVerify={handleVerify}
-                onSync={handleSync}
-              />
-            )}
-            {activeTab === "courses" && (
-              <CoursesTable
-                courses={courses}
-                isLoading={isLoading}
-                onDelete={handleDelete}
-                onEdit={(id) => openEditModal(id)}
-                page={coursePage}
-                pageSize={coursePageSize}
-                sectorNameById={sectorNameById}
-                total={courseTotal}
-                onPageChange={setCoursePage}
-              />
-            )}
+        <div className="hidden overflow-x-auto lg:block">
+          {activeTab === "programs" && (
+            <ProgramsTable
+              isLoading={isLoading}
+              onDelete={handleDelete}
+              programs={filteredPrograms}
+              onEdit={(id) => openEditModal(id)}
+              onVerify={handleVerify}
+              onSync={handleSync}
+            />
+          )}
+          {activeTab === "sectors" && (
+            <SectorsTable isLoading={isLoading} onDelete={handleDelete} sectors={filteredSectors} />
+          )}
+          {activeTab === "schemes" && (
+            <SchemesTable
+              isLoading={isLoading}
+              onDelete={handleDelete}
+              schemes={filteredSchemes}
+              onEdit={(id) => openEditModal(id)}
+              onVerify={handleVerify}
+              onSync={handleSync}
+            />
+          )}
+          {activeTab === "courses" && (
+            <CoursesTable
+              courses={courses}
+              isLoading={isLoading}
+              onDelete={handleDelete}
+              onEdit={(id) => openEditModal(id)}
+              page={coursePage}
+              pageSize={coursePageSize}
+              sectorNameById={sectorNameById}
+              total={courseTotal}
+              onPageChange={setCoursePage}
+            />
+          )}
+        </div>
 
-          </div>
+        <div className="divide-y divide-slate-100 lg:hidden">
+          {activeTab === "programs" && (
+            <ProgramsMobileList
+              isLoading={isLoading}
+              onDelete={handleDelete}
+              onEdit={(id) => openEditModal(id)}
+              onSync={handleSync}
+              onVerify={handleVerify}
+              programs={filteredPrograms}
+            />
+          )}
+          {activeTab === "sectors" && (
+            <SectorsMobileList isLoading={isLoading} onDelete={handleDelete} sectors={filteredSectors} />
+          )}
+          {activeTab === "schemes" && (
+            <SchemesMobileList
+              isLoading={isLoading}
+              onDelete={handleDelete}
+              onEdit={(id) => openEditModal(id)}
+              onSync={handleSync}
+              onVerify={handleVerify}
+              schemes={filteredSchemes}
+            />
+          )}
+          {activeTab === "courses" && (
+            <CoursesMobileList
+              courses={courses}
+              isLoading={isLoading}
+              onDelete={handleDelete}
+              onEdit={(id) => openEditModal(id)}
+              page={coursePage}
+              pageSize={coursePageSize}
+              sectorNameById={sectorNameById}
+              total={courseTotal}
+              onPageChange={setCoursePage}
+            />
+          )}
         </div>
       </div>
 
@@ -861,6 +954,8 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           form={courseForm}
           isEdit={false}
           isSaving={isSaving}
+          programs={programs}
+          schemes={schemes}
           sectors={sectors}
           setForm={setCourseForm}
           onClose={() => {
@@ -875,6 +970,8 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           form={courseForm}
           isEdit={true}
           isSaving={isSaving}
+          programs={programs}
+          schemes={schemes}
           sectors={sectors}
           setForm={setCourseForm}
           onClose={() => {
@@ -890,6 +987,332 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
 }
 
 // ─── Table components ────────────────────────────────────────────────────────
+
+// ─── Mobile lists ─────────────────────────────────────────────────────────────
+
+function ProgramsMobileList({
+  isLoading,
+  onDelete,
+  onEdit,
+  onSync,
+  onVerify,
+  programs,
+}: {
+  isLoading: boolean;
+  onDelete: (tab: Tab, id: string, label: string) => void;
+  onEdit: (id: string) => void;
+  onSync: (tab: "programs" | "schemes", id: string, label: string) => void;
+  onVerify: (tab: "programs" | "schemes", id: string, label: string) => void;
+  programs: ProgramRecord[];
+}) {
+  if (isLoading) return <MobileLoadingState />;
+  if (programs.length === 0) {
+    return <MobileEmptyState icon={<IconBriefcase className="mx-auto h-8 w-8 text-slate-300" />} message="No programs found" />;
+  }
+
+  return (
+    <>
+      {programs.map((program) => {
+        const workflow = resolveSidhWorkflowState(program.verifiedForSidh, program.syncToSidh);
+        return (
+          <div key={program.id} className="px-4 py-4">
+            <button type="button" onClick={() => onEdit(program.programId)} className="w-full text-left">
+              <MasterDataIdentity
+                accentClass="bg-violet-100 text-violet-700"
+                code={program.code}
+                name={program.name}
+                subtitle={program.description}
+              />
+              <div className="mt-3 flex flex-wrap gap-2">
+                <WorkflowBadge state={workflow} />
+                <StatusBadge status={program.status} />
+              </div>
+            </button>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <RowActionButton
+                label={workflow === "draft" ? "Verify" : workflow === "verified" ? "Verified" : "Ready"}
+                onClick={() => onVerify("programs", program.programId, program.name)}
+                icon={<IconCircleCheck className="h-3.5 w-3.5" />}
+                tone={workflow === "draft" ? "primary" : "neutral"}
+                disabled={workflow !== "draft"}
+              />
+              <RowActionButton
+                label={program.syncToSidh ? "Ready" : "Mark ready"}
+                onClick={() => onSync("programs", program.programId, program.name)}
+                icon={<IconRefresh className="h-3.5 w-3.5" />}
+                tone={program.syncToSidh ? "neutral" : "primary"}
+                disabled={workflow !== "verified"}
+              />
+              <EditButton onClick={() => onEdit(program.programId)} />
+              <RowActionButton
+                label="Delete"
+                onClick={() => onDelete("programs", program.programId, program.name)}
+                icon={<IconTrash className="h-3.5 w-3.5" />}
+                tone="danger"
+              />
+            </div>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+function SectorsMobileList({
+  isLoading,
+  onDelete,
+  sectors,
+}: {
+  isLoading: boolean;
+  onDelete: (tab: Tab, id: string, label: string) => void;
+  sectors: SectorRecord[];
+}) {
+  if (isLoading) return <MobileLoadingState />;
+  if (sectors.length === 0) {
+    return <MobileEmptyState icon={<IconStack2 className="mx-auto h-8 w-8 text-slate-300" />} message="No sectors found" />;
+  }
+
+  return (
+    <>
+      {sectors.map((sector) => (
+        <div key={sector.id} className="px-4 py-4">
+          <MasterDataIdentity accentClass="bg-sky-100 text-sky-700" code={sector.code} name={sector.name} subtitle={sector.description} />
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <StatusBadge status={sector.status} />
+            <RowActionButton
+              label="Delete"
+              onClick={() => onDelete("sectors", sector.sectorId, sector.name)}
+              icon={<IconTrash className="h-3.5 w-3.5" />}
+              tone="danger"
+            />
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+function SchemesMobileList({
+  isLoading,
+  onDelete,
+  onEdit,
+  onSync,
+  onVerify,
+  schemes,
+}: {
+  isLoading: boolean;
+  onDelete: (tab: Tab, id: string, label: string) => void;
+  onEdit: (id: string) => void;
+  onSync: (tab: "programs" | "schemes", id: string, label: string) => void;
+  onVerify: (tab: "programs" | "schemes", id: string, label: string) => void;
+  schemes: SchemeRecord[];
+}) {
+  if (isLoading) return <MobileLoadingState />;
+  if (schemes.length === 0) {
+    return (
+      <MobileEmptyState
+        hint='Use "Load starter data" to create the default Fee Based scheme'
+        icon={<IconHierarchy className="mx-auto h-8 w-8 text-slate-300" />}
+        message="No schemes found"
+      />
+    );
+  }
+
+  return (
+    <>
+      {schemes.map((scheme) => {
+        const workflow = resolveSidhWorkflowState(scheme.verifiedForSidh, scheme.syncEnabled);
+        return (
+          <div key={scheme.id} className="px-4 py-4">
+            <button type="button" onClick={() => onEdit(scheme.schemeId)} className="w-full text-left">
+              <MasterDataIdentity
+                accentClass="bg-emerald-100 text-emerald-700"
+                code={scheme.code}
+                name={scheme.name}
+                subtitle={scheme.sidhSchemeId ?? scheme.fundingType ?? undefined}
+              />
+              <div className="mt-3 flex flex-wrap gap-2">
+                <WorkflowBadge state={workflow} />
+                <StatusBadge status={scheme.status} />
+              </div>
+            </button>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <RowActionButton
+                label={workflow === "draft" ? "Verify" : workflow === "verified" ? "Verified" : "Ready"}
+                onClick={() => onVerify("schemes", scheme.schemeId, scheme.name)}
+                icon={<IconCircleCheck className="h-3.5 w-3.5" />}
+                tone={workflow === "draft" ? "primary" : "neutral"}
+                disabled={workflow !== "draft"}
+              />
+              <RowActionButton
+                label={scheme.syncEnabled ? "Ready" : "Mark ready"}
+                onClick={() => onSync("schemes", scheme.schemeId, scheme.name)}
+                icon={<IconRefresh className="h-3.5 w-3.5" />}
+                tone={scheme.syncEnabled ? "neutral" : "primary"}
+                disabled={workflow !== "verified"}
+              />
+              <EditButton onClick={() => onEdit(scheme.schemeId)} />
+              <RowActionButton
+                label="Delete"
+                onClick={() => onDelete("schemes", scheme.schemeId, scheme.name)}
+                icon={<IconTrash className="h-3.5 w-3.5" />}
+                tone="danger"
+              />
+            </div>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+function CoursesMobileList({
+  courses,
+  isLoading,
+  onDelete,
+  onEdit,
+  onPageChange,
+  page,
+  pageSize,
+  sectorNameById,
+  total,
+}: {
+  courses: CourseRecord[];
+  isLoading: boolean;
+  onDelete: (tab: Tab, id: string, label: string) => void;
+  onEdit: (id: string) => void;
+  onPageChange: (page: number) => void;
+  page: number;
+  pageSize: number;
+  sectorNameById: Map<string, string>;
+  total: number;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  if (isLoading) return <MobileLoadingState />;
+  if (courses.length === 0) {
+    return <MobileEmptyState icon={<IconBook className="mx-auto h-8 w-8 text-slate-300" />} message="No courses found" />;
+  }
+
+  return (
+    <>
+      {courses.map((course) => (
+        <div key={course.id} className="px-4 py-4">
+          <button type="button" onClick={() => onEdit(course.courseId)} className="w-full text-left">
+            <MasterDataIdentity
+              accentClass="bg-indigo-100 text-indigo-700"
+              code={course.sidhCourseId || course.courseCode}
+              name={course.courseName}
+              subtitle={sectorNameById.get(course.sectorId) ?? undefined}
+            />
+            <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
+              <span>{course.jobRole}</span>
+              <span>·</span>
+              <span>{course.totalHours} hours</span>
+              {course.nsqfLevel ? (
+                <>
+                  <span>·</span>
+                  <span>NSQF {course.nsqfLevel}</span>
+                </>
+              ) : null}
+            </div>
+            <div className="mt-3">
+              <ApprovalBadge status={course.approvalStatus} />
+            </div>
+          </button>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <EditButton onClick={() => onEdit(course.courseId)} />
+            <RowActionButton
+              label="Delete"
+              onClick={() => onDelete("courses", course.courseId, course.courseName)}
+              icon={<IconTrash className="h-3.5 w-3.5" />}
+              tone="danger"
+            />
+          </div>
+        </div>
+      ))}
+      {totalPages > 1 ? (
+        <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3">
+          <p className="text-xs text-slate-500">
+            Page {page} of {totalPages}
+          </p>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              disabled={page <= 1}
+              onClick={() => onPageChange(Math.max(1, page - 1))}
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 disabled:opacity-40"
+            >
+              <IconChevronLeft className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              disabled={page >= totalPages}
+              onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 disabled:opacity-40"
+            >
+              <IconChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function MasterDataIdentity({
+  accentClass,
+  code,
+  name,
+  subtitle,
+}: {
+  accentClass: string;
+  code: string;
+  name: string;
+  subtitle?: string | null;
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-bold", accentClass)}>
+        {name.trim().charAt(0).toUpperCase()}
+      </div>
+      <div className="min-w-0">
+        <div className="font-semibold text-slate-900">{name}</div>
+        <div className="font-mono text-xs text-slate-500">{code}</div>
+        {subtitle ? <div className="mt-0.5 truncate text-xs text-slate-400">{subtitle}</div> : null}
+      </div>
+    </div>
+  );
+}
+
+function MobileLoadingState() {
+  return (
+    <div className="px-4 py-12 text-center text-sm text-slate-400">
+      <IconLoader2 className="mx-auto h-6 w-6 animate-spin" />
+      <p className="mt-2">Loading…</p>
+    </div>
+  );
+}
+
+function MobileEmptyState({
+  hint,
+  icon,
+  message,
+}: {
+  hint?: string;
+  icon: React.ReactNode;
+  message: string;
+}) {
+  return (
+    <div className="px-4 py-12 text-center">
+      {icon}
+      <p className="mt-2 text-sm font-medium text-slate-500">{message}</p>
+      {hint ? <p className="mt-1 text-xs text-slate-400">{hint}</p> : null}
+    </div>
+  );
+}
+
+// ─── Tables ────────────────────────────────────────────────────────────────────
 
 function ProgramsTable({
   isLoading,
@@ -910,7 +1333,7 @@ function ProgramsTable({
     <table className="w-full text-sm">
       <thead>
         <tr className="border-b border-slate-100 bg-slate-50/80">
-          {["Program", "Code", "Workflow", "Status", ""].map((h) => (
+          {["Program", "Code", "Setup status", "Status", ""].map((h) => (
             <th
               key={h}
               className="px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500 last:text-right"
@@ -926,7 +1349,7 @@ function ProgramsTable({
         ) : programs.length === 0 ? (
           <EmptyRow
             cols={5}
-            icon={<BriefcaseBusiness className="mx-auto h-8 w-8 text-slate-300" />}
+            icon={<IconBriefcase className="mx-auto h-8 w-8 text-slate-300" />}
             message="No programs found"
           />
         ) : (
@@ -966,14 +1389,14 @@ function ProgramsTable({
                     <RowActionButton
                       label={workflow === "draft" ? "Verify" : workflow === "verified" ? "Verified" : "Ready"}
                       onClick={() => onVerify("programs", p.programId, p.name)}
-                      icon={<Save className="h-3 w-3" />}
+                      icon={<IconCircleCheck className="h-3 w-3" />}
                       tone={workflow === "draft" ? "primary" : "neutral"}
                       disabled={workflow !== "draft"}
                     />
                     <RowActionButton
                       label={p.syncToSidh ? "Ready" : "Mark Ready"}
                       onClick={() => onSync("programs", p.programId, p.name)}
-                      icon={<RefreshCw className="h-3 w-3" />}
+                      icon={<IconRefresh className="h-3 w-3" />}
                       tone={p.syncToSidh ? "neutral" : "primary"}
                       disabled={workflow !== "verified"}
                     />
@@ -981,7 +1404,7 @@ function ProgramsTable({
                     <RowActionButton
                       label="Delete"
                       onClick={() => onDelete("programs", p.programId, p.name)}
-                      icon={<Trash2 className="h-3 w-3" />}
+                      icon={<IconTrash className="h-3 w-3" />}
                       tone="danger"
                     />
                   </div>
@@ -1024,7 +1447,7 @@ function SectorsTable({
         ) : sectors.length === 0 ? (
           <EmptyRow
             cols={5}
-            icon={<Layers3 className="mx-auto h-8 w-8 text-slate-300" />}
+            icon={<IconStack2 className="mx-auto h-8 w-8 text-slate-300" />}
             message="No sectors found"
           />
         ) : (
@@ -1050,7 +1473,7 @@ function SectorsTable({
                   <RowActionButton
                     label="Delete"
                     onClick={() => onDelete("sectors", s.sectorId, s.name)}
-                    icon={<Trash2 className="h-3 w-3" />}
+                    icon={<IconTrash className="h-3 w-3" />}
                     tone="danger"
                   />
                 </div>
@@ -1082,7 +1505,7 @@ function SchemesTable({
     <table className="w-full text-sm">
       <thead>
         <tr className="border-b border-slate-100 bg-slate-50/80">
-          {["Scheme", "Code", "SIDH Scheme ID", "Workflow", "Valid Until", "Status", ""].map((h) => (
+          {["Scheme", "Code", "Government ID", "Setup status", "Valid until", "Status", ""].map((h) => (
             <th
               key={h}
               className="px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500 last:text-right"
@@ -1098,9 +1521,9 @@ function SchemesTable({
         ) : schemes.length === 0 ? (
           <EmptyRow
             cols={7}
-            icon={<Network className="mx-auto h-8 w-8 text-slate-300" />}
+            icon={<IconHierarchy className="mx-auto h-8 w-8 text-slate-300" />}
             message="No schemes found"
-            hint='Use "Seed Defaults" to create the default Fee Based scheme from the legacy constants'
+            hint='Use "Load starter data" to create the default Fee Based scheme'
           />
         ) : (
           schemes.map((s) => {
@@ -1157,14 +1580,14 @@ function SchemesTable({
                     <RowActionButton
                       label={workflow === "draft" ? "Verify" : workflow === "verified" ? "Verified" : "Ready"}
                       onClick={() => onVerify("schemes", s.schemeId, s.name)}
-                      icon={<Save className="h-3 w-3" />}
+                      icon={<IconCircleCheck className="h-3 w-3" />}
                       tone={workflow === "draft" ? "primary" : "neutral"}
                       disabled={workflow !== "draft"}
                     />
                     <RowActionButton
                       label={s.syncEnabled ? "Ready" : "Mark Ready"}
                       onClick={() => onSync("schemes", s.schemeId, s.name)}
-                      icon={<RefreshCw className="h-3 w-3" />}
+                      icon={<IconRefresh className="h-3 w-3" />}
                       tone={s.syncEnabled ? "neutral" : "primary"}
                       disabled={workflow !== "verified"}
                     />
@@ -1172,7 +1595,7 @@ function SchemesTable({
                     <RowActionButton
                       label="Delete"
                       onClick={() => onDelete("schemes", s.schemeId, s.name)}
-                      icon={<Trash2 className="h-3 w-3" />}
+                      icon={<IconTrash className="h-3 w-3" />}
                       tone="danger"
                     />
                   </div>
@@ -1245,7 +1668,7 @@ function CoursesTable({
           ) : courses.length === 0 ? (
             <EmptyRow
               cols={12}
-              icon={<BookOpenText className="mx-auto h-8 w-8 text-slate-300" />}
+              icon={<IconBook className="mx-auto h-8 w-8 text-slate-300" />}
               message="No courses found"
             />
           ) : (
@@ -1259,7 +1682,7 @@ function CoursesTable({
                   {sectorNameById.get(course.sectorId) ?? <span className="text-slate-300">NA</span>}
                 </td>
                 <td className="px-4 py-4 font-semibold text-slate-900">{course.courseName}</td>
-                <td className="px-4 py-4 font-mono text-xs text-slate-600">{course.courseCode}</td>
+                <td className="px-4 py-4 font-mono text-xs text-slate-600">{course.sidhCourseId || course.courseCode}</td>
                 <td className="px-4 py-4 text-slate-600">{course.jobRole}</td>
                 <td className="px-4 py-4 text-slate-600">{course.nsqfLevel || "NA"}</td>
                 <td className="px-4 py-4 text-slate-600">{course.trainingPerDayHours ?? "NA"}</td>
@@ -1276,7 +1699,7 @@ function CoursesTable({
                     <RowActionButton
                       label="Delete"
                       onClick={() => onDelete("courses", course.courseId, course.courseName)}
-                      icon={<Trash2 className="h-3 w-3" />}
+                      icon={<IconTrash className="h-3 w-3" />}
                       tone="danger"
                     />
                   </div>
@@ -1339,7 +1762,7 @@ function ProgramModal({
 }) {
   return (
     <Modal
-      icon={<BriefcaseBusiness className="h-5 w-5" />}
+      icon={<IconBriefcase className="h-5 w-5" />}
       iconBg="bg-violet-100 text-violet-600"
       subtitle={isEdit ? "Update the program details below." : "Add a new program to the platform."}
       title={isEdit ? "Edit Program" : "Create Program"}
@@ -1377,6 +1800,106 @@ function ProgramModal({
               <option value="inactive">Inactive</option>
             </select>
           </FormField>
+          <FormField label="Skilling Category ID">
+            <input
+              type="number"
+              min="1"
+              value={form.skillingCategoryId}
+              onChange={(e) => setForm((f) => ({ ...f, skillingCategoryId: e.target.value }))}
+              className={inputCls}
+              placeholder="1"
+              required
+            />
+          </FormField>
+          <FormField label="Skilling Category Name">
+            <input
+              value={form.skillingCategoryName}
+              onChange={(e) => setForm((f) => ({ ...f, skillingCategoryName: e.target.value }))}
+              className={inputCls}
+              placeholder="NSDC Market led programme"
+            />
+          </FormField>
+          <FormField label="Skilling Category Scheme">
+            <input
+              value={form.skillingCategoryScheme}
+              onChange={(e) => setForm((f) => ({ ...f, skillingCategoryScheme: e.target.value }))}
+              className={inputCls}
+              placeholder="Fee Based"
+            />
+          </FormField>
+        </div>
+        <div className="rounded-2xl border border-violet-100 bg-violet-50/40 p-4">
+          <p className="mb-3 text-sm font-semibold text-slate-900">SIDH Batch Payload Defaults</p>
+          <p className="mb-4 text-xs text-slate-500">
+            These values are used automatically when creating batches for courses linked to this program.
+          </p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField label="Assessment Mode">
+              <select
+                value={form.assessmentMode}
+                onChange={(e) => setForm((f) => ({ ...f, assessmentMode: e.target.value }))}
+                className={inputCls}
+              >
+                {SIDH_BATCH_FIELD_OPTIONS.assessmentMode.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Batch Type">
+              <select
+                value={form.batchType}
+                onChange={(e) => setForm((f) => ({ ...f, batchType: e.target.value }))}
+                className={inputCls}
+              >
+                {SIDH_BATCH_FIELD_OPTIONS.batchType.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Batch Category (type)">
+              <select
+                value={form.batchCategoryType}
+                onChange={(e) => setForm((f) => ({ ...f, batchCategoryType: e.target.value }))}
+                className={inputCls}
+              >
+                {SIDH_BATCH_FIELD_OPTIONS.categoryType.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Fee Paid By">
+              <select
+                value={form.feePaidBy}
+                onChange={(e) => setForm((f) => ({ ...f, feePaidBy: e.target.value }))}
+                className={inputCls}
+              >
+                {SIDH_BATCH_FIELD_OPTIONS.feePaidBy.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Created Source">
+              <select
+                value={form.createdSource}
+                onChange={(e) => setForm((f) => ({ ...f, createdSource: e.target.value }))}
+                className={inputCls}
+              >
+                {SIDH_BATCH_FIELD_OPTIONS.createdSource.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+          </div>
         </div>
         <FormField label="Description">
           <textarea
@@ -1410,7 +1933,7 @@ function SectorModal({
 }) {
   return (
     <Modal
-      icon={<Layers3 className="h-5 w-5" />}
+      icon={<IconStack2 className="h-5 w-5" />}
       iconBg="bg-sky-100 text-sky-600"
       subtitle="Add a new sector to organise courses and schemes."
       title="Create Sector"
@@ -1480,7 +2003,7 @@ function SchemeModal({
 }) {
   return (
     <Modal
-      icon={<Network className="h-5 w-5" />}
+      icon={<IconHierarchy className="h-5 w-5" />}
       iconBg="bg-emerald-100 text-emerald-600"
       subtitle={isEdit ? "Update scheme eligibility and sync settings." : "Add a new SIDH-linked scheme."}
       title={isEdit ? "Edit Scheme" : "Create Scheme"}
@@ -1511,7 +2034,23 @@ function SchemeModal({
               value={form.sidhSchemeId}
               onChange={(e) => setForm((f) => ({ ...f, sidhSchemeId: e.target.value }))}
               className={inputCls}
-              placeholder="Scheme_2"
+              placeholder="44644"
+            />
+          </FormField>
+          <FormField label="SIDH Scheme Reference ID">
+            <input
+              value={form.sidhSchemeReferenceId}
+              onChange={(e) => setForm((f) => ({ ...f, sidhSchemeReferenceId: e.target.value }))}
+              className={inputCls}
+              placeholder="Scheme_1159"
+            />
+          </FormField>
+          <FormField label="Scheme Type">
+            <input
+              value={form.sidhSchemeType}
+              onChange={(e) => setForm((f) => ({ ...f, sidhSchemeType: e.target.value }))}
+              className={inputCls}
+              placeholder="feeBased"
             />
           </FormField>
           <FormField label="Status">
@@ -1531,7 +2070,7 @@ function SchemeModal({
               value={form.fundingType}
               onChange={(e) => setForm((f) => ({ ...f, fundingType: e.target.value }))}
               className={inputCls}
-              placeholder="Self-Paid"
+              placeholder="Optional internal label"
             />
           </FormField>
           <FormField label="Beneficiary Type">
@@ -1582,6 +2121,8 @@ function CourseModal({
   isSaving,
   onClose,
   onSubmit,
+  programs,
+  schemes,
   sectors,
   setForm,
 }: {
@@ -1590,12 +2131,14 @@ function CourseModal({
   isSaving: boolean;
   onClose: () => void;
   onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
+  programs: ProgramRecord[];
+  schemes: SchemeRecord[];
   sectors: SectorRecord[];
   setForm: React.Dispatch<React.SetStateAction<CourseForm>>;
 }) {
   return (
     <Modal
-      icon={<BookOpenText className="h-5 w-5" />}
+      icon={<IconBook className="h-5 w-5" />}
       iconBg="bg-indigo-100 text-indigo-600"
       subtitle={isEdit ? "Update the course details below." : "Add a course to the local master data."}
       title={isEdit ? "Edit Course" : "Add Course"}
@@ -1619,6 +2162,37 @@ function CourseModal({
               ))}
             </select>
           </FormField>
+          <FormField label="Linked Program">
+            <select
+              value={form.programId}
+              onChange={(e) => setForm((current) => ({ ...current, programId: e.target.value }))}
+              className={inputCls}
+              required
+            >
+              <option value="">Select program</option>
+              {programs.map((program) => (
+                <option key={program.programId} value={program.programId}>
+                  {program.name}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Linked Scheme">
+            <select
+              value={form.schemeId}
+              onChange={(e) => setForm((current) => ({ ...current, schemeId: e.target.value }))}
+              className={inputCls}
+              required
+            >
+              <option value="">Select scheme</option>
+              {schemes.map((scheme) => (
+                <option key={scheme.schemeId} value={scheme.schemeId}>
+                  {scheme.name}
+                  {scheme.sidhSchemeId ? ` (${scheme.sidhSchemeId})` : ""}
+                </option>
+              ))}
+            </select>
+          </FormField>
           <FormField label="Course Name">
             <input
               value={form.courseName}
@@ -1628,10 +2202,10 @@ function CourseModal({
               required
             />
           </FormField>
-          <FormField label="Course ID">
+          <FormField label="SIDH Course ID">
             <input
-              value={form.courseCode}
-              onChange={(e) => setForm((current) => ({ ...current, courseCode: e.target.value }))}
+              value={form.sidhCourseId}
+              onChange={(e) => setForm((current) => ({ ...current, sidhCourseId: e.target.value }))}
               className={inputCls}
               placeholder="FeeSchCor_48128"
               required
@@ -1701,16 +2275,17 @@ function CourseModal({
               required
             />
           </FormField>
-          <FormField label="Validity">
+          <FormField label="Valid Until">
             <input
-              type="number"
-              min="1"
-              value={form.validity}
-              onChange={(e) => setForm((current) => ({ ...current, validity: e.target.value }))}
+              type="date"
+              value={form.validUntil}
+              onChange={(e) => setForm((current) => ({ ...current, validUntil: e.target.value }))}
               className={inputCls}
-              placeholder="365"
               required
             />
+            <p className="mt-1 text-xs text-slate-500">
+              Single expiry date for the SIDH course mapping. Validity starts from the approval date (or today if blank).
+            </p>
           </FormField>
           <FormField label="Short Form">
             <input
@@ -1769,7 +2344,7 @@ function Modal({
             onClick={onClose}
             className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
           >
-            <X className="h-4 w-4" />
+            <IconX className="h-4 w-4" />
           </button>
         </div>
         {/* Scrollable body */}
@@ -1803,11 +2378,11 @@ function ModalFooter({
         className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {isSaving ? (
-          <LoaderCircle className="h-4 w-4 animate-spin" />
+          <IconLoader2 className="h-4 w-4 animate-spin" />
         ) : isEdit ? (
           <Save className="h-4 w-4" />
         ) : (
-          <Plus className="h-4 w-4" />
+          <IconPlus className="h-4 w-4" />
         )}
         {isEdit ? "Save Changes" : "Create"}
       </button>
@@ -1816,37 +2391,38 @@ function ModalFooter({
 }
 
 function StatCard({
-  accent = "text-slate-900",
-  active,
+  active = false,
   icon,
-  iconBg,
   label,
   onClick,
   value,
 }: {
-  accent?: string;
   active?: boolean;
   icon: React.ReactNode;
-  iconBg: string;
   label: string;
   onClick?: () => void;
-  value: number;
+  value: number | null;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-2xl border p-5 text-left shadow-sm transition ${
-        active
-          ? "border-slate-300 bg-white ring-2 ring-slate-900/10"
-          : "border-slate-200 bg-white hover:border-slate-300"
-      }`}
+      className={cn(
+        "flex flex-col gap-3 rounded-3xl border bg-white p-4 text-left shadow-sm transition-shadow hover:shadow-md sm:p-5",
+        active ? "border-sky-300 ring-1 ring-sky-200" : "border-slate-200"
+      )}
     >
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</p>
-        <span className={`rounded-xl p-2 ${iconBg}`}>{icon}</span>
+      <span className="text-neutral-400">{icon}</span>
+      <div>
+        <p className="text-2xl font-bold text-neutral-900">
+          {value === null ? (
+            <span className="inline-block h-7 w-10 animate-pulse rounded bg-neutral-200" />
+          ) : (
+            value.toLocaleString()
+          )}
+        </p>
+        <p className="mt-0.5 text-xs text-neutral-500">{label}</p>
       </div>
-      <p className={`mt-3 text-3xl font-bold tracking-tight ${accent}`}>{value}</p>
     </button>
   );
 }
@@ -1854,13 +2430,12 @@ function StatCard({
 function StatusBadge({ status }: { status: "active" | "inactive" }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold",
         status === "active" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"
-      }`}
+      )}
     >
-      <span
-        className={`h-1.5 w-1.5 rounded-full ${status === "active" ? "bg-emerald-500" : "bg-slate-400"}`}
-      />
+      <span className={cn("h-1.5 w-1.5 rounded-full", status === "active" ? "bg-emerald-500" : "bg-slate-400")} />
       {status === "active" ? "Active" : "Inactive"}
     </span>
   );
@@ -1894,16 +2469,23 @@ function formatDate(value: string | null) {
 }
 
 function formatValidity(course: CourseRecord) {
-  if (course.validityStartDate && course.validityEndDate) {
-    return `${new Date(course.validityStartDate).toLocaleDateString("en-IN", {
+  if (course.validityEndDate) {
+    const until = new Date(course.validityEndDate).toLocaleDateString("en-IN", {
       day: "numeric",
       month: "short",
       year: "numeric",
-    })} - ${new Date(course.validityEndDate).toLocaleDateString("en-IN", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    })}`;
+    });
+
+    if (course.validityStartDate) {
+      const from = new Date(course.validityStartDate).toLocaleDateString("en-IN", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      });
+      return `${from} → ${until}`;
+    }
+
+    return `Until ${until}`;
   }
 
   return course.validity ? `${course.validity} days` : "NA";
@@ -1917,7 +2499,7 @@ function WorkflowBadge({ state }: { state: SidhWorkflowState }) {
         ? "bg-emerald-50 text-emerald-700"
         : "bg-slate-100 text-slate-500";
 
-  const label = state === "ready" ? "Ready for SIDH" : state === "verified" ? "Verified" : "Draft";
+  const label = state === "ready" ? "Ready for sync" : state === "verified" ? "Verified" : "Needs setup";
 
   return (
     <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${className}`}>
@@ -1936,7 +2518,7 @@ function EditButton({ onClick }: { onClick: () => void }) {
       }}
       className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:border-sky-300 hover:text-sky-700"
     >
-      <Pencil className="h-3 w-3" />
+      <IconPencil className="h-3 w-3" />
       Edit
     </button>
   );
@@ -1993,7 +2575,7 @@ function LoadingRow({ cols }: { cols: number }) {
   return (
     <tr>
       <td colSpan={cols} className="px-5 py-16 text-center text-sm text-slate-400">
-        <LoaderCircle className="mx-auto h-6 w-6 animate-spin" />
+        <IconLoader2 className="mx-auto h-6 w-6 animate-spin" />
         <p className="mt-2">Loading…</p>
       </td>
     </tr>

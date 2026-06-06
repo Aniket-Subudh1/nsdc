@@ -51,6 +51,36 @@ const schemeSchema = new mongoose.Schema(
       default: null,
       trim: true,
     },
+    sidhSchemeReferenceId: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    sidhSchemeType: {
+      type: String,
+      default: "feeBased",
+      trim: true,
+    },
+    assessmentMode: {
+      type: String,
+      default: "Self",
+      trim: true,
+    },
+    batchType: {
+      type: String,
+      default: "Regular",
+      trim: true,
+    },
+    batchCategoryType: {
+      type: String,
+      default: "Fee Based",
+      trim: true,
+    },
+    createdSource: {
+      type: String,
+      default: "Created for NSDC Academy Partners",
+      trim: true,
+    },
     fundingType: {
       type: String,
       default: null,

@@ -3,6 +3,7 @@ import { connectToDatabase } from "@/lib/server/mongodb";
 import { ReferenceValueModel } from "@/lib/server/models/reference-value";
 import { RoleModel } from "@/lib/server/models/role";
 import { ROLE_KEYS, ROLE_PERMISSIONS } from "@/lib/server/rbac";
+import { buildSidhEnumSeeds } from "@/lib/sidh-batch-field-options";
 
 const referenceSeedValues = [
   { category: "salutation", code: "mr", label: "Mr", sortOrder: 1 },
@@ -34,6 +35,7 @@ const referenceSeedValues = [
   { category: "heard_about_us", code: "training_provider", label: "Training Provider", sortOrder: 1 },
   { category: "heard_about_us", code: "community_outreach", label: "Community Outreach", sortOrder: 2 },
   { category: "heard_about_us", code: "referral", label: "Referral", sortOrder: 3 },
+  ...buildSidhEnumSeeds(),
 ];
 
 let bootstrapPromise: Promise<void> | undefined;

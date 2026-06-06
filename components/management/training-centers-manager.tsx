@@ -2,26 +2,25 @@
 
 import { startTransition, useEffect, useMemo, useState } from "react";
 import {
-  Building2,
-  CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
-  ChevronDown,
-  Filter,
-  LoaderCircle,
-  MapPin,
-  MapPinned,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Save,
-  Search,
-  Trash2,
-  X,
-} from "lucide-react";
+  IconBuildingCommunity,
+  IconChevronDown,
+  IconChevronLeft,
+  IconChevronRight,
+  IconCircleCheck,
+  IconLoader2,
+  IconMapPin,
+  IconPencil,
+  IconPlus,
+  IconRefresh,
+  IconSearch,
+  IconTrash,
+  IconX,
+} from "@tabler/icons-react";
+import { Save } from "lucide-react";
 import { toast } from "sonner";
 
 import { apiFetch, ClientApiError } from "@/lib/client/api";
+import { cn } from "@/lib/utils";
 
 type TrainingCentersManagerProps = {
   portal: "admin" | "training_partner";
@@ -78,17 +77,18 @@ type PagedPrograms = {
 };
 
 type StatusFilter = "all" | "active" | "inactive";
+type WorkflowFilter = "all" | CenterWorkflowState;
 
 const portalContent = {
   admin: {
     description:
-      "Maintain local training-center records first, then store the approved SIDH TC ID used later during batch sync.",
+      "Add and manage your training locations, link programs, and keep government portal IDs ready for batch sync.",
     heading: "Training Centers",
   },
   training_partner: {
     description:
-      "Manage local training centers in scope, keep program mappings accurate, and capture the approved SIDH TC ID before any batch sync.",
-    heading: "Scoped Training Centers",
+      "Manage the centers in your scope, keep program links accurate, and store approved government portal IDs.",
+    heading: "Your Training Centers",
   },
 } as const;
 
@@ -115,6 +115,7 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
   const [showEditModal, setShowEditModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [workflowFilter, setWorkflowFilter] = useState<WorkflowFilter>("all");
   const [form, setForm] = useState(makeEmptyForm());
 
   const content = portalContent[portal];
@@ -134,9 +135,11 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
         center.district.toLowerCase().includes(q) ||
         center.state.toLowerCase().includes(q);
       const matchesStatus = statusFilter === "all" || center.status === statusFilter;
-      return matchesSearch && matchesStatus;
+      const matchesWorkflow =
+        workflowFilter === "all" || resolveCenterWorkflowState(center) === workflowFilter;
+      return matchesSearch && matchesStatus && matchesWorkflow;
     });
-  }, [centers, searchQuery, statusFilter]);
+  }, [centers, searchQuery, statusFilter, workflowFilter]);
 
   const stats = useMemo(
     () => ({
@@ -308,343 +311,254 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
   const countByStatus = (s: StatusFilter) =>
     s === "all" ? centers.length : centers.filter((c) => c.status === s).length;
 
+  function clearFilters() {
+    setStatusFilter("all");
+    setWorkflowFilter("all");
+  }
+
   return (
-    <div className="flex min-h-full flex-col bg-slate-50">
-      {/* ── Page header ─────────────────────────────────────────────── */}
-      <div className="sticky top-0 z-10 border-b border-slate-200 bg-white px-6 py-4 shadow-sm">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-sky-600">
-              Master Data
-            </p>
-            <h1 className="mt-0.5 text-xl font-bold tracking-tight text-slate-900">
-              {content.heading}
-            </h1>
-            <p className="mt-1 max-w-2xl text-sm text-slate-500">{content.description}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => startTransition(() => void loadCenters(page))}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-              Refresh
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                applyCenter(null);
-                setShowCreateModal(true);
-              }}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700"
-            >
-              <Plus className="h-4 w-4" />
-              New Center
-            </button>
-          </div>
+    <div className="flex flex-1 flex-col gap-6 bg-slate-100 px-4 py-4 md:px-8 md:py-8">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-neutral-900">{content.heading}</h1>
+          <p className="mt-1 max-w-2xl text-sm text-neutral-500">{content.description}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => startTransition(() => void loadCenters(page))}
+            disabled={isLoading}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-neutral-600 transition-colors hover:bg-slate-50 disabled:opacity-50"
+          >
+            <IconRefresh className={cn("h-4 w-4", isLoading && "animate-spin")} />
+            Refresh
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              applyCenter(null);
+              setShowCreateModal(true);
+            }}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700"
+          >
+            <IconPlus className="h-4 w-4" />
+            Add center
+          </button>
         </div>
       </div>
 
-      <div className="flex flex-col gap-5 p-6">
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <StatCard
-            icon={<Building2 className="h-5 w-5" />}
-            iconBg="bg-slate-100 text-slate-600"
-            label="Total Centers"
-            value={stats.total}
-          />
-          <StatCard
-            icon={<MapPinned className="h-5 w-5" />}
-            iconBg="bg-emerald-100 text-emerald-600"
-            label="Active"
-            value={stats.active}
-            accent="text-emerald-600"
-          />
-          <StatCard
-            icon={<Filter className="h-5 w-5" />}
-            iconBg="bg-sky-100 text-sky-600"
-            label="Verified"
-            value={stats.verified}
-            accent="text-sky-600"
-          />
-          <StatCard
-            icon={<MapPin className="h-5 w-5" />}
-            iconBg="bg-amber-100 text-amber-600"
-            label="SIDH Ready"
-            value={stats.sidhReady}
-            accent="text-amber-600"
-          />
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+        <StatCard
+          label="Total centers"
+          value={isLoading ? null : stats.total}
+          icon={<IconBuildingCommunity className="h-5 w-5" />}
+          onClick={clearFilters}
+          active={statusFilter === "all" && workflowFilter === "all"}
+        />
+        <StatCard
+          label="Active centers"
+          value={isLoading ? null : stats.active}
+          icon={<IconMapPin className="h-5 w-5" />}
+          onClick={() => {
+            setStatusFilter("active");
+            setWorkflowFilter("all");
+          }}
+          active={statusFilter === "active" && workflowFilter === "all"}
+        />
+        <StatCard
+          label="Verified locally"
+          value={isLoading ? null : stats.verified}
+          icon={<IconCircleCheck className="h-5 w-5" />}
+          onClick={() => {
+            setStatusFilter("all");
+            setWorkflowFilter("verified");
+          }}
+          active={workflowFilter === "verified"}
+        />
+        <StatCard
+          label="Ready for government sync"
+          value={isLoading ? null : stats.sidhReady}
+          icon={<IconCircleCheck className="h-5 w-5" />}
+          onClick={() => {
+            setStatusFilter("all");
+            setWorkflowFilter("ready");
+          }}
+          active={workflowFilter === "ready"}
+        />
+      </div>
+
+      <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-4 sm:px-5 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-wrap gap-1">
+            {(["all", "active", "inactive"] as StatusFilter[]).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setStatusFilter(s)}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold capitalize transition",
+                  statusFilter === s
+                    ? "bg-sky-100 text-sky-700"
+                    : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
+                )}
+              >
+                {s === "all" ? "All centers" : s}
+                <span
+                  className={cn(
+                    "rounded-full px-1.5 py-0.5 text-[10px] font-bold",
+                    statusFilter === s ? "bg-sky-200/70 text-sky-800" : "bg-neutral-100 text-neutral-500"
+                  )}
+                >
+                  {countByStatus(s)}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <div className="relative min-w-0 flex-1 sm:max-w-xs md:max-w-sm">
+            <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search name, code, or location"
+              className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-8 text-sm text-slate-800 outline-none transition focus:border-sky-300 focus:bg-white"
+            />
+            {searchQuery ? (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
+              >
+                <IconX className="h-4 w-4" />
+              </button>
+            ) : null}
+          </div>
         </div>
 
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex gap-1">
-              {(["all", "active", "inactive"] as StatusFilter[]).map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => setStatusFilter(s)}
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold capitalize transition ${
-                    statusFilter === s
-                      ? "bg-slate-900 text-white"
-                      : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
-                  }`}
-                >
-                  {s}
-                  <span
-                    className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                      statusFilter === s
-                        ? "bg-white/20 text-white"
-                        : "bg-slate-100 text-slate-500"
-                    }`}
-                  >
-                    {countByStatus(s)}
-                  </span>
-                </button>
-              ))}
-            </div>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search name, code, district…"
-                className="h-9 w-64 rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-8 text-sm text-slate-800 outline-none transition focus:border-sky-300 focus:bg-white"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery("")}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Table */}
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-100 bg-slate-50/80">
-                  {["Center", "Code", "Location", "Programs", "Approved SIDH TC ID", "Workflow", "Status", "Updated", ""].map(
-                    (h) => (
-                      <th
-                        key={h}
-                        className="px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500 last:text-right"
-                      >
-                        {h}
-                      </th>
-                    ),
-                  )}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {isLoading ? (
-                  <tr>
-                    <td colSpan={9} className="px-5 py-16 text-center text-sm text-slate-400">
-                      <LoaderCircle className="mx-auto h-6 w-6 animate-spin" />
-                      <p className="mt-2">Loading training centers…</p>
-                    </td>
-                  </tr>
-                ) : filteredCenters.length === 0 ? (
-                  <tr>
-                    <td colSpan={9} className="px-5 py-16 text-center">
-                      <Building2 className="mx-auto h-8 w-8 text-slate-300" />
-                      <p className="mt-2 text-sm font-medium text-slate-500">
-                        No training centers found
-                      </p>
-                      <p className="mt-1 text-xs text-slate-400">
-                        {searchQuery || statusFilter !== "all"
-                          ? "Try adjusting your filters"
-                          : "Create your first training center to get started"}
-                      </p>
-                    </td>
-                  </tr>
-                ) : (
-                  filteredCenters.map((center) => (
-                    (() => {
-                      const workflow = resolveCenterWorkflowState(center);
-
-                      return (
-                    <tr
-                      key={center.id}
-                      className="group cursor-pointer transition-colors hover:bg-slate-50/80"
-                      onClick={() => openEditModal(center)}
+        <div className="hidden overflow-x-auto lg:block">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-100 bg-slate-50/80">
+                {["Center", "Code", "Location", "Programs", "Government ID", "Setup status", "Status", "Updated", ""].map(
+                  (h) => (
+                    <th
+                      key={h}
+                      className="px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500 last:text-right"
                     >
-                      <td className="px-5 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-emerald-50 to-sky-100 text-sm font-bold text-emerald-700">
-                            {center.centerName.trim().charAt(0).toUpperCase()}
-                          </div>
-                          <div className="min-w-0">
-                            <div className="truncate font-semibold text-slate-900 max-w-52">
-                              {center.centerName}
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-4 font-mono text-xs text-slate-600">
-                        {center.centerCode}
-                      </td>
-                      <td className="px-4 py-4 text-slate-600">
-                        <div className="flex items-center gap-1">
-                          <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                          <span className="truncate max-w-36">
-                            {center.district}, {center.state}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-4">
-                        {center.programIds.length === 0 ? (
-                          <span className="text-slate-300">—</span>
-                        ) : (
-                          <div className="flex flex-wrap gap-1">
-                            {center.programIds.slice(0, 2).map((pid) => (
-                              <span
-                                key={pid}
-                                className="inline-flex rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700"
-                              >
-                                {getProgramLabel(pid)}
-                              </span>
-                            ))}
-                            {center.programIds.length > 2 && (
-                              <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
-                                +{center.programIds.length - 2}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-4 py-4 text-xs text-slate-500">
-                        {center.sidhTcId ? (
-                          <div className="space-y-1">
-                            <div className="font-mono text-xs text-slate-600">{center.sidhTcId}</div>
-                          </div>
-                        ) : (
-                          <div className="space-y-1">
-                            <span className="text-slate-300">—</span>
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-4 py-4">
-                        <CenterWorkflowBadge state={workflow} />
-                      </td>
-                      <td className="px-4 py-4">
-                        <span
-                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
-                            center.status === "active"
-                              ? "bg-emerald-50 text-emerald-700"
-                              : "bg-slate-100 text-slate-500"
-                          }`}
-                        >
-                          <span
-                            className={`h-1.5 w-1.5 rounded-full ${
-                              center.status === "active" ? "bg-emerald-500" : "bg-slate-400"
-                            }`}
-                          />
-                          {center.status === "active" ? "Active" : "Inactive"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-4 text-xs text-slate-500">
-                        {center.updatedAt ? (
-                          new Date(center.updatedAt).toLocaleDateString("en-IN", {
-                            day: "2-digit",
-                            month: "short",
-                            year: "numeric",
-                          })
-                        ) : (
-                          <span className="text-slate-300">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-4 text-right">
-                        <div className="flex justify-end gap-2 opacity-0 transition group-hover:opacity-100">
-                          <CenterActionButton
-                            label={workflow === "draft" ? "Verify" : workflow === "verified" ? "Verified" : "Ready"}
-                            onClick={() => handleVerifyCenter(center)}
-                            icon={<CheckCircle2 className="h-3 w-3" />}
-                            tone={workflow === "draft" ? "primary" : "neutral"}
-                            disabled={workflow !== "draft"}
-                          />
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openEditModal(center);
-                            }}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:border-sky-300 hover:text-sky-700"
-                          >
-                            <Pencil className="h-3 w-3" />
-                            Edit
-                          </button>
-                          <CenterActionButton
-                            label="Delete"
-                            onClick={() => handleDeleteCenter(center)}
-                            icon={<Trash2 className="h-3 w-3" />}
-                            tone="danger"
-                          />
-                        </div>
-                      </td>
-                    </tr>
-                      );
-                    })()
-                  ))
+                      {h}
+                    </th>
+                  ),
                 )}
-              </tbody>
-            </table>
-          </div>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {isLoading ? (
+                <tr>
+                  <td colSpan={9} className="px-5 py-16 text-center text-sm text-slate-400">
+                    <IconLoader2 className="mx-auto h-6 w-6 animate-spin" />
+                    <p className="mt-2">Loading training centers…</p>
+                  </td>
+                </tr>
+              ) : filteredCenters.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="px-5 py-16 text-center">
+                    <IconBuildingCommunity className="mx-auto h-8 w-8 text-slate-300" />
+                    <p className="mt-2 text-sm font-medium text-slate-500">No training centers found</p>
+                    <p className="mt-1 text-xs text-slate-400">
+                      {searchQuery || statusFilter !== "all" || workflowFilter !== "all"
+                        ? "Try adjusting your filters"
+                        : "Add your first training center to get started"}
+                    </p>
+                  </td>
+                </tr>
+              ) : (
+                filteredCenters.map((center) => (
+                  <CenterTableRow
+                    key={center.id}
+                    center={center}
+                    getProgramLabel={getProgramLabel}
+                    onDelete={() => void handleDeleteCenter(center)}
+                    onEdit={() => openEditModal(center)}
+                    onVerify={() => void handleVerifyCenter(center)}
+                  />
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
 
-          {/* Pagination */}
-          {!isLoading && totalPages > 1 && (
-            <div className="flex items-center justify-between border-t border-slate-100 px-5 py-3">
-              <p className="text-xs text-slate-500">
-                Page{" "}
-                <span className="font-semibold text-slate-700">{page}</span> of{" "}
-                <span className="font-semibold text-slate-700">{totalPages}</span>
-                {" · "}
-                <span className="font-semibold text-slate-700">{total}</span> total
-              </p>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  disabled={page <= 1}
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </button>
-                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                  const pg = Math.max(1, Math.min(page - 2, totalPages - 4)) + i;
-                  return (
-                    <button
-                      key={pg}
-                      type="button"
-                      onClick={() => setPage(pg)}
-                      className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-medium transition ${
-                        pg === page
-                          ? "bg-slate-900 text-white"
-                          : "border border-slate-200 text-slate-600 hover:border-slate-300"
-                      }`}
-                    >
-                      {pg}
-                    </button>
-                  );
-                })}
-                <button
-                  type="button"
-                  disabled={page >= totalPages}
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </button>
-              </div>
+        <div className="divide-y divide-slate-100 lg:hidden">
+          {isLoading ? (
+            <div className="px-4 py-12 text-center text-sm text-slate-400">
+              <IconLoader2 className="mx-auto h-6 w-6 animate-spin" />
+              <p className="mt-2">Loading training centers…</p>
             </div>
+          ) : filteredCenters.length === 0 ? (
+            <div className="px-4 py-12 text-center">
+              <IconBuildingCommunity className="mx-auto h-8 w-8 text-slate-300" />
+              <p className="mt-2 text-sm font-medium text-slate-500">No training centers found</p>
+            </div>
+          ) : (
+            filteredCenters.map((center) => (
+              <CenterMobileCard
+                key={center.id}
+                center={center}
+                getProgramLabel={getProgramLabel}
+                onDelete={() => void handleDeleteCenter(center)}
+                onEdit={() => openEditModal(center)}
+                onVerify={() => void handleVerifyCenter(center)}
+              />
+            ))
           )}
         </div>
+
+        {!isLoading && totalPages > 1 ? (
+          <div className="flex flex-col gap-3 border-t border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+            <p className="text-xs text-slate-500">
+              Page <span className="font-semibold text-slate-700">{page}</span> of{" "}
+              <span className="font-semibold text-slate-700">{totalPages}</span>
+              {" · "}
+              <span className="font-semibold text-slate-700">{total}</span> total
+            </p>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <IconChevronLeft className="h-4 w-4" />
+              </button>
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                const pg = Math.max(1, Math.min(page - 2, totalPages - 4)) + i;
+                return (
+                  <button
+                    key={pg}
+                    type="button"
+                    onClick={() => setPage(pg)}
+                    className={cn(
+                      "flex h-8 w-8 items-center justify-center rounded-lg text-xs font-medium transition",
+                      pg === page
+                        ? "bg-slate-900 text-white"
+                        : "border border-slate-200 text-slate-600 hover:border-slate-300"
+                    )}
+                  >
+                    {pg}
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <IconChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {/* ── Create Center Modal ──────────────────────────────────────── */}
@@ -693,26 +607,270 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
 // ─── Sub-components ─────────────────────────────────────────────────────────────
 
 function StatCard({
-  accent = "text-slate-900",
+  active = false,
   icon,
-  iconBg,
   label,
+  onClick,
   value,
 }: {
-  accent?: string;
+  active?: boolean;
   icon: React.ReactNode;
-  iconBg: string;
   label: string;
-  value: number;
+  onClick: () => void;
+  value: number | null;
 }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</p>
-        <span className={`rounded-xl p-2 ${iconBg}`}>{icon}</span>
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex flex-col gap-3 rounded-3xl border bg-white p-4 text-left shadow-sm transition-shadow hover:shadow-md sm:p-5",
+        active ? "border-sky-300 ring-1 ring-sky-200" : "border-slate-200"
+      )}
+    >
+      <span className="text-neutral-400">{icon}</span>
+      <div>
+        <p className="text-2xl font-bold text-neutral-900">
+          {value === null ? (
+            <span className="inline-block h-7 w-10 animate-pulse rounded bg-neutral-200" />
+          ) : (
+            value.toLocaleString()
+          )}
+        </p>
+        <p className="mt-0.5 text-xs text-neutral-500">{label}</p>
       </div>
-      <p className={`mt-3 text-3xl font-bold tracking-tight ${accent}`}>{value}</p>
+    </button>
+  );
+}
+
+function CenterIdentity({
+  center,
+  showCode = false,
+}: {
+  center: CenterRecord;
+  showCode?: boolean;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-sm font-bold text-emerald-700">
+        {center.centerName.trim().charAt(0).toUpperCase()}
+      </div>
+      <div className="min-w-0">
+        <div className="truncate font-semibold text-slate-900">{center.centerName}</div>
+        {showCode ? (
+          <div className="truncate font-mono text-xs text-slate-500">{center.centerCode}</div>
+        ) : null}
+      </div>
     </div>
+  );
+}
+
+function ProgramBadges({
+  center,
+  getProgramLabel,
+}: {
+  center: CenterRecord;
+  getProgramLabel: (programId: string) => string;
+}) {
+  if (center.programIds.length === 0) {
+    return <span className="text-slate-300">—</span>;
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1">
+      {center.programIds.slice(0, 2).map((pid) => (
+        <span
+          key={pid}
+          className="inline-flex rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700"
+        >
+          {getProgramLabel(pid)}
+        </span>
+      ))}
+      {center.programIds.length > 2 ? (
+        <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+          +{center.programIds.length - 2}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function CenterTableRow({
+  center,
+  getProgramLabel,
+  onDelete,
+  onEdit,
+  onVerify,
+}: {
+  center: CenterRecord;
+  getProgramLabel: (programId: string) => string;
+  onDelete: () => void;
+  onEdit: () => void;
+  onVerify: () => void;
+}) {
+  const workflow = resolveCenterWorkflowState(center);
+
+  return (
+    <tr className="group cursor-pointer transition-colors hover:bg-slate-50/80" onClick={onEdit}>
+      <td className="px-5 py-4">
+        <CenterIdentity center={center} />
+      </td>
+      <td className="px-4 py-4 font-mono text-xs text-slate-600">{center.centerCode}</td>
+      <td className="px-4 py-4 text-slate-600">
+        <div className="flex items-center gap-1">
+          <IconMapPin className="h-4 w-4 shrink-0 text-slate-400" />
+          <span className="max-w-36 truncate">
+            {center.district}, {center.state}
+          </span>
+        </div>
+      </td>
+      <td className="px-4 py-4">
+        <ProgramBadges center={center} getProgramLabel={getProgramLabel} />
+      </td>
+      <td className="px-4 py-4 text-xs text-slate-500">
+        {center.sidhTcId ? (
+          <span className="font-mono text-slate-600">{center.sidhTcId}</span>
+        ) : (
+          <span className="text-slate-300">Not added</span>
+        )}
+      </td>
+      <td className="px-4 py-4">
+        <CenterWorkflowBadge state={workflow} />
+      </td>
+      <td className="px-4 py-4">
+        <StatusBadge status={center.status} />
+      </td>
+      <td className="px-4 py-4 text-xs text-slate-500">
+        {center.updatedAt ? (
+          new Date(center.updatedAt).toLocaleDateString(undefined, {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+          })
+        ) : (
+          <span className="text-slate-300">—</span>
+        )}
+      </td>
+      <td className="px-4 py-4 text-right">
+        <CenterRowActions
+          workflow={workflow}
+          onDelete={onDelete}
+          onEdit={onEdit}
+          onVerify={onVerify}
+        />
+      </td>
+    </tr>
+  );
+}
+
+function CenterMobileCard({
+  center,
+  getProgramLabel,
+  onDelete,
+  onEdit,
+  onVerify,
+}: {
+  center: CenterRecord;
+  getProgramLabel: (programId: string) => string;
+  onDelete: () => void;
+  onEdit: () => void;
+  onVerify: () => void;
+}) {
+  const workflow = resolveCenterWorkflowState(center);
+
+  return (
+    <div className="px-4 py-4">
+      <button type="button" onClick={onEdit} className="w-full text-left">
+        <div className="flex items-start justify-between gap-3">
+          <CenterIdentity center={center} showCode />
+          <StatusBadge status={center.status} />
+        </div>
+        <div className="mt-3 flex items-center gap-1 text-xs text-slate-500">
+          <IconMapPin className="h-3.5 w-3.5 shrink-0" />
+          {center.district}, {center.state}
+        </div>
+        <div className="mt-3">
+          <ProgramBadges center={center} getProgramLabel={getProgramLabel} />
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <CenterWorkflowBadge state={workflow} />
+          {center.sidhTcId ? (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[10px] text-slate-600">
+              {center.sidhTcId}
+            </span>
+          ) : null}
+        </div>
+      </button>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <CenterRowActions
+          compact
+          workflow={workflow}
+          onDelete={onDelete}
+          onEdit={onEdit}
+          onVerify={onVerify}
+        />
+      </div>
+    </div>
+  );
+}
+
+function CenterRowActions({
+  compact = false,
+  onDelete,
+  onEdit,
+  onVerify,
+  workflow,
+}: {
+  compact?: boolean;
+  onDelete: () => void;
+  onEdit: () => void;
+  onVerify: () => void;
+  workflow: CenterWorkflowState;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex flex-wrap justify-end gap-2",
+        !compact && "opacity-100 transition md:opacity-0 md:group-hover:opacity-100"
+      )}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <CenterActionButton
+        label={workflow === "draft" ? "Verify" : workflow === "verified" ? "Verified" : "Ready"}
+        onClick={onVerify}
+        icon={<IconCircleCheck className="h-3.5 w-3.5" />}
+        tone={workflow === "draft" ? "primary" : "neutral"}
+        disabled={workflow !== "draft"}
+      />
+      <button
+        type="button"
+        onClick={onEdit}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:border-sky-300 hover:text-sky-700"
+      >
+        <IconPencil className="h-3.5 w-3.5" />
+        Edit
+      </button>
+      <CenterActionButton
+        label="Delete"
+        onClick={onDelete}
+        icon={<IconTrash className="h-3.5 w-3.5" />}
+        tone="danger"
+      />
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: "active" | "inactive" }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold",
+        status === "active" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"
+      )}
+    >
+      <span className={cn("h-1.5 w-1.5 rounded-full", status === "active" ? "bg-emerald-500" : "bg-slate-400")} />
+      {status === "active" ? "Active" : "Inactive"}
+    </span>
   );
 }
 
@@ -724,7 +882,8 @@ function CenterWorkflowBadge({ state }: { state: CenterWorkflowState }) {
         ? "bg-emerald-50 text-emerald-700"
         : "bg-slate-100 text-slate-500";
 
-  const label = state === "ready" ? "Ready for SIDH" : state === "verified" ? "Verified" : "Draft";
+  const label =
+    state === "ready" ? "Ready for sync" : state === "verified" ? "Verified" : "Needs setup";
 
   return (
     <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${className}`}>
@@ -826,7 +985,7 @@ function CenterModal({
         <div className="flex items-start justify-between border-b border-slate-100 px-6 py-5">
           <div className="flex items-center gap-3">
             <span className="rounded-xl bg-emerald-100 p-2.5 text-emerald-600">
-              <Building2 className="h-5 w-5" />
+              <IconBuildingCommunity className="h-5 w-5" />
             </span>
             <div>
               <h2 className="text-base font-bold text-slate-900">{title}</h2>
@@ -838,7 +997,7 @@ function CenterModal({
             onClick={onClose}
             className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
           >
-            <X className="h-4 w-4" />
+            <IconX className="h-4 w-4" />
           </button>
         </div>
 
@@ -935,7 +1094,7 @@ function CenterModal({
                         ? "Select programs…"
                         : selectedPrograms.map((p) => p.name).join(", ")}
                     </span>
-                    <ChevronDown
+                    <IconChevronDown
                       className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${programDropdownOpen ? "rotate-180" : ""}`}
                     />
                   </button>
@@ -954,7 +1113,7 @@ function CenterModal({
                             onClick={() => toggleProgram(p.programId)}
                             className="ml-0.5 text-slate-400 hover:text-rose-500"
                           >
-                            <X className="h-3 w-3" />
+                            <IconX className="h-3 w-3" />
                           </button>
                         </span>
                       ))}
@@ -1016,11 +1175,11 @@ function CenterModal({
                 className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isSaving ? (
-                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                  <IconLoader2 className="h-4 w-4 animate-spin" />
                 ) : isEdit ? (
                   <Save className="h-4 w-4" />
                 ) : (
-                  <Plus className="h-4 w-4" />
+                  <IconPlus className="h-4 w-4" />
                 )}
                 {isEdit ? "Save Changes" : "Create Center"}
               </button>

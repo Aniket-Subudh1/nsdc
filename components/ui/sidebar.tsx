@@ -1,13 +1,16 @@
 "use client";
 import { cn } from "@/lib/utils";
-import React, { useState, createContext, useContext } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import React, { useState, createContext, useContext, useEffect } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { IconMenu2, IconX } from "@tabler/icons-react";
+import { IconMenu2, IconLogout, IconX } from "@tabler/icons-react";
 
 interface Links {
   label: string;
   href: string;
   icon: React.JSX.Element | React.ReactNode;
+  badgeCount?: number;
 }
 
 interface SidebarContextProps {
@@ -84,23 +87,39 @@ export const DesktopSidebar = ({
   ...props
 }: React.ComponentProps<typeof motion.div>) => {
   const { open, setOpen, animate } = useSidebar();
+  const [isLargeScreen, setIsLargeScreen] = useState(false);
+
+  useEffect(() => {
+    const check = () => {
+      const large = window.innerWidth >= 1280;
+      setIsLargeScreen(large);
+      if (large) {
+        setOpen(true);
+      }
+    };
+
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, [setOpen]);
+
   return (
-    <>
-      <motion.div
-        className={cn(
-          "h-full px-4 py-4 hidden  md:flex md:flex-col bg-neutral-100 w-75 shrink-0",
-          className
-        )}
-        animate={{
-          width: animate ? (open ? "300px" : "60px") : "300px",
-        }}
-        onMouseEnter={() => setOpen(true)}
-        onMouseLeave={() => setOpen(false)}
-        {...props}
-      >
-        {children}
-      </motion.div>
-    </>
+    <motion.div
+      className={cn(
+        "h-screen sticky top-0 hidden md:flex md:flex-col bg-neutral-100 shrink-0 overflow-hidden py-4",
+        open ? "px-3" : "px-1.5",
+        className
+      )}
+      animate={{
+        width: animate ? (open ? "280px" : "68px") : "280px",
+      }}
+      transition={{ duration: 0.2, ease: "easeInOut" }}
+      onMouseEnter={() => !isLargeScreen && setOpen(true)}
+      onMouseLeave={() => !isLargeScreen && setOpen(false)}
+      {...props}
+    >
+      {children}
+    </motion.div>
   );
 };
 
@@ -110,46 +129,50 @@ export const MobileSidebar = ({
   ...props
 }: React.ComponentProps<"div">) => {
   const { open, setOpen } = useSidebar();
+
   return (
     <>
       <div
-        className={cn(
-          "h-10 px-4 py-4 flex flex-row md:hidden  items-center justify-between bg-neutral-100 w-full"
-        )}
+        className="flex h-14 w-full flex-row items-center justify-between bg-neutral-100 px-4 md:hidden"
         {...props}
       >
-        <div className="flex justify-end z-20 w-full">
-          <IconMenu2
-            className="text-neutral-800 dark:text-neutral-200"
-            onClick={() => setOpen(!open)}
-          />
-        </div>
-        <AnimatePresence>
-          {open && (
+        <IconMenu2
+          className="h-5 w-5 cursor-pointer text-neutral-800"
+          onClick={() => setOpen(!open)}
+        />
+      </div>
+      <AnimatePresence>
+        {open ? (
+          <>
             <motion.div
-              initial={{ x: "-100%", opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: "-100%", opacity: 0 }}
-              transition={{
-                duration: 0.3,
-                ease: "easeInOut",
-              }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-0 z-99 bg-black/40 md:hidden"
+              onClick={() => setOpen(false)}
+            />
+            <motion.div
+              initial={{ x: "-100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "-100%" }}
+              transition={{ duration: 0.3, ease: "easeInOut" }}
               className={cn(
-                "fixed h-full w-full inset-0 bg-white p-10 z-100 flex flex-col justify-between",
+                "fixed inset-y-0 left-0 z-100 flex w-72 flex-col justify-between bg-neutral-100 px-4 py-4 shadow-xl md:hidden",
                 className
               )}
             >
               <div
-                className="absolute right-10 top-10 z-50 text-neutral-800"
-                onClick={() => setOpen(!open)}
+                className="absolute right-3 top-3 z-50 cursor-pointer rounded-lg p-2 text-neutral-600 transition-colors hover:bg-neutral-200/70"
+                onClick={() => setOpen(false)}
               >
-                <IconX />
+                <IconX className="h-5 w-5" />
               </div>
               {children}
             </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+          </>
+        ) : null}
+      </AnimatePresence>
     </>
   );
 };
@@ -162,27 +185,99 @@ export const SidebarLink = ({
   link: Links;
   className?: string;
 }) => {
-  const { open, animate } = useSidebar();
+  const { open, animate, setOpen } = useSidebar();
+  const pathname = usePathname();
+  const isActive =
+    pathname === link.href ||
+    (link.href !== "#" && link.href !== "/logout" && pathname.startsWith(`${link.href}/`));
+
   return (
-    <a
+    <Link
       href={link.href}
+      onClick={() => setOpen(false)}
+      title={!open ? link.label : undefined}
       className={cn(
-        "flex items-center justify-start gap-2  group/sidebar py-2",
+        "group/sidebar flex min-w-0 items-center rounded-lg transition-colors",
+        open ? "w-full justify-start gap-2 px-2 py-2" : "w-full justify-center py-1",
+        open && isActive && "bg-sky-100 font-semibold text-sky-700",
+        open && !isActive && "text-neutral-700 hover:bg-neutral-200/70",
         className
       )}
       {...props}
     >
-      {link.icon}
-
+      <span
+        className={cn(
+          "flex shrink-0 items-center justify-center [&_svg]:h-5 [&_svg]:w-5",
+          !open && "h-10 w-10 rounded-lg transition-colors",
+          !open && isActive && "bg-sky-100 text-sky-700",
+          !open && !isActive && "text-neutral-700 group-hover/sidebar:bg-neutral-200/70"
+        )}
+      >
+        {link.icon}
+      </span>
       <motion.span
         animate={{
           display: animate ? (open ? "inline-block" : "none") : "inline-block",
           opacity: animate ? (open ? 1 : 0) : 1,
+          width: animate ? (open ? "auto" : 0) : "auto",
         }}
-        className="text-neutral-700 text-sm group-hover/sidebar:translate-x-1 transition duration-150 whitespace-pre inline-block p-0! m-0!"
+        className="overflow-hidden whitespace-nowrap text-sm transition duration-150"
       >
         {link.label}
       </motion.span>
-    </a>
+      {link.badgeCount && link.badgeCount > 0 ? (
+        <motion.span
+          animate={{
+            display: animate ? (open ? "inline-flex" : "none") : "inline-flex",
+            opacity: animate ? (open ? 1 : 0) : 1,
+          }}
+          className="ml-auto h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1.5 text-[10px] font-bold text-white"
+        >
+          {link.badgeCount > 99 ? "99+" : link.badgeCount}
+        </motion.span>
+      ) : null}
+    </Link>
+  );
+};
+
+export const SidebarLogoutLink = ({
+  label = "Logout",
+  className,
+}: {
+  label?: string;
+  className?: string;
+}) => {
+  const { open, animate, setOpen } = useSidebar();
+
+  return (
+    <Link
+      href="/logout"
+      onClick={() => setOpen(false)}
+      title={!open ? label : undefined}
+      className={cn(
+        "group/sidebar flex min-w-0 items-center rounded-lg font-medium text-red-600 transition-colors hover:bg-red-50",
+        open ? "w-full justify-start gap-2 px-2 py-2" : "w-full justify-center py-1",
+        className
+      )}
+    >
+      <span
+        className={cn(
+          "flex shrink-0 items-center justify-center text-red-600 [&_svg]:h-5 [&_svg]:w-5",
+          !open && "h-10 w-10 rounded-lg transition-colors group-hover/sidebar:bg-red-50"
+        )}
+      >
+        <IconLogout />
+      </span>
+      <motion.span
+        animate={{
+          display: animate ? (open ? "inline-block" : "none") : "inline-block",
+          opacity: animate ? (open ? 1 : 0) : 1,
+          width: animate ? (open ? "auto" : 0) : "auto",
+        }}
+        className="overflow-hidden whitespace-nowrap text-sm transition duration-150"
+      >
+        {label}
+      </motion.span>
+    </Link>
   );
 };

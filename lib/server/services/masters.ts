@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/server/http";
+import { getSidhBatchContext } from "@/lib/server/env";
 import { createPrefixedId } from "@/lib/server/ids";
 import { connectToDatabase } from "@/lib/server/mongodb";
 import { BatchModel } from "@/lib/server/models/batch";
@@ -28,22 +29,36 @@ type ListMastersInput = {
 };
 
 type ProgramInput = {
+  assessmentMode?: string;
+  batchCategoryType?: string;
+  batchType?: string;
   code: string;
+  createdSource?: string;
   description?: string;
+  feePaidBy?: string;
   name: string;
   requestId?: string;
+  skillingCategoryId?: number;
+  skillingCategoryName?: string;
+  skillingCategoryScheme?: string;
   status: "active" | "inactive";
   syncToSidh: boolean;
 };
 
 type SchemeInput = {
+  assessmentMode?: string;
+  batchCategoryType?: string;
+  batchType?: string;
   beneficiaryType?: string;
   code: string;
+  createdSource?: string;
   description?: string;
   fundingType?: string;
   name: string;
   requestId?: string;
   sidhSchemeId?: string;
+  sidhSchemeReferenceId?: string;
+  sidhSchemeType?: string;
   status: "active" | "inactive";
   syncEnabled: boolean;
   validFrom?: string;
@@ -146,11 +161,19 @@ function ensureDateRange(startDate: string, endDate: string) {
 }
 
 function serializeProgram(program: {
+  assessmentMode?: string | null;
+  batchCategoryType?: string | null;
+  batchType?: string | null;
   code: string;
   createdAt?: Date;
+  createdSource?: string | null;
   description?: string | null;
+  feePaidBy?: string | null;
   name: string;
   programId: string;
+  skillingCategoryId?: number | null;
+  skillingCategoryName?: string | null;
+  skillingCategoryScheme?: string | null;
   status: "active" | "inactive";
   syncToSidh: boolean;
   verifiedAt?: Date | null;
@@ -164,6 +187,14 @@ function serializeProgram(program: {
     code: program.code,
     description: program.description ?? null,
     syncToSidh: program.syncToSidh,
+    skillingCategoryId: program.skillingCategoryId ?? 1,
+    skillingCategoryName: program.skillingCategoryName ?? null,
+    skillingCategoryScheme: program.skillingCategoryScheme ?? "Fee Based",
+    assessmentMode: program.assessmentMode ?? "Self",
+    batchType: program.batchType ?? "Regular",
+    batchCategoryType: program.batchCategoryType ?? "Fee Based",
+    feePaidBy: program.feePaidBy ?? "Self-Paid",
+    createdSource: program.createdSource ?? "Created for NSDC Academy Partners",
     verifiedForSidh: program.verifiedForSidh,
     verifiedAt: toIsoDate(program.verifiedAt),
     status: program.status,
@@ -194,14 +225,20 @@ function serializeSector(sector: {
 }
 
 function serializeScheme(scheme: {
+  assessmentMode?: string | null;
+  batchCategoryType?: string | null;
+  batchType?: string | null;
   beneficiaryType?: string | null;
   code: string;
   createdAt?: Date;
+  createdSource?: string | null;
   description?: string | null;
   fundingType?: string | null;
   name: string;
   schemeId: string;
   sidhSchemeId?: string | null;
+  sidhSchemeReferenceId?: string | null;
+  sidhSchemeType?: string | null;
   status: "active" | "inactive";
   syncEnabled: boolean;
   updatedAt?: Date;
@@ -221,6 +258,12 @@ function serializeScheme(scheme: {
     verifiedForSidh: scheme.verifiedForSidh,
     verifiedAt: toIsoDate(scheme.verifiedAt),
     sidhSchemeId: scheme.sidhSchemeId ?? null,
+    sidhSchemeReferenceId: scheme.sidhSchemeReferenceId ?? null,
+    sidhSchemeType: scheme.sidhSchemeType ?? "feeBased",
+    assessmentMode: scheme.assessmentMode ?? "Self",
+    batchType: scheme.batchType ?? "Regular",
+    batchCategoryType: scheme.batchCategoryType ?? "Fee Based",
+    createdSource: scheme.createdSource ?? "Created for NSDC Academy Partners",
     fundingType: scheme.fundingType ?? null,
     beneficiaryType: scheme.beneficiaryType ?? null,
     validFrom: toIsoDate(scheme.validFrom),
@@ -361,9 +404,15 @@ async function ensureNoCourseValidityOverlap(input: {
   }
 }
 
-async function ensureSchemeSyncMetadata(input: Pick<SchemeInput, "sidhSchemeId" | "syncEnabled" | "validFrom" | "validTo">) {
+async function ensureSchemeSyncMetadata(
+  input: Pick<SchemeInput, "sidhSchemeId" | "sidhSchemeReferenceId" | "syncEnabled" | "validFrom" | "validTo">,
+) {
   if (input.syncEnabled && !input.sidhSchemeId) {
     throw new ApiError(400, "SCHEME_METADATA_INCOMPLETE", "Sync-enabled schemes require a SIDH Scheme ID");
+  }
+
+  if (input.syncEnabled && !input.sidhSchemeReferenceId) {
+    throw new ApiError(400, "SCHEME_METADATA_INCOMPLETE", "Sync-enabled schemes require a SIDH Scheme Reference ID");
   }
 
   if (input.validFrom && input.validTo) {
@@ -447,6 +496,14 @@ export async function createProgram(actor: AuthSession, input: ProgramInput) {
     code: normalizeString(input.code),
     description: input.description?.trim() || null,
     syncToSidh: input.syncToSidh,
+    skillingCategoryId: input.skillingCategoryId ?? 1,
+    skillingCategoryName: input.skillingCategoryName?.trim() || null,
+    skillingCategoryScheme: input.skillingCategoryScheme?.trim() || "Fee Based",
+    assessmentMode: input.assessmentMode?.trim() || "Self",
+    batchType: input.batchType?.trim() || "Regular",
+    batchCategoryType: input.batchCategoryType?.trim() || "Fee Based",
+    feePaidBy: input.feePaidBy?.trim() || "Self-Paid",
+    createdSource: input.createdSource?.trim() || "Created for NSDC Academy Partners",
     verifiedForSidh: false,
     verifiedAt: null,
     verifiedByUserId: null,
@@ -500,13 +557,48 @@ export async function updateProgram(
   if (input.syncToSidh !== undefined) {
     program.syncToSidh = input.syncToSidh;
   }
+  if (input.skillingCategoryId !== undefined) {
+    program.skillingCategoryId = input.skillingCategoryId;
+  }
+  if (input.skillingCategoryName !== undefined) {
+    program.skillingCategoryName = input.skillingCategoryName.trim() || null;
+  }
+  if (input.skillingCategoryScheme !== undefined) {
+    program.skillingCategoryScheme = input.skillingCategoryScheme.trim() || "Fee Based";
+  }
+  if (input.assessmentMode !== undefined) {
+    program.assessmentMode = input.assessmentMode.trim() || "Self";
+  }
+  if (input.batchType !== undefined) {
+    program.batchType = input.batchType.trim() || "Regular";
+  }
+  if (input.batchCategoryType !== undefined) {
+    program.batchCategoryType = input.batchCategoryType.trim() || "Fee Based";
+  }
+  if (input.feePaidBy !== undefined) {
+    program.feePaidBy = input.feePaidBy.trim() || "Self-Paid";
+  }
+  if (input.createdSource !== undefined) {
+    program.createdSource = input.createdSource.trim() || "Created for NSDC Academy Partners";
+  }
   if (input.status !== undefined) {
     program.status = input.status;
   }
 
-  const touchedFields = [input.name, input.code, input.description, input.status].some(
-    (value) => value !== undefined,
-  );
+  const touchedFields = [
+    input.name,
+    input.code,
+    input.description,
+    input.status,
+    input.skillingCategoryId,
+    input.skillingCategoryName,
+    input.skillingCategoryScheme,
+    input.assessmentMode,
+    input.batchType,
+    input.batchCategoryType,
+    input.feePaidBy,
+    input.createdSource,
+  ].some((value) => value !== undefined);
 
   if (touchedFields) {
     program.verifiedForSidh = false;
@@ -796,6 +888,12 @@ export async function createScheme(actor: AuthSession, input: SchemeInput) {
     verifiedAt: null,
     verifiedByUserId: null,
     sidhSchemeId: input.sidhSchemeId?.trim() || null,
+    sidhSchemeReferenceId: input.sidhSchemeReferenceId?.trim() || null,
+    sidhSchemeType: input.sidhSchemeType?.trim() || "feeBased",
+    assessmentMode: input.assessmentMode?.trim() || "Self",
+    batchType: input.batchType?.trim() || "Regular",
+    batchCategoryType: input.batchCategoryType?.trim() || "Fee Based",
+    createdSource: input.createdSource?.trim() || "Created for NSDC Academy Partners",
     fundingType: input.fundingType?.trim() || null,
     beneficiaryType: input.beneficiaryType?.trim() || null,
     validFrom: input.validFrom ? new Date(input.validFrom) : null,
@@ -829,6 +927,7 @@ export async function updateScheme(actor: AuthSession, schemeId: string, input: 
   await ensureSchemeSyncMetadata({
     syncEnabled: input.syncEnabled ?? scheme.syncEnabled,
     sidhSchemeId: input.sidhSchemeId ?? scheme.sidhSchemeId ?? undefined,
+    sidhSchemeReferenceId: input.sidhSchemeReferenceId ?? scheme.sidhSchemeReferenceId ?? undefined,
     validFrom: input.validFrom ?? (scheme.validFrom ? scheme.validFrom.toISOString().slice(0, 10) : undefined),
     validTo: input.validTo ?? (scheme.validTo ? scheme.validTo.toISOString().slice(0, 10) : undefined),
   });
@@ -851,6 +950,24 @@ export async function updateScheme(actor: AuthSession, schemeId: string, input: 
   if (input.sidhSchemeId !== undefined) {
     scheme.sidhSchemeId = input.sidhSchemeId.trim() || null;
   }
+  if (input.sidhSchemeReferenceId !== undefined) {
+    scheme.sidhSchemeReferenceId = input.sidhSchemeReferenceId.trim() || null;
+  }
+  if (input.sidhSchemeType !== undefined) {
+    scheme.sidhSchemeType = input.sidhSchemeType.trim() || "feeBased";
+  }
+  if (input.assessmentMode !== undefined) {
+    scheme.assessmentMode = input.assessmentMode.trim() || "Self";
+  }
+  if (input.batchType !== undefined) {
+    scheme.batchType = input.batchType.trim() || "Regular";
+  }
+  if (input.batchCategoryType !== undefined) {
+    scheme.batchCategoryType = input.batchCategoryType.trim() || "Fee Based";
+  }
+  if (input.createdSource !== undefined) {
+    scheme.createdSource = input.createdSource.trim() || "Created for NSDC Academy Partners";
+  }
   if (input.fundingType !== undefined) {
     scheme.fundingType = input.fundingType.trim() || null;
   }
@@ -870,6 +987,12 @@ export async function updateScheme(actor: AuthSession, schemeId: string, input: 
     input.description,
     input.status,
     input.sidhSchemeId,
+    input.sidhSchemeReferenceId,
+    input.sidhSchemeType,
+    input.assessmentMode,
+    input.batchType,
+    input.batchCategoryType,
+    input.createdSource,
     input.fundingType,
     input.beneficiaryType,
     input.validFrom,
@@ -997,6 +1120,7 @@ export async function syncSchemeToSidh(actor: AuthSession, schemeId: string, req
   await ensureSchemeSyncMetadata({
     syncEnabled: true,
     sidhSchemeId: scheme.sidhSchemeId ?? undefined,
+    sidhSchemeReferenceId: scheme.sidhSchemeReferenceId ?? undefined,
     validFrom: scheme.validFrom ? scheme.validFrom.toISOString().slice(0, 10) : undefined,
     validTo: scheme.validTo ? scheme.validTo.toISOString().slice(0, 10) : undefined,
   });
@@ -1117,7 +1241,7 @@ export async function createCourse(actor: AuthSession, input: CourseInput) {
     gtUploadedDurationHours: input.gtUploadedDurationHours ?? null,
     approvalStatus: input.approvalStatus,
     approvalDate: input.approvalDate ? new Date(input.approvalDate) : null,
-    validity: input.validity ?? null,
+    validity: input.validity ?? dates.validityDays,
     validityStartDate: new Date(dates.startDate),
     validityEndDate: new Date(dates.endDate),
     shortForm: input.shortForm?.trim() || null,
@@ -1164,8 +1288,6 @@ export async function updateCourse(actor: AuthSession, courseId: string, input: 
   }
 
   const nextDates = resolveCourseDates({
-    approvalDate: input.approvalDate ?? (course.approvalDate ? course.approvalDate.toISOString().slice(0, 10) : undefined),
-    validity: input.validity ?? course.validity ?? undefined,
     validityEndDate: input.validityEndDate ?? course.validityEndDate.toISOString().slice(0, 10),
     validityStartDate: input.validityStartDate ?? course.validityStartDate.toISOString().slice(0, 10),
   });
@@ -1251,16 +1373,12 @@ export async function updateCourse(actor: AuthSession, courseId: string, input: 
   if (input.approvalDate !== undefined) {
     course.approvalDate = input.approvalDate ? new Date(input.approvalDate) : null;
   }
-  if (input.validityStartDate !== undefined) {
+  if (input.validityStartDate !== undefined || input.validityEndDate !== undefined) {
     course.validityStartDate = new Date(nextDates.startDate);
-  }
-  if (input.validityEndDate !== undefined) {
     course.validityEndDate = new Date(nextDates.endDate);
-  }
-  if (input.validity !== undefined) {
+    course.validity = input.validity ?? nextDates.validityDays;
+  } else if (input.validity !== undefined) {
     course.validity = input.validity;
-    course.validityStartDate = new Date(nextDates.startDate);
-    course.validityEndDate = new Date(nextDates.endDate);
   }
   if (input.shortForm !== undefined) {
     course.shortForm = input.shortForm.trim() || null;
@@ -1377,11 +1495,14 @@ export async function getCandidateReferenceData(actor: AuthSession) {
     programs: programs.map((item) => serializeProgram(item)),
     sectors: sectors.map((item) => serializeSector(item)),
     schemes: schemes.map((item) => serializeScheme(item)),
+    sidhBatchContext: getSidhBatchContext(),
     trainingCenters: centers.map((item) => ({
       id: item.centerId,
       centerId: item.centerId,
       centerName: item.centerName,
       centerCode: item.centerCode,
+      sidhTcId: item.sidhTcId ?? null,
+      verifiedForSidh: item.verifiedForSidh ?? false,
     })),
     courses: usableCourses.map((item) => serializeCourse(item)),
     enums: groupedReferenceValues,
@@ -1399,25 +1520,32 @@ function toDateInput(date: Date) {
 }
 
 function resolveCourseCodes(input: Pick<CourseInput, "courseCode" | "internalCourseCode" | "sidhCourseId">) {
-  const courseCode = input.courseCode?.trim() || input.sidhCourseId?.trim() || input.internalCourseCode?.trim();
+  const sidhCourseId = input.sidhCourseId?.trim() || input.courseCode?.trim();
 
-  if (!courseCode) {
-    throw new ApiError(400, "COURSE_CODE_REQUIRED", "Course ID is required");
+  if (!sidhCourseId) {
+    throw new ApiError(400, "SIDH_COURSE_ID_REQUIRED", "SIDH course ID from the approved course list is required");
   }
 
   return {
-    internalCourseCode: input.internalCourseCode?.trim() || courseCode,
-    sidhCourseId: input.sidhCourseId?.trim() || courseCode,
+    internalCourseCode: input.internalCourseCode?.trim() || sidhCourseId,
+    sidhCourseId,
   };
 }
 
-function resolveCourseDates(input: Pick<CourseInput, "approvalDate" | "validity" | "validityEndDate" | "validityStartDate">) {
-  const startDate = input.validityStartDate ?? input.approvalDate ?? toDateInput(new Date());
-  const endDate = input.validityEndDate ?? toDateInput(addDays(new Date(`${startDate}T00:00:00.000Z`), input.validity ?? 365));
+function resolveCourseDates(input: Pick<CourseInput, "approvalDate" | "validityEndDate" | "validityStartDate">) {
+  if (!input.validityEndDate?.trim()) {
+    throw new ApiError(400, "COURSE_VALIDITY_REQUIRED", "Course valid-until date is required");
+  }
 
+  const endDate = input.validityEndDate.trim();
+  const startDate = input.validityStartDate?.trim() || input.approvalDate?.trim() || toDateInput(new Date());
   ensureDateRange(startDate, endDate);
 
-  return { endDate, startDate };
+  const start = new Date(`${startDate}T00:00:00.000Z`);
+  const end = new Date(`${endDate}T00:00:00.000Z`);
+  const validityDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1);
+
+  return { endDate, startDate, validityDays };
 }
 
 function resolveCourseJobRole(input: Pick<CourseInput, "associatedQpOrJobRole" | "jobRole">) {

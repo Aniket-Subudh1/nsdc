@@ -18,9 +18,59 @@ import {
 
 import { apiFetch, ClientApiError } from "@/lib/client/api";
 import { cn } from "@/lib/utils";
+import TrainingPartnerDashboardPanel from "@/components/management/training-partner-dashboard-panel";
 
 type DashboardOverviewProps = {
   portal: "admin" | "training_partner";
+};
+
+type DashboardCenterOverview = {
+  centers: Array<{
+    centerId: string;
+    centerName: string;
+    centerCode: string;
+    district: string;
+    state: string;
+    programCount: number;
+    verifiedForSidh: boolean;
+  }>;
+  totals: {
+    sectors: number;
+    courses: number;
+    batches: number;
+  };
+  preview: {
+    sectors: Array<{
+      sectorId: string;
+      sectorName: string;
+      sectorCode: string;
+      courseCount: number;
+      batchCount: number;
+      enrolledLearners: number;
+    }>;
+    courses: Array<{
+      courseId: string;
+      courseName: string;
+      sectorId: string;
+      sectorName: string;
+      batchCount: number;
+      activeBatchCount: number;
+      enrolledLearners: number;
+    }>;
+    batches: Array<{
+      batchId: string;
+      batchCode: string;
+      batchName: string | null;
+      courseName: string;
+      sectorName: string;
+      status: string;
+      startDate: string;
+      endDate: string;
+      batchSize: number;
+      enrolledCount: number;
+      syncedEnrollmentCount: number;
+    }>;
+  };
 };
 
 type DashboardSummary = {
@@ -41,6 +91,7 @@ type DashboardSummary = {
   learnerProgress: Record<string, number>;
   enrollmentStatus: Record<string, number>;
   topCenters: Array<{ centerId: string; centerName: string; learnerCount: number }>;
+  centerOverview: DashboardCenterOverview | null;
   recentActivity: Array<{
     id: string;
     action: string;
@@ -55,7 +106,7 @@ const portalContent = {
     prefix: "/admin",
   },
   training_partner: {
-    subtitle: "See how your assigned centers are doing — learners, batches, and upcoming assessments.",
+    subtitle: "Summary counts and quick access to your center's sectors, courses, and batches.",
     prefix: "/training-partner",
   },
 } as const;
@@ -207,6 +258,10 @@ export default function DashboardOverview({ portal }: DashboardOverviewProps) {
     colorClass: "bg-sky-500",
   }));
 
+  const centerOverview = stats?.centerOverview ?? null;
+  const primaryCenter = centerOverview?.centers[0] ?? null;
+  const isTrainingPartner = portal === "training_partner";
+
   return (
     <div className="flex flex-1 flex-col gap-6 bg-slate-100 px-4 py-4 md:px-8 md:py-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -248,10 +303,16 @@ export default function DashboardOverview({ portal }: DashboardOverviewProps) {
           onClick={() => router.push(`${base}/batches`)}
         />
         <StatCard
-          label="Training centers"
-          value={loading ? null : stats?.totals.trainingCenters ?? 0}
+          label={isTrainingPartner ? "Assigned programs" : "Training centers"}
+          value={
+            loading
+              ? null
+              : isTrainingPartner
+                ? primaryCenter?.programCount ?? 0
+                : stats?.totals.trainingCenters ?? 0
+          }
           icon={<IconBuildingCommunity className="h-5 w-5" />}
-          onClick={() => router.push(`${base}/training-centers`)}
+          onClick={() => router.push(`${base}/${isTrainingPartner ? "master-data" : "training-centers"}`)}
         />
         <StatCard
           label="Enrolled in batches"
@@ -260,6 +321,10 @@ export default function DashboardOverview({ portal }: DashboardOverviewProps) {
           onClick={() => router.push(`${base}/batches`)}
         />
       </div>
+
+      {isTrainingPartner ? (
+        <TrainingPartnerDashboardPanel basePath={base} centerOverview={centerOverview} loading={loading} />
+      ) : null}
 
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatusCard
@@ -306,15 +371,36 @@ export default function DashboardOverview({ portal }: DashboardOverviewProps) {
             emptyMessage="No enrollment activity yet."
           />
         </ChartPanel>
-        <ChartPanel title="Top centers by learners">
-          {loading ? (
-            <BarSkeleton rows={4} />
-          ) : topCenterItems.length > 0 ? (
-            <BarChart items={topCenterItems} loading={false} emptyMessage="" />
-          ) : (
-            <EmptyState message="Learner counts will appear once centers have registrations." />
-          )}
-        </ChartPanel>
+        {!isTrainingPartner ? (
+          <ChartPanel title="Top centers by learners">
+            {loading ? (
+              <BarSkeleton rows={4} />
+            ) : topCenterItems.length > 0 ? (
+              <BarChart items={topCenterItems} loading={false} emptyMessage="" />
+            ) : (
+              <EmptyState message="Learner counts will appear once centers have registrations." />
+            )}
+          </ChartPanel>
+        ) : (
+          <ChartPanel title="Top sectors by enrollments">
+            {loading ? (
+              <BarSkeleton rows={4} />
+            ) : (centerOverview?.preview.sectors.length ?? 0) > 0 ? (
+              <BarChart
+                items={(centerOverview?.preview.sectors ?? []).slice(0, 6).map((sector) => ({
+                  label: sector.sectorName,
+                  value: sector.enrolledLearners,
+                  colorClass: "bg-sky-500",
+                }))}
+                loading={false}
+                emptyMessage=""
+                maxItems={6}
+              />
+            ) : (
+              <EmptyState message="Sector breakdown appears once courses and batches are linked to your center." />
+            )}
+          </ChartPanel>
+        )}
       </div>
 
       <section>
@@ -335,15 +421,23 @@ export default function DashboardOverview({ portal }: DashboardOverviewProps) {
             icon={<IconFileUpload className="h-5 w-5" />}
             onClick={() => router.push(`${base}/batches`)}
           />
+          {!isTrainingPartner ? (
+            <QuickAction
+              label="Training centers"
+              icon={<IconBuildingCommunity className="h-5 w-5" />}
+              onClick={() => router.push(`${base}/training-centers`)}
+            />
+          ) : (
+            <QuickAction
+              label="Course catalog"
+              icon={<IconClipboardList className="h-5 w-5" />}
+              onClick={() => router.push(`${base}/master-data`)}
+            />
+          )}
           <QuickAction
-            label="Training centers"
-            icon={<IconBuildingCommunity className="h-5 w-5" />}
-            onClick={() => router.push(`${base}/training-centers`)}
-          />
-          <QuickAction
-            label="Course catalog"
-            icon={<IconClipboardList className="h-5 w-5" />}
-            onClick={() => router.push(`${base}/master-data`)}
+            label={isTrainingPartner ? "View learners" : "Course catalog"}
+            icon={isTrainingPartner ? <IconUsers className="h-5 w-5" /> : <IconClipboardList className="h-5 w-5" />}
+            onClick={() => router.push(`${base}/${isTrainingPartner ? "candidates" : "master-data"}`)}
           />
         </div>
       </section>
@@ -358,7 +452,7 @@ export default function DashboardOverview({ portal }: DashboardOverviewProps) {
               Activity from registrations, batches, and attendance will show up here.
             </div>
           ) : (
-            stats?.recentActivity.map((activity) => (
+            (isTrainingPartner ? stats?.recentActivity.slice(0, 4) : stats?.recentActivity)?.map((activity) => (
               <div
                 key={activity.id}
                 className="flex flex-col gap-1 border-b border-neutral-100 px-4 py-3 text-sm last:border-0 md:flex-row md:items-center md:justify-between"
@@ -497,25 +591,28 @@ function BarChart({
   items,
   loading,
   emptyMessage,
+  maxItems,
 }: {
   items: Array<{ label: string; value: number; colorClass: string; suffix?: string }>;
   loading: boolean;
   emptyMessage: string;
+  maxItems?: number;
 }) {
   if (loading) {
     return <BarSkeleton rows={4} />;
   }
 
-  const nonZeroItems = items.filter((item) => item.value > 0);
+  const visibleItems = maxItems ? items.filter((item) => item.value > 0).slice(0, maxItems) : items;
+  const nonZeroItems = visibleItems.filter((item) => item.value > 0);
   if (nonZeroItems.length === 0) {
     return <EmptyState message={emptyMessage} />;
   }
 
-  const max = Math.max(...items.map((item) => item.value), 1);
+  const max = Math.max(...visibleItems.map((item) => item.value), 1);
 
   return (
     <div className="space-y-3">
-      {items.map((item, index) => (
+      {visibleItems.map((item, index) => (
         <div key={`${item.label}-${index}`} className="flex items-center gap-3">
           <span className="w-28 shrink-0 truncate text-xs text-neutral-600 sm:w-36">{item.label}</span>
           <div className="h-4 flex-1 overflow-hidden rounded-full bg-neutral-100">

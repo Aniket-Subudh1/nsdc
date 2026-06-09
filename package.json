@@ -15,7 +15,12 @@
     "sync:batches:process": "tsx scripts/process-batch-sync-jobs.ts",
     "check:sidh:uat": "tsx scripts/check-sidh-uat-environment.ts",
     "check:sidh:auth": "tsx scripts/check-sidh-auth.ts",
-    "push:candidate": "tsx scripts/push-candidate-to-sidh.ts"
+    "check:sidh:batch-permission": "tsx scripts/check-sidh-batch-permission.ts",
+    "push:candidate": "tsx scripts/push-candidate-to-sidh.ts",
+    "sidh:env": "tsx scripts/sidh-env.ts",
+    "sidh:env:uat": "tsx scripts/sidh-env.ts uat",
+    "sidh:env:production": "tsx scripts/sidh-env.ts production",
+    "push:batch": "tsx scripts/create-and-push-batch.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1057.0",

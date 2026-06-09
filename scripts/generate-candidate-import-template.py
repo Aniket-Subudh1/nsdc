@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 from openpyxl import Workbook
+from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.datavalidation import DataValidation
 
 NAME_PREFIX_OPTIONS = ["Mr", "Mrs", "Ms", "Mx"]
@@ -24,7 +26,7 @@ HEADERS = [
     "Phone",
     "Country Code",
     "State",
-    "City",
+    "District",
     "Center Name",
     "Course (reference only)",
 ]
@@ -33,7 +35,9 @@ DEFAULT_CENTER_NAMES: list[str] = []
 DEFAULT_COURSE_NAMES: list[str] = []
 
 DEFAULT_OUTPUT_PATH = Path(__file__).resolve().parents[1] / "public" / "candidate_details.xlsx"
+DEFAULT_LOCATION_OPTIONS_PATH = Path(__file__).resolve().parents[1] / "lib" / "candidate-location-options.json"
 MAX_DATA_ROW = 50_001
+FIRST_STATE_CITY_COLUMN = 6
 
 
 def write_list_column(sheet, column: int, values: list[str]) -> str | None:
@@ -47,10 +51,10 @@ def write_list_column(sheet, column: int, values: list[str]) -> str | None:
     return f"Lists!${column_letter}$1:${column_letter}${len(values)}"
 
 
-def add_list_validation(sheet, cell_range: str, source_range: str, *, allow_blank: bool) -> None:
+def add_list_validation(sheet, cell_range: str, formula: str, *, allow_blank: bool) -> None:
     validation = DataValidation(
         type="list",
-        formula1=f"={source_range}",
+        formula1=formula if formula.startswith("=") else f"={formula}",
         allow_blank=allow_blank,
         # openpyxl inverts this flag: False shows the Excel dropdown arrow.
         showDropDown=False,
@@ -59,7 +63,31 @@ def add_list_validation(sheet, cell_range: str, source_range: str, *, allow_blan
     validation.add(cell_range)
 
 
-def build_workbook(center_names: list[str], course_names: list[str]) -> Workbook:
+def load_location_options(path: Path) -> dict[str, list[str]]:
+    if not path.exists():
+        return {}
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return {
+        str(state).strip(): [str(city).strip() for city in cities if str(city).strip()]
+        for state, cities in payload.items()
+        if str(state).strip()
+    }
+
+
+def excel_defined_name(state: str) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9_.]", "_", state.strip())
+    sanitized = re.sub(r"_+", "_", sanitized).strip("_")
+    if sanitized and sanitized[0].isdigit():
+        sanitized = f"_{sanitized}"
+    return sanitized or "STATE"
+
+
+def build_workbook(
+    center_names: list[str],
+    course_names: list[str],
+    state_cities: dict[str, list[str]],
+) -> Workbook:
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Candidates"
@@ -72,6 +100,31 @@ def build_workbook(center_names: list[str], course_names: list[str]) -> Workbook
     center_source = write_list_column(lists_sheet, 3, center_names)
     course_source = write_list_column(lists_sheet, 4, course_names)
 
+    states = list(state_cities.keys())
+    state_source = write_list_column(lists_sheet, 5, states)
+
+    used_names: set[str] = set()
+    for index, state in enumerate(states):
+        cities = state_cities[state]
+        if not cities:
+            continue
+
+        column = FIRST_STATE_CITY_COLUMN + index
+        city_source = write_list_column(lists_sheet, column, cities)
+        if not city_source:
+            continue
+
+        defined_name = excel_defined_name(state)
+        suffix = 1
+        while defined_name in used_names:
+            suffix += 1
+            defined_name = f"{excel_defined_name(state)}_{suffix}"
+        used_names.add(defined_name)
+
+        workbook.defined_names.add(DefinedName(defined_name, attr_text=city_source.replace("=", "")))
+
+    sample_state = "ODISHA" if "ODISHA" in state_cities else (states[0] if states else "ODISHA")
+    sample_district = state_cities.get(sample_state, ["CUTTACK"])[0] if state_cities.get(sample_state) else "CUTTACK"
     sample_center = center_names[0] if center_names else "Center One"
     sample_course = course_names[0] if course_names else None
 
@@ -85,8 +138,8 @@ def build_workbook(center_names: list[str], course_names: list[str]) -> Workbook
         "rohit@example.com",
         "9876543210",
         "91",
-        "Odisha",
-        "Bhubaneswar",
+        sample_state,
+        sample_district,
         sample_center,
         sample_course,
     ]
@@ -94,8 +147,19 @@ def build_workbook(center_names: list[str], course_names: list[str]) -> Workbook
     sheet.append(HEADERS)
     sheet.append(sample_row)
 
-    add_list_validation(sheet, f"A2:A{MAX_DATA_ROW}", prefix_source, allow_blank=False)
-    add_list_validation(sheet, f"C2:C{MAX_DATA_ROW}", gender_source, allow_blank=False)
+    add_list_validation(sheet, f"A2:A{MAX_DATA_ROW}", prefix_source or '""', allow_blank=False)
+    add_list_validation(sheet, f"C2:C{MAX_DATA_ROW}", gender_source or '""', allow_blank=False)
+
+    if state_source:
+        add_list_validation(sheet, f"J2:J{MAX_DATA_ROW}", state_source, allow_blank=True)
+
+    if states:
+        add_list_validation(
+            sheet,
+            f"K2:K{MAX_DATA_ROW}",
+            'INDIRECT(SUBSTITUTE($J2," ","_"))',
+            allow_blank=True,
+        )
 
     if center_source:
         add_list_validation(sheet, f"L2:L{MAX_DATA_ROW}", center_source, allow_blank=False)
@@ -120,10 +184,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=None)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
+    parser.add_argument("--location-options", type=Path, default=DEFAULT_LOCATION_OPTIONS_PATH)
     args = parser.parse_args()
 
     center_names, course_names = load_config(args.config)
-    workbook = build_workbook(center_names, course_names)
+    state_cities = load_location_options(args.location_options)
+    workbook = build_workbook(center_names, course_names, state_cities)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(args.output)

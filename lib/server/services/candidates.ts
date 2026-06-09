@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { normalizeCandidateGender, normalizeCandidateNamePrefix } from "@/lib/candidate-field-options";
+import { normalizeCandidateDistrict, normalizeCandidateState } from "@/lib/candidate-location-options";
 import { ApiError } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
 import { connectToDatabase } from "@/lib/server/mongodb";
@@ -461,7 +462,7 @@ function expandCandidateRegistrationInput(
     },
     locationDetails: {
       state: registrationInput.locationDetails?.state ?? "",
-      city: registrationInput.locationDetails?.city ?? "",
+      district: registrationInput.locationDetails?.district ?? "",
       centerName: registrationInput.locationDetails?.centerName ?? "",
     },
     identity: {
@@ -471,15 +472,15 @@ function expandCandidateRegistrationInput(
       idNumber: "",
     },
     domicile: {
-      state: "",
-      district: "",
+      state: registrationInput.locationDetails?.state ?? "",
+      district: registrationInput.locationDetails?.district ?? "",
     },
     permanentAddress: {
       address: "",
       state: registrationInput.locationDetails?.state ?? "",
-      district: "",
+      district: registrationInput.locationDetails?.district ?? "",
       pinCode: "",
-      city: registrationInput.locationDetails?.city ?? "",
+      city: registrationInput.locationDetails?.district ?? "",
       tehsil: "",
       constituency: "",
     },
@@ -549,7 +550,7 @@ function serializeCandidate(candidate: CandidateLike) {
     },
     locationDetails: {
       state: candidate.permanentAddress?.state ?? null,
-      city: candidate.permanentAddress?.city ?? null,
+      district: candidate.permanentAddress?.district ?? candidate.domicileDistrict ?? null,
       centerName: candidate.centerName ?? null,
     },
     referenceDetails: {
@@ -722,7 +723,7 @@ function buildCandidateInputFromDocument(candidate: CandidateLike): CreateCandid
     },
     locationDetails: {
       state: candidate.permanentAddress?.state ?? "",
-      city: candidate.permanentAddress?.city ?? "",
+      district: candidate.permanentAddress?.district ?? candidate.domicileDistrict ?? "",
       centerName: candidate.centerName ?? "",
     },
     identity: {
@@ -819,9 +820,9 @@ function buildCandidateRecord(input: CreateCandidateInput) {
   const permanentAddress = {
     address: normalizeWhitespace(input.permanentAddress.address) || null,
     state: normalizeWhitespace(input.permanentAddress.state || input.locationDetails?.state) || null,
-    district: normalizeWhitespace(input.permanentAddress.district) || null,
+    district: normalizeWhitespace(input.permanentAddress.district || input.locationDetails?.district) || null,
     pinCode: normalizeWhitespace(input.permanentAddress.pinCode) || null,
-    city: normalizeWhitespace(input.permanentAddress.city || input.locationDetails?.city) || null,
+    city: normalizeWhitespace(input.permanentAddress.city || input.locationDetails?.district) || null,
     tehsil: normalizeWhitespace(input.permanentAddress.tehsil) || null,
     constituency: normalizeWhitespace(input.permanentAddress.constituency) || null,
   };
@@ -857,8 +858,8 @@ function buildCandidateRecord(input: CreateCandidateInput) {
     category: normalizeWhitespace(input.personalDetails.category) || null,
     disability: input.personalDetails.disability,
     typeOfDisability: normalizeWhitespace(input.personalDetails.typeOfDisability) || null,
-    domicileState: normalizeWhitespace(input.domicile.state) || null,
-    domicileDistrict: normalizeWhitespace(input.domicile.district) || null,
+    domicileState: normalizeWhitespace(input.domicile.state || input.locationDetails?.state) || null,
+    domicileDistrict: normalizeWhitespace(input.domicile.district || input.locationDetails?.district) || null,
     idType: normalizeWhitespace(input.identity.idType),
     typeOfAlternateId: normalizeWhitespace(input.identity.typeOfAlternateId) || null,
     aadhaarReferenceNo: normalizeWhitespace(input.identity.aadhaarReferenceNo) || null,
@@ -1066,8 +1067,11 @@ function mapImportRowToCandidateInput(row: Record<string, unknown>): CreateCandi
       phone: String(getCellValue(row, ["Phone", "MobileNo", "Mobile Number"])),
     },
     locationDetails: {
-      state: String(getCellValue(row, ["State"])),
-      city: String(getCellValue(row, ["City"])),
+      state: normalizeCandidateState(getCellValue(row, ["State"])),
+      district: normalizeCandidateDistrict(
+        getCellValue(row, ["State"]),
+        getCellValue(row, ["District", "City", "DomicileDistrict", "PermanentAddressDistrict"]),
+      ),
       centerName: String(getCellValue(row, ["Center Name", "Centre Name", "CenterName", "CentreName"])),
     },
     ...(courseName

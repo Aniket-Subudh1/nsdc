@@ -2341,7 +2341,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                         <td className="min-w-0 truncate px-3 py-2.5 font-medium text-slate-900">{candidate.personalDetails.fullName}</td>
                         <td className="px-3 py-2.5 text-slate-600">{candidate.contactDetails.mobileNumber}</td>
                         <td className="min-w-0 truncate px-3 py-2.5 text-slate-600">
-                          {[candidate.locationDetails.city, candidate.locationDetails.state].filter(Boolean).join(", ") || "—"}
+                          {[candidate.locationDetails.district, candidate.locationDetails.state].filter(Boolean).join(", ") || "—"}
                         </td>
                       </tr>
                     ))}

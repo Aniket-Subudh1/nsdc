@@ -6,6 +6,14 @@ import {
   normalizeCandidateGender,
   normalizeCandidateNamePrefix,
 } from "@/lib/candidate-field-options";
+import {
+  CANDIDATE_STATE_ERROR,
+  candidateDistrictError,
+  normalizeCandidateDistrict,
+  normalizeCandidateState,
+  resolveCandidateDistrict,
+  resolveCandidateState,
+} from "@/lib/candidate-location-options";
 import { calculateMinimumAssessmentDate } from "@/lib/sidh-batch-payload";
 import { z } from "zod";
 
@@ -506,12 +514,88 @@ const candidateRegistrationContactDetailsSchema = z.object({
   countryCode: z.string().trim().min(1).default("91"),
 });
 
-const candidateRegistrationLocationDetailsSchema = z.object({
-  state: nullableTrimmedStringSchema.default(""),
-  city: nullableTrimmedStringSchema.default(""),
+const candidateRegistrationStateSchema = z.preprocess(normalizeCandidateState, nullableTrimmedStringSchema.default(""));
+
+const candidateRegistrationDistrictSchema = z.preprocess(
+  (value) => value,
+  nullableTrimmedStringSchema.default(""),
+);
+
+function mergeLegacyLocationDetails(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const record = value as Record<string, unknown>;
+  const district = record.district ?? record.city;
+
+  return {
+    ...record,
+    district,
+  };
+}
+
+const candidateRegistrationLocationDetailsObjectSchema = z.object({
+  state: candidateRegistrationStateSchema,
+  district: candidateRegistrationDistrictSchema,
   centerName: nullableTrimmedStringSchema.default(""),
   centerId: z.string().trim().min(1).optional(),
 });
+
+const candidateRegistrationLocationDetailsInputSchema = z.preprocess(
+  mergeLegacyLocationDetails,
+  candidateRegistrationLocationDetailsObjectSchema,
+);
+
+function refineCandidateRegistrationLocationDetails<
+  T extends {
+    state?: string | null;
+    district?: string | null;
+    centerName?: string | null;
+    centerId?: string;
+  },
+>(schema: z.ZodType<T>) {
+  return schema
+    .superRefine((value, ctx) => {
+      const rawState = String(value.state ?? "").trim();
+      const rawDistrict = String(value.district ?? "").trim();
+      const normalizedState = resolveCandidateState(rawState);
+      const normalizedDistrict = resolveCandidateDistrict(normalizedState || rawState, rawDistrict);
+
+      if (rawState && !normalizedState) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: CANDIDATE_STATE_ERROR,
+          path: ["state"],
+        });
+      }
+
+      if (rawDistrict && !rawState) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "State is required when district is provided",
+          path: ["state"],
+        });
+      }
+
+      if (rawDistrict && normalizedState && !normalizedDistrict) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: candidateDistrictError(normalizedState),
+          path: ["district"],
+        });
+      }
+    })
+    .transform((value) => ({
+      ...value,
+      state: normalizeCandidateState(value.state),
+      district: normalizeCandidateDistrict(value.state, value.district),
+    }));
+}
+
+const candidateRegistrationLocationDetailsSchema = refineCandidateRegistrationLocationDetails(
+  candidateRegistrationLocationDetailsInputSchema,
+);
 
 const candidateRegistrationReferenceDetailsSchema = z
   .object({
@@ -525,7 +609,7 @@ const candidateRegistrationReferenceDetailsSchema = z
 
 const emptyCandidateRegistrationLocationDetails = {
   state: "",
-  city: "",
+  district: "",
   centerName: "",
 };
 
@@ -641,7 +725,9 @@ export const updateCandidateSchema = z
     registrationMode: registrationModeSchema.optional(),
     personalDetails: candidatePersonalDetailsBaseSchema.partial().optional(),
     contactDetails: candidateContactDetailsSchema.partial().optional(),
-    locationDetails: candidateRegistrationLocationDetailsSchema.partial().optional(),
+    locationDetails: refineCandidateRegistrationLocationDetails(
+      z.preprocess(mergeLegacyLocationDetails, candidateRegistrationLocationDetailsObjectSchema.partial()),
+    ).optional(),
     identity: candidateIdentityBaseSchema.partial().optional(),
     domicile: candidateDomicileSchema.partial().optional(),
     permanentAddress: candidateAddressSchema.partial().optional(),

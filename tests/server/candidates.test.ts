@@ -168,16 +168,16 @@ describe("candidate services", () => {
           aadhaarReferenceNo: "",
         },
         domicile: {
-          state: "Odisha",
+          state: "ODISHA",
           district: "Khordha",
         },
         permanentAddress: {
           address: "Plot 1",
-          state: "Odisha",
+          state: "ODISHA",
           district: "Khordha",
           pinCode: "751001",
-          city: "Bhubaneswar",
-          tehsil: "Bhubaneswar",
+          city: "CUTTACK",
+          tehsil: "CUTTACK",
           constituency: "Central",
         },
         communicationAddress: {
@@ -231,8 +231,8 @@ describe("candidate services", () => {
           countryCode: "91",
         },
         locationDetails: {
-          state: "Odisha",
-          city: "Bhubaneswar",
+          state: "ODISHA",
+          district: "CUTTACK",
           centerName: "Center One",
           centerId: "tc_001",
         },
@@ -267,8 +267,8 @@ describe("candidate services", () => {
         countryCode: "91",
       },
       locationDetails: {
-        state: "Odisha",
-        city: "Bhubaneswar",
+        state: "ODISHA",
+        district: "CUTTACK",
         centerName: "Center One",
         centerId: "tc_001",
       },
@@ -289,8 +289,8 @@ describe("candidate services", () => {
         countryCode: "91",
       },
       locationDetails: {
-        state: "Odisha",
-        city: "Bhubaneswar",
+        state: "ODISHA",
+        district: "CUTTACK",
         centerName: "Center One",
         centerId: "tc_001",
       },
@@ -323,8 +323,8 @@ describe("candidate services", () => {
         countryCode: "91",
       },
       locationDetails: {
-        state: "Odisha",
-        city: "Bhubaneswar",
+        state: "ODISHA",
+        district: "CUTTACK",
         centerName: "Center One",
         centerId: "tc_001",
       },
@@ -358,8 +358,8 @@ describe("candidate services", () => {
         countryCode: "91",
       },
       locationDetails: {
-        state: "Odisha",
-        city: "Bhubaneswar",
+        state: "ODISHA",
+        district: "CUTTACK",
         centerName: "Center One",
         centerId: "tc_001",
       },
@@ -405,8 +405,8 @@ describe("candidate services", () => {
         countryCode: "91",
       },
       locationDetails: {
-        state: "Odisha",
-        city: "Bhubaneswar",
+        state: "ODISHA",
+        district: "CUTTACK",
         centerName: "Center One",
         centerId: "tc_001",
       },
@@ -461,8 +461,8 @@ describe("candidate services", () => {
         countryCode: "91",
       },
       locationDetails: {
-        state: "Odisha",
-        city: "Bhubaneswar",
+        state: "ODISHA",
+        district: "CUTTACK",
         centerName: "Center One",
       },
     });
@@ -470,8 +470,8 @@ describe("candidate services", () => {
     expect(result.personalDetails.fullName).toBe("Rohit Kumar");
     expect(result.locationDetails).toEqual({
       centerName: "Center One",
-      city: "Bhubaneswar",
-      state: "Odisha",
+      district: "CUTTACK",
+      state: "ODISHA",
     });
     expect(result.programId).toBe("candidate_registration");
     expect(result.centerId).toBe("tc_001");
@@ -513,8 +513,8 @@ describe("candidate services", () => {
         Email: "rohit@example.com",
         "Country Code": "91",
         Phone: "9876543210",
-        State: "Odisha",
-        City: "Bhubaneswar",
+        State: "ODISHA",
+        District: "CUTTACK",
         "Center Name": "Center One",
         "Course (reference only)": "Retail Sales Associate",
       },
@@ -548,8 +548,8 @@ describe("candidate services", () => {
         Email: "rohit@example.com",
         "Country Code": "91",
         Phone: "9876543210",
-        State: "Odisha",
-        City: "Bhubaneswar",
+        State: "ODISHA",
+        District: "CUTTACK",
         "Center Name": "Center One",
       },
     ]);
@@ -580,8 +580,8 @@ describe("candidate services", () => {
         Email: "rohit@example.com",
         "Country Code": "91",
         Phone: "9876543210",
-        State: "Odisha",
-        City: "Bhubaneswar",
+        State: "ODISHA",
+        District: "CUTTACK",
         "Center Name": "Center One",
       },
       {
@@ -593,8 +593,8 @@ describe("candidate services", () => {
         Email: "missing.mobile@example.com",
         "Country Code": "91",
         Phone: "",
-        State: "Odisha",
-        City: "Bhubaneswar",
+        State: "ODISHA",
+        District: "CUTTACK",
         "Center Name": "Center One",
       },
     ]);
@@ -623,8 +623,8 @@ describe("candidate services", () => {
           normalized: expect.objectContaining({
             locationDetails: {
               centerName: "Center One",
-              city: "Bhubaneswar",
-              state: "Odisha",
+              district: "CUTTACK",
+              state: "ODISHA",
             },
           }),
         }),
@@ -648,8 +648,8 @@ describe("candidate services", () => {
         Email: "rohit@example.com",
         "Country Code": "91",
         Phone: "9876543210",
-        State: "Odisha",
-        City: "Bhubaneswar",
+        State: "ODISHA",
+        District: "CUTTACK",
         "Center Name": "Center One",
       },
     ]);
@@ -680,8 +680,8 @@ describe("candidate services", () => {
         Email: "rohit@example.com",
         "Country Code": "91",
         Phone: "9876543210",
-        State: "Odisha",
-        City: "Bhubaneswar",
+        State: "ODISHA",
+        District: "CUTTACK",
         "Center Name": "Center One",
       },
     ]);
@@ -732,21 +732,21 @@ describe("candidate services", () => {
       mobileNumber: "9876543210",
       permanentAddress: {
         address: "Plot 1",
-        state: "Odisha",
+        state: "ODISHA",
         district: "Khordha",
         pinCode: "751001",
-        city: "Bhubaneswar",
-        tehsil: "Bhubaneswar",
+        city: "CUTTACK",
+        tehsil: "CUTTACK",
         constituency: "Central",
       },
       communicationAddress: {
         sameAsPermanent: true,
         address: "Plot 1",
-        state: "Odisha",
+        state: "ODISHA",
         district: "Khordha",
         pinCode: "751001",
-        city: "Bhubaneswar",
-        tehsil: "Bhubaneswar",
+        city: "CUTTACK",
+        tehsil: "CUTTACK",
         constituency: "Central",
       },
       syncState: {
@@ -806,16 +806,16 @@ describe("candidate services", () => {
               idNumber: "ABC1234567",
             },
             domicile: {
-              state: "Odisha",
+              state: "ODISHA",
               district: "Khordha",
             },
             permanentAddress: {
               address: "Plot 1",
-              state: "Odisha",
+              state: "ODISHA",
               district: "Khordha",
               pinCode: "751001",
-              city: "Bhubaneswar",
-              tehsil: "Bhubaneswar",
+              city: "CUTTACK",
+              tehsil: "CUTTACK",
               constituency: "Central",
             },
             communicationAddress: {

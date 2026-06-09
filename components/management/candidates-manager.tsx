@@ -32,6 +32,12 @@ import {
   CANDIDATE_GENDER_OPTIONS,
   CANDIDATE_NAME_PREFIX_OPTIONS,
 } from "@/lib/candidate-field-options";
+import {
+  CANDIDATE_STATE_OPTIONS,
+  listCandidateDistrictsForState,
+  normalizeCandidateDistrict,
+  normalizeCandidateState,
+} from "@/lib/candidate-location-options";
 import { cn } from "@/lib/utils";
 
 type CandidatesManagerProps = {
@@ -57,7 +63,7 @@ type CandidateRecord = {
   };
   locationDetails: {
     centerName: string | null;
-    city: string | null;
+    district: string | null;
     state: string | null;
   };
   experience: {
@@ -198,9 +204,9 @@ type ImportRowStatusFilter = "" | "duplicate" | "invalid" | "valid";
 
 type ImportRowPreview = {
   centerName: string;
-  city: string;
   countryCode: string;
   courseName: string;
+  district: string;
   dob: string;
   email: string;
   fatherName: string;
@@ -230,7 +236,7 @@ function extractImportRowPreview(normalized: Record<string, unknown>): ImportRow
   return {
     centerName: displayImportValue(String(location.centerName ?? "")),
     courseName: displayImportValue(String(reference.courseName ?? "")),
-    city: displayImportValue(String(location.city ?? "")),
+    district: displayImportValue(String(location.district ?? location.city ?? "")),
     countryCode: displayImportValue(String(contact.countryCode ?? "91")),
     dob: displayImportValue(String(personal.dob ?? personal.dateOfBirth ?? "")),
     email: displayImportValue(String(contact.email ?? "")),
@@ -249,7 +255,7 @@ const IMPORT_FIELD_LABELS: Record<string, string> = {
   "contactDetails.email": "Email",
   "contactDetails.phone": "Phone",
   "locationDetails.centerName": "Training center",
-  "locationDetails.city": "City",
+  "locationDetails.district": "District",
   "locationDetails.state": "State",
   "personalDetails.dob": "Date of birth",
   "personalDetails.fatherName": "Father name",
@@ -294,7 +300,7 @@ function extractSyncPayloadSummary(payload: Record<string, unknown>) {
 
   return {
     centerName: String(location.centerName ?? "").trim() || "—",
-    city: String(location.city ?? "").trim() || "—",
+    district: String(location.district ?? location.city ?? "").trim() || "—",
     dob: String(personal.dateOfBirth ?? "").trim() || "—",
     email: String(contact.email ?? "").trim() || "—",
     fullName: String(personal.fullName ?? "").trim() || "—",
@@ -329,7 +335,7 @@ type IndividualCandidateFormState = {
   centerId: string;
   courseId: string;
   countryCode: string;
-  city: string;
+  district: string;
   dob: string;
   email: string;
   fatherName: string;
@@ -427,7 +433,7 @@ const emptyIndividualCandidateForm: IndividualCandidateFormState = {
   centerId: "",
   courseId: "",
   countryCode: "91",
-  city: "",
+  district: "",
   dob: "",
   email: "",
   fatherName: "",
@@ -492,7 +498,7 @@ function buildIndividualCandidatePayload(
     },
     locationDetails: {
       state: form.state,
-      city: form.city,
+      district: form.district,
       centerName: selectedCenter?.centerName ?? "",
       centerId: form.centerId,
     },
@@ -533,12 +539,12 @@ function buildIndividualCandidateUpdatePayload(
     },
     locationDetails: {
       state: form.state,
-      city: form.city,
+      district: form.district,
       centerName: selectedCenter?.centerName ?? "",
     },
     permanentAddress: {
       state: form.state,
-      city: form.city,
+      district: form.district,
     },
     referenceDetails: form.courseId
       ? {
@@ -550,11 +556,20 @@ function buildIndividualCandidateUpdatePayload(
 }
 
 function candidateToIndividualForm(candidate: CandidateRecord): IndividualCandidateFormState {
+  const rawState = candidate.locationDetails?.state ?? candidate.permanentAddress?.state ?? "";
+  const rawDistrict =
+    candidate.locationDetails?.district ??
+    candidate.permanentAddress?.district ??
+    candidate.permanentAddress?.city ??
+    "";
+  const state = normalizeCandidateState(rawState);
+  const district = normalizeCandidateDistrict(state, rawDistrict);
+
   return {
     centerId: candidate.centerId,
     courseId: candidate.referenceDetails?.courseId ?? "",
     countryCode: "91",
-    city: candidate.locationDetails?.city ?? candidate.permanentAddress?.city ?? "",
+    district,
     dob: candidate.personalDetails.dateOfBirth ?? "",
     email: candidate.contactDetails.email ?? "",
     fatherName: candidate.personalDetails.fathersName ?? "",
@@ -563,7 +578,7 @@ function candidateToIndividualForm(candidate: CandidateRecord): IndividualCandid
     guardianName: candidate.personalDetails.guardiansName ?? "",
     namePrefix: candidate.personalDetails.salutation ?? "",
     phone: candidate.contactDetails.mobileNumber,
-    state: candidate.locationDetails?.state ?? candidate.permanentAddress?.state ?? "",
+    state,
   };
 }
 
@@ -858,6 +873,10 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   const [courses, setCourses] = useState<CourseOption[]>([]);
   const [programs, setPrograms] = useState<ProgramOption[]>([]);
   const uniqueCourses = useMemo(() => getUniqueCourseOptions(courses), [courses]);
+  const candidateDistrictOptions = useMemo(
+    () => listCandidateDistrictsForState(individualCandidateForm.state),
+    [individualCandidateForm.state],
+  );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -2319,24 +2338,49 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
               <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Location</p>
               <div className="grid gap-3 sm:grid-cols-2">
                 <FormField label="State">
-                  <input
+                  <select
                     value={individualCandidateForm.state}
-                    onChange={(event) =>
-                      setIndividualCandidateForm((current) => ({ ...current, state: event.target.value }))
-                    }
+                    onChange={(event) => {
+                      const nextState = event.target.value;
+                      setIndividualCandidateForm((current) => {
+                        const nextDistricts = listCandidateDistrictsForState(nextState);
+                        const keepDistrict = nextDistricts.includes(current.district);
+
+                        return {
+                          ...current,
+                          state: nextState,
+                          district: keepDistrict ? current.district : "",
+                        };
+                      });
+                    }}
                     className={inputClassName}
-                    placeholder="State"
-                  />
+                  >
+                    <option value="">Select state</option>
+                    {CANDIDATE_STATE_OPTIONS.map((state) => (
+                      <option key={state} value={state}>
+                        {state}
+                      </option>
+                    ))}
+                  </select>
                 </FormField>
-                <FormField label="City">
-                  <input
-                    value={individualCandidateForm.city}
+                <FormField label="District">
+                  <select
+                    value={individualCandidateForm.district}
                     onChange={(event) =>
-                      setIndividualCandidateForm((current) => ({ ...current, city: event.target.value }))
+                      setIndividualCandidateForm((current) => ({ ...current, district: event.target.value }))
                     }
                     className={inputClassName}
-                    placeholder="City"
-                  />
+                    disabled={!individualCandidateForm.state}
+                  >
+                    <option value="">
+                      {individualCandidateForm.state ? "Select district" : "Select state first"}
+                    </option>
+                    {candidateDistrictOptions.map((district) => (
+                      <option key={district} value={district}>
+                        {district}
+                      </option>
+                    ))}
+                  </select>
                 </FormField>
                 <FormField label="Training center *" className="sm:col-span-2">
                   <select
@@ -2724,7 +2768,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                       <DetailMeta label="Mobile" value={summary.mobile} />
                       <DetailMeta label="Email" value={summary.email} />
                       <DetailMeta label="Date of birth" value={summary.dob} />
-                      <DetailMeta label="City" value={summary.city} />
+                      <DetailMeta label="District" value={summary.district} />
                       <DetailMeta label="State" value={summary.state} />
                       <DetailMeta label="Training center" value={summary.centerName} />
                       <DetailMeta label="Gender" value={summary.gender} />
@@ -3027,7 +3071,7 @@ function ImportRowViewModal({ onClose, row }: { onClose: () => void; row: Import
 
         <ImportDetailSection title="Location & reference">
           <ImportDetailField label="State" value={details.state} />
-          <ImportDetailField label="City" value={details.city} />
+          <ImportDetailField label="District" value={details.district} />
           <ImportDetailField label="Training center" value={details.centerName} />
           <ImportDetailField label="Course (reference only)" value={details.courseName} />
         </ImportDetailSection>
@@ -3093,7 +3137,7 @@ const ImportRowListItem = memo(function ImportRowListItem({
   row: ImportRowRecord;
 }) {
   const details = extractImportRowPreview(row.normalized);
-  const location = [details.city, details.state].filter((part) => part !== EMPTY_FIELD).join(", ") || EMPTY_FIELD;
+  const location = [details.district, details.state].filter((part) => part !== EMPTY_FIELD).join(", ") || EMPTY_FIELD;
   const issuePreview =
     row.errors.length > 0
       ? row.errors.map(formatImportError)[0]

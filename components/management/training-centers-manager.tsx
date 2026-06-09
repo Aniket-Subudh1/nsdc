@@ -317,8 +317,8 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-6 bg-slate-100 px-4 py-4 md:px-8 md:py-8">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="flex h-full min-h-0 flex-1 flex-col gap-6 overflow-hidden bg-slate-100 px-4 py-4 md:px-8 md:py-8">
+      <div className="shrink-0 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-neutral-900">{content.heading}</h1>
           <p className="mt-1 max-w-2xl text-sm text-neutral-500">{content.description}</p>
@@ -347,7 +347,7 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+      <div className="grid shrink-0 grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatCard
           label="Total centers"
           value={isLoading ? null : stats.total}
@@ -387,8 +387,8 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
         />
       </div>
 
-      <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-4 sm:px-5 md:flex-row md:items-center md:justify-between">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex shrink-0 flex-col gap-3 border-b border-slate-100 px-4 py-4 sm:px-5 md:flex-row md:items-center md:justify-between">
           <div className="flex flex-wrap gap-1">
             {(["all", "active", "inactive"] as StatusFilter[]).map((s) => (
               <button
@@ -436,7 +436,8 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
           </div>
         </div>
 
-        <div className="hidden overflow-x-auto lg:block">
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="hidden overflow-x-auto lg:block">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 bg-slate-50/80">
@@ -512,9 +513,10 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
             ))
           )}
         </div>
+        </div>
 
         {!isLoading && totalPages > 1 ? (
-          <div className="flex flex-col gap-3 border-t border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+          <div className="flex shrink-0 flex-col gap-3 border-t border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
             <p className="text-xs text-slate-500">
               Page <span className="font-semibold text-slate-700">{page}</span> of{" "}
               <span className="font-semibold text-slate-700">{totalPages}</span>

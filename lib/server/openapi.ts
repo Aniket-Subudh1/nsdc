@@ -490,6 +490,15 @@ export function getOpenApiDocument() {
             status: { type: "string", enum: ["active", "inactive"] },
           },
         },
+        UpdateSectorRequest: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            code: { type: "string" },
+            description: { type: "string" },
+            status: { type: "string", enum: ["active", "inactive"] },
+          },
+        },
         Scheme: {
           type: "object",
           required: ["id", "schemeId", "name", "code", "description", "status", "syncEnabled", "verifiedForSidh", "verifiedAt", "sidhSchemeId", "fundingType", "beneficiaryType", "validFrom", "validTo", "createdAt", "updatedAt"],
@@ -1845,6 +1854,24 @@ export function getOpenApiDocument() {
         },
       },
       "/masters/sectors/{sectorId}": {
+        patch: {
+          tags: ["Masters"],
+          summary: "Update a sector",
+          security: [{ cookieAuth: [] }],
+          parameters: [{ name: "sectorId", in: "path", required: true, schema: { type: "string" } }],
+          requestBody: {
+            required: true,
+            content: jsonContent(ref("UpdateSectorRequest")),
+          },
+          responses: {
+            200: successResponse("Sector updated successfully", ref("Sector")),
+            400: errorResponse("Validation failed"),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+            404: errorResponse("Sector not found"),
+            409: errorResponse("Sector code or name already exists"),
+          },
+        },
         delete: {
           tags: ["Masters"],
           summary: "Delete a sector",

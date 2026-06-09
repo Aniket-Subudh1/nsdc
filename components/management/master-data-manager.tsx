@@ -250,6 +250,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
   const [courseTotal, setCourseTotal] = useState(0);
 
   const [selectedProgramId, setSelectedProgramId] = useState<string | null>(null);
+  const [selectedSectorId, setSelectedSectorId] = useState<string | null>(null);
   const [selectedSchemeId, setSelectedSchemeId] = useState<string | null>(null);
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
 
@@ -269,6 +270,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
 
   const selectedProgram = programs.find((p) => p.programId === selectedProgramId) ?? null;
+  const selectedSector = sectors.find((sector) => sector.sectorId === selectedSectorId) ?? null;
   const selectedScheme = schemes.find((s) => s.schemeId === selectedSchemeId) ?? null;
   const selectedCourse = courses.find((course) => course.courseId === selectedCourseId) ?? null;
 
@@ -352,6 +354,11 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
       if (tab === "programs" && selectedProgramId === id) {
         setSelectedProgramId(null);
         setProgramForm(emptyProgramForm);
+        setShowEditModal(false);
+      }
+      if (tab === "sectors" && selectedSectorId === id) {
+        setSelectedSectorId(null);
+        setSectorForm(emptySectorForm);
         setShowEditModal(false);
       }
       if (tab === "schemes" && selectedSchemeId === id) {
@@ -499,6 +506,16 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
         status: prog.status,
         syncToSidh: prog.syncToSidh,
       });
+    } else if (activeTab === "sectors") {
+      const sector = sectors.find((item) => item.sectorId === id);
+      if (!sector) return;
+      setSelectedSectorId(sector.sectorId);
+      setSectorForm({
+        code: sector.code,
+        description: sector.description ?? "",
+        name: sector.name,
+        status: sector.status,
+      });
     } else if (activeTab === "schemes") {
       const scheme = schemes.find((s) => s.schemeId === id);
       if (!scheme) return;
@@ -577,16 +594,26 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
     e.preventDefault();
     setIsSaving(true);
     try {
-      await apiFetch("/api/v1/masters/sectors", {
-        method: "POST",
-        body: JSON.stringify(sectorForm),
-      });
-      toast.success("Sector created");
+      if (selectedSector) {
+        await apiFetch(`/api/v1/masters/sectors/${selectedSector.sectorId}`, {
+          method: "PATCH",
+          body: JSON.stringify(sectorForm),
+        });
+        toast.success("Sector updated");
+        setShowEditModal(false);
+      } else {
+        await apiFetch("/api/v1/masters/sectors", {
+          method: "POST",
+          body: JSON.stringify(sectorForm),
+        });
+        toast.success("Sector created");
+        setShowCreateModal(false);
+      }
+      setSelectedSectorId(null);
       setSectorForm(emptySectorForm);
-      setShowCreateModal(false);
       await loadData();
     } catch (error) {
-      toast.error(error instanceof ClientApiError ? error.message : "Unable to create sector");
+      toast.error(error instanceof ClientApiError ? error.message : "Unable to save sector");
     } finally {
       setIsSaving(false);
     }
@@ -716,8 +743,8 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
   };
 
   return (
-    <div className="flex flex-1 flex-col gap-6 bg-slate-100 px-4 py-4 md:px-8 md:py-8">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="flex h-full min-h-0 flex-1 flex-col gap-6 overflow-hidden bg-slate-100 px-4 py-4 md:px-8 md:py-8">
+      <div className="shrink-0 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-neutral-900">{content.heading}</h1>
           <p className="mt-1 max-w-2xl text-sm text-neutral-500">{content.description}</p>
@@ -757,7 +784,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+      <div className="grid shrink-0 grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatCard
           label="Programs"
           value={isLoading ? null : programs.length}
@@ -788,8 +815,8 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
         />
       </div>
 
-      <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex items-center gap-1 overflow-x-auto border-b border-slate-100 px-4 pt-3 sm:px-5">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-slate-100 px-4 pt-3 sm:px-5">
           {TABS.map((tab) => (
             <button
               key={tab.id}
@@ -816,7 +843,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           ))}
         </div>
 
-        <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-4 sm:px-5 md:flex-row md:items-center md:justify-between">
+        <div className="flex shrink-0 flex-col gap-3 border-b border-slate-100 px-4 py-4 sm:px-5 md:flex-row md:items-center md:justify-between">
           <div className="flex flex-wrap gap-1">
             {(["all", "active", "inactive"] as const).map((s) => (
               <button
@@ -863,7 +890,8 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           </div>
         </div>
 
-        <div className="hidden overflow-x-auto lg:block">
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="hidden overflow-x-auto lg:block">
           {activeTab === "programs" && (
             <ProgramsTable
               isLoading={isLoading}
@@ -875,7 +903,12 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
             />
           )}
           {activeTab === "sectors" && (
-            <SectorsTable isLoading={isLoading} onDelete={handleDelete} sectors={filteredSectors} />
+            <SectorsTable
+              isLoading={isLoading}
+              onDelete={handleDelete}
+              onEdit={(id) => openEditModal(id)}
+              sectors={filteredSectors}
+            />
           )}
           {activeTab === "schemes" && (
             <SchemesTable
@@ -914,7 +947,12 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
             />
           )}
           {activeTab === "sectors" && (
-            <SectorsMobileList isLoading={isLoading} onDelete={handleDelete} sectors={filteredSectors} />
+            <SectorsMobileList
+              isLoading={isLoading}
+              onDelete={handleDelete}
+              onEdit={(id) => openEditModal(id)}
+              sectors={filteredSectors}
+            />
           )}
           {activeTab === "schemes" && (
             <SchemesMobileList
@@ -939,6 +977,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
               onPageChange={setCoursePage}
             />
           )}
+        </div>
         </div>
       </div>
 
@@ -978,10 +1017,25 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
       {showCreateModal && activeTab === "sectors" && (
         <SectorModal
           form={sectorForm}
+          isEdit={false}
           isSaving={isSaving}
           setForm={setSectorForm}
           onClose={() => {
             setShowCreateModal(false);
+            setSectorForm(emptySectorForm);
+          }}
+          onSubmit={handleSectorSave}
+        />
+      )}
+      {showEditModal && activeTab === "sectors" && (
+        <SectorModal
+          form={sectorForm}
+          isEdit={true}
+          isSaving={isSaving}
+          setForm={setSectorForm}
+          onClose={() => {
+            setShowEditModal(false);
+            setSelectedSectorId(null);
             setSectorForm(emptySectorForm);
           }}
           onSubmit={handleSectorSave}
@@ -1126,10 +1180,12 @@ function ProgramsMobileList({
 function SectorsMobileList({
   isLoading,
   onDelete,
+  onEdit,
   sectors,
 }: {
   isLoading: boolean;
   onDelete: (tab: Tab, id: string, label: string) => void;
+  onEdit: (id: string) => void;
   sectors: SectorRecord[];
 }) {
   if (isLoading) return <MobileLoadingState />;
@@ -1141,15 +1197,20 @@ function SectorsMobileList({
     <>
       {sectors.map((sector) => (
         <div key={sector.id} className="px-4 py-4">
-          <MasterDataIdentity accentClass="bg-sky-100 text-sky-700" code={sector.code} name={sector.name} subtitle={sector.description} />
+          <button type="button" onClick={() => onEdit(sector.sectorId)} className="w-full text-left">
+            <MasterDataIdentity accentClass="bg-sky-100 text-sky-700" code={sector.code} name={sector.name} subtitle={sector.description} />
+          </button>
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
             <StatusBadge status={sector.status} />
-            <RowActionButton
-              label="Delete"
-              onClick={() => onDelete("sectors", sector.sectorId, sector.name)}
-              icon={<IconTrash className="h-3.5 w-3.5" />}
-              tone="danger"
-            />
+            <div className="flex flex-wrap gap-2">
+              <EditButton onClick={() => onEdit(sector.sectorId)} />
+              <RowActionButton
+                label="Delete"
+                onClick={() => onDelete("sectors", sector.sectorId, sector.name)}
+                icon={<IconTrash className="h-3.5 w-3.5" />}
+                tone="danger"
+              />
+            </div>
           </div>
         </div>
       ))}
@@ -1486,10 +1547,12 @@ function ProgramsTable({
 function SectorsTable({
   isLoading,
   onDelete,
+  onEdit,
   sectors,
 }: {
   isLoading: boolean;
   onDelete: (tab: Tab, id: string, label: string) => void;
+  onEdit: (id: string) => void;
   sectors: SectorRecord[];
 }) {
   return (
@@ -1517,7 +1580,7 @@ function SectorsTable({
           />
         ) : (
           sectors.map((s) => (
-            <tr key={s.id} className="group transition-colors hover:bg-slate-50/80">
+            <tr key={s.id} className="group cursor-pointer transition-colors hover:bg-slate-50/80" onClick={() => onEdit(s.sectorId)}>
               <td className="px-5 py-4">
                 <div className="flex items-center gap-3">
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-sky-100 text-sm font-bold text-sky-700">
@@ -1533,8 +1596,9 @@ function SectorsTable({
               <td className="px-4 py-4">
                 <StatusBadge status={s.status} />
               </td>
-              <td className="px-4 py-4 text-right">
+              <td className="px-4 py-4 text-right" onClick={(event) => event.stopPropagation()}>
                 <div className="flex justify-end gap-2 opacity-0 transition group-hover:opacity-100">
+                  <EditButton onClick={() => onEdit(s.sectorId)} />
                   <RowActionButton
                     label="Delete"
                     onClick={() => onDelete("sectors", s.sectorId, s.name)}
@@ -2155,12 +2219,14 @@ function ProgramModal({
 
 function SectorModal({
   form,
+  isEdit,
   isSaving,
   onClose,
   onSubmit,
   setForm,
 }: {
   form: SectorForm;
+  isEdit: boolean;
   isSaving: boolean;
   onClose: () => void;
   onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
@@ -2170,8 +2236,8 @@ function SectorModal({
     <Modal
       icon={<IconStack2 className="h-5 w-5" />}
       iconBg="bg-sky-100 text-sky-600"
-      subtitle="Add a new sector to organise courses and schemes."
-      title="Create Sector"
+      subtitle={isEdit ? "Update the sector details below." : "Add a new sector to organise courses and schemes."}
+      title={isEdit ? "Edit Sector" : "Create Sector"}
       onClose={onClose}
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-4">
@@ -2215,7 +2281,7 @@ function SectorModal({
             placeholder="Optional description…"
           />
         </FormField>
-        <ModalFooter isEdit={false} isSaving={isSaving} onClose={onClose} />
+        <ModalFooter isEdit={isEdit} isSaving={isSaving} onClose={onClose} />
       </form>
     </Modal>
   );

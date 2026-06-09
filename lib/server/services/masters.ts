@@ -802,6 +802,58 @@ export async function createSector(actor: AuthSession, input: SectorInput) {
   return serializeSector(sector);
 }
 
+export async function updateSector(actor: AuthSession, sectorId: string, input: Partial<SectorInput>) {
+  await connectToDatabase();
+  ensureCanWriteMasters(actor);
+
+  const sector = await SectorModel.findOne({ sectorId: normalizeString(sectorId) });
+
+  if (!sector) {
+    throw new ApiError(404, "SECTOR_NOT_FOUND", "Sector not found");
+  }
+
+  const nextCode = input.code !== undefined ? normalizeString(input.code) : sector.code;
+  const nextName = input.name !== undefined ? normalizeString(input.name) : sector.name;
+
+  if (nextCode !== sector.code || nextName !== sector.name) {
+    const existingSector = await SectorModel.findOne({
+      sectorId: { $ne: sector.sectorId },
+      $or: [{ code: nextCode }, { name: nextName }],
+    });
+
+    if (existingSector) {
+      throw new ApiError(409, "SECTOR_EXISTS", "A sector with this code or name already exists");
+    }
+  }
+
+  if (input.name !== undefined) {
+    sector.name = nextName;
+  }
+  if (input.code !== undefined) {
+    sector.code = nextCode;
+  }
+  if (input.description !== undefined) {
+    sector.description = input.description.trim() || null;
+  }
+  if (input.status !== undefined) {
+    sector.status = input.status;
+  }
+
+  sector.updatedByUserId = actor.user.id;
+  await sector.save();
+
+  await writeAuditLog({
+    action: "masters.sector.updated",
+    actorUserId: actor.user.id,
+    entityId: sector.sectorId,
+    entityType: "sector",
+    metadata: { code: sector.code, name: sector.name },
+    requestId: input.requestId,
+  });
+
+  return serializeSector(sector);
+}
+
 export async function deleteSector(actor: AuthSession, sectorId: string, requestId?: string) {
   await connectToDatabase();
   ensureCanWriteMasters(actor);

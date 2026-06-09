@@ -218,6 +218,17 @@ export const createSectorSchema = z.object({
   status: statusSchema.default("active"),
 });
 
+export const updateSectorSchema = z
+  .object({
+    name: z.string().trim().min(2).max(160).optional(),
+    code: z.string().trim().min(2).max(80).optional(),
+    description: z.string().trim().max(500).optional(),
+    status: statusSchema.optional(),
+  })
+  .refine((value) => Object.values(value).some((entry) => entry !== undefined), {
+    message: "At least one field is required",
+  });
+
 const optionalDateStringSchema = z.preprocess(
   (value) => {
     if (typeof value !== "string") {

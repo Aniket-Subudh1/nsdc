@@ -600,11 +600,11 @@ const candidateRegistrationLocationDetailsSchema = refineCandidateRegistrationLo
 const candidateRegistrationReferenceDetailsSchema = z
   .object({
     courseId: z.string().trim().min(1).optional(),
-    courseName: z.string().trim().min(1),
+    courseName: z.string().trim().min(1).optional(),
   })
   .refine((value) => Boolean(value.courseId || value.courseName), {
-    message: "Course reference requires a course name",
-    path: ["courseName"],
+    message: "Course reference requires a course id or name",
+    path: ["courseId"],
   });
 
 const emptyCandidateRegistrationLocationDetails = {
@@ -748,13 +748,21 @@ export const linkExistingSidhCandidateSchema = z.object({
   dateOfBirth: z.string().date(),
 });
 
-export const candidateListQuerySchema = paginationQuerySchema.extend({
-  search: z.string().trim().optional(),
-  programId: z.string().trim().optional(),
-  centerId: z.string().trim().optional(),
-  syncStatus: candidateSyncStatusSchema.optional(),
-  registrationMode: registrationModeSchema.optional(),
-});
+export const candidateListQuerySchema = paginationQuerySchema
+  .omit({ pageSize: true })
+  .extend({
+    pageSize: z.coerce.number().int().positive().max(200).default(20),
+    search: z.string().trim().optional(),
+    programId: z.string().trim().optional(),
+    centerId: z.string().trim().optional(),
+    referenceCourseId: z.string().trim().optional(),
+    state: z.string().trim().optional(),
+    district: z.string().trim().optional(),
+    gender: z.enum(CANDIDATE_GENDER_OPTIONS).optional(),
+    syncStatus: candidateSyncStatusSchema.optional(),
+    registrationMode: registrationModeSchema.optional(),
+    eligibleForBatchId: z.string().trim().optional(),
+  });
 
 const optionalFormStringSchema = z.preprocess(
   (value) => (value === null || value === undefined || value === "" ? undefined : value),
@@ -919,7 +927,11 @@ export const batchListQuerySchema = paginationQuerySchema.extend({
 });
 
 export const addCandidatesToBatchSchema = z.object({
-  candidateIds: z.array(z.string().trim().min(1)).min(1).max(80),
+  candidateIds: batchCandidateIdsSchema.min(1),
+});
+
+export const createBatchEnrollmentJobSchema = z.object({
+  candidateIds: batchCandidateIdsSchema.min(1),
 });
 
 export const batchSyncRequestSchema = z.object({
@@ -1009,6 +1021,7 @@ export type CreateBatchInput = z.infer<typeof createBatchSchema>;
 export type UpdateBatchInput = z.infer<typeof updateBatchSchema>;
 export type BatchListQuery = z.infer<typeof batchListQuerySchema>;
 export type AddCandidatesToBatchInput = z.infer<typeof addCandidatesToBatchSchema>;
+export type CreateBatchEnrollmentJobInput = z.infer<typeof createBatchEnrollmentJobSchema>;
 export type BatchSyncRequestInput = z.infer<typeof batchSyncRequestSchema>;
 export type EnrollmentSyncRequestInput = z.infer<typeof enrollmentSyncRequestSchema>;
 export type TrainingAssessmentSubmissionInput = z.infer<typeof trainingAssessmentSubmissionSchema>;

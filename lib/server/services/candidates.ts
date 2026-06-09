@@ -22,6 +22,7 @@ import {
   getPermissionsForRoles,
 } from "@/lib/server/rbac";
 import { writeAuditLog } from "@/lib/server/services/audit";
+import { applyBatchEnrollmentEligibilityFilters } from "@/lib/server/services/batch-enrollment-jobs";
 import { type AuthSession } from "@/lib/server/services/session";
 import { parseUserDateInput } from "@/lib/server/sidh-payload";
 import {
@@ -393,30 +394,35 @@ function assertLearnerMutableBeforeSidh(candidate: CandidateLike) {
 async function resolveReferenceCourseDetails(
   referenceDetails?: { courseId?: string; courseName?: string } | null,
 ) {
+  if (referenceDetails === null) {
+    return { courseId: null, courseName: null };
+  }
+
   if (!referenceDetails) {
     return { courseId: null, courseName: null };
   }
 
   const courseId = normalizeWhitespace(referenceDetails.courseId);
-  let courseName = normalizeWhitespace(referenceDetails.courseName);
+  const courseNameInput = normalizeWhitespace(referenceDetails.courseName);
 
-  if (!courseId && !courseName) {
+  if (!courseId && !courseNameInput) {
     return { courseId: null, courseName: null };
   }
 
-  if (courseId) {
-    if (!courseName) {
-      const course = await CourseModel.findOne({ courseId }).select({ courseId: 1, courseName: 1 });
-      courseName = normalizeWhitespace(course?.courseName);
-    }
-  } else if (courseName) {
-    const course = await CourseModel.findOne({
-      courseName: { $regex: new RegExp(`^${escapeRegExp(courseName)}$`, "i") },
-      status: "active",
-    }).select({ courseId: 1, courseName: 1 });
+  const referenceCourseSelect = {
+    courseId: 1,
+    courseName: 1,
+    status: 1,
+    approvalStatus: 1,
+  } as const;
 
-    if (!course) {
-      throw new ApiError(400, "INVALID_REFERENCE_COURSE", `Course "${courseName}" could not be resolved`);
+  function assertReferenceCourseEligible(course: { courseId: string; courseName: string; status?: string; approvalStatus?: string }) {
+    if (course.status !== "active" || course.approvalStatus !== "approved") {
+      throw new ApiError(
+        400,
+        "INVALID_REFERENCE_COURSE",
+        `Course "${course.courseName}" (${course.courseId}) is not an active approved course`,
+      );
     }
 
     return {
@@ -425,11 +431,43 @@ async function resolveReferenceCourseDetails(
     };
   }
 
-  if (!courseName) {
-    throw new ApiError(400, "INVALID_REFERENCE_COURSE", "Selected course could not be resolved");
+  if (courseId) {
+    const course = await CourseModel.findOne({ courseId }).select(referenceCourseSelect);
+
+    if (!course) {
+      throw new ApiError(400, "INVALID_REFERENCE_COURSE", `Course "${courseId}" could not be resolved`);
+    }
+
+    return assertReferenceCourseEligible(course);
   }
 
-  return { courseId: courseId || null, courseName };
+  const matchingCourses = await CourseModel.find({
+    courseName: { $regex: new RegExp(`^${escapeRegExp(courseNameInput)}$`, "i") },
+    status: "active",
+    approvalStatus: "approved",
+  })
+    .select(referenceCourseSelect)
+    .sort({ courseName: 1, courseId: 1 });
+
+  if (matchingCourses.length === 0) {
+    throw new ApiError(400, "INVALID_REFERENCE_COURSE", `Course "${courseNameInput}" could not be resolved`);
+  }
+
+  if (matchingCourses.length > 1) {
+    throw new ApiError(
+      400,
+      "AMBIGUOUS_REFERENCE_COURSE",
+      `Multiple active approved courses match "${courseNameInput}". Use the course id instead.`,
+      [
+        {
+          field: "referenceDetails.courseName",
+          message: `Matched ${matchingCourses.map((course) => course.courseId).join(", ")}`,
+        },
+      ],
+    );
+  }
+
+  return assertReferenceCourseEligible(matchingCourses[0]);
 }
 
 function expandCandidateRegistrationInput(
@@ -1002,7 +1040,14 @@ async function createCandidateRecord(actor: AuthSession, input: CreateCandidateI
       actorUserId: actor.user.id,
       entityType: "candidate",
       entityId: created.candidateId,
-      metadata: { centerId: input.centerId, programId: input.programId, sourceImportJobId: options.sourceImportJobId ?? null },
+      metadata: {
+        centerId: input.centerId,
+        programId: input.programId,
+        referenceCourseId: options.referenceCourseId ?? null,
+        referenceCourseName: options.referenceCourseName ?? null,
+        sourceImportJobId: options.sourceImportJobId ?? null,
+        createdByUserId: actor.user.id,
+      },
       requestId: options.requestId,
     });
   }
@@ -1143,6 +1188,8 @@ export async function updateCandidate(actor: AuthSession, candidateId: string, p
       programId: candidate.programId,
       centerId: candidate.centerId,
       referenceCourseId: candidate.referenceCourseId,
+      referenceCourseName: candidate.referenceCourseName,
+      updatedByUserId: actor.user.id,
     },
     requestId,
   });
@@ -1199,13 +1246,30 @@ export async function getCandidate(actor: AuthSession, candidateId: string) {
   return serializeCandidate(candidate);
 }
 
+function createExactMatchRegex(value?: string) {
+  const trimmed = normalizeWhitespace(value);
+
+  if (!trimmed) {
+    return null;
+  }
+
+  return new RegExp(`^${escapeRegExp(trimmed)}$`, "i");
+}
+
+function appendFilterCondition(conditions: Array<Record<string, unknown>>, condition: Record<string, unknown>) {
+  conditions.push(condition);
+}
+
 export async function listCandidates(actor: AuthSession, query: CandidateListQuery): Promise<PagedList<SerializedCandidate>> {
   await connectToDatabase();
   ensureCanReadCandidates(actor);
 
   const filter: Record<string, unknown> = {};
-  const scopedCenterFilter = resolveScopedCenterFilter(actor, query.centerId);
+  const andConditions: Array<Record<string, unknown>> = [];
+  const scopedCenterFilter = query.eligibleForBatchId ? undefined : resolveScopedCenterFilter(actor, query.centerId);
   const searchRegex = createSearchRegex(query.search);
+  const stateRegex = createExactMatchRegex(query.state);
+  const districtRegex = createExactMatchRegex(query.district);
 
   if (Array.isArray(scopedCenterFilter)) {
     filter.centerId = { $in: scopedCenterFilter };
@@ -1225,13 +1289,50 @@ export async function listCandidates(actor: AuthSession, query: CandidateListQue
     filter["syncState.status"] = query.syncStatus;
   }
 
+  if (query.referenceCourseId) {
+    filter.referenceCourseId = query.referenceCourseId;
+  }
+
+  if (query.gender) {
+    filter.gender = query.gender;
+  }
+
   if (searchRegex) {
-    filter.$or = [
-      { fullName: searchRegex },
-      { mobileNumber: searchRegex },
-      { sidhCandidateId: searchRegex },
-      { candidateId: searchRegex },
-    ];
+    appendFilterCondition(andConditions, {
+      $or: [
+        { fullName: searchRegex },
+        { mobileNumber: searchRegex },
+        { sidhCandidateId: searchRegex },
+        { candidateId: searchRegex },
+        { email: searchRegex },
+      ],
+    });
+  }
+
+  if (stateRegex) {
+    appendFilterCondition(andConditions, {
+      $or: [{ "permanentAddress.state": stateRegex }, { domicileState: stateRegex }],
+    });
+  }
+
+  if (districtRegex) {
+    appendFilterCondition(andConditions, {
+      $or: [
+        { "permanentAddress.district": districtRegex },
+        { "permanentAddress.city": districtRegex },
+        { domicileDistrict: districtRegex },
+      ],
+    });
+  }
+
+  if (query.eligibleForBatchId) {
+    await applyBatchEnrollmentEligibilityFilters(actor, query.eligibleForBatchId, filter, andConditions, {
+      userCenterId: query.centerId,
+    });
+  }
+
+  if (andConditions.length > 0) {
+    filter.$and = andConditions;
   }
 
   const skip = (query.page - 1) * query.pageSize;
@@ -1398,10 +1499,19 @@ export async function createCandidateImportJob(
 
     try {
       const parsedRegistrationInput = createCandidateRegistrationSchema.parse(registrationInput);
-      if (parsedRegistrationInput.referenceDetails?.courseName) {
-        await resolveReferenceCourseDetails(parsedRegistrationInput.referenceDetails);
-      }
-      const candidateInput = expandCandidateRegistrationInput(parsedRegistrationInput, context);
+      const resolvedReferenceCourse = parsedRegistrationInput.referenceDetails
+        ? await resolveReferenceCourseDetails(parsedRegistrationInput.referenceDetails)
+        : null;
+      const stagedRegistrationInput = resolvedReferenceCourse?.courseId
+        ? {
+            ...parsedRegistrationInput,
+            referenceDetails: {
+              courseId: resolvedReferenceCourse.courseId,
+              courseName: resolvedReferenceCourse.courseName,
+            },
+          }
+        : parsedRegistrationInput;
+      const candidateInput = expandCandidateRegistrationInput(stagedRegistrationInput, context);
       const parsed = createCandidateSchema.parse(candidateInput);
       const normalized = buildCandidateRecord(parsed);
       const mobileNumber = normalizeMobileNumber(parsed.contactDetails.mobileNumber);
@@ -1413,7 +1523,7 @@ export async function createCandidateImportJob(
           rowId,
           rowNumber,
           raw: rawRow,
-          normalized: parsedRegistrationInput,
+          normalized: stagedRegistrationInput,
           status: "duplicate",
           errors: [{
             field: "contactDetails.phone",
@@ -1432,7 +1542,7 @@ export async function createCandidateImportJob(
         rowNumber,
         raw: rawRow,
         normalized: {
-            ...parsedRegistrationInput,
+          ...stagedRegistrationInput,
           _duplicateHash: normalized.duplicateHash,
         },
         status: "valid",

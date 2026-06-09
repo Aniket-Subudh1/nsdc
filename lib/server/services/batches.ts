@@ -716,6 +716,108 @@ async function refreshBatchCandidateCount(batchId: string) {
 
 type BatchAssignmentContext = Pick<ServiceBatch, "allowCandidateOverlap" | "batchId" | "batchSize" | "centerId" | "courseId" | "endDate" | "startDate">;
 
+type BatchAssignmentCourse = Awaited<ReturnType<typeof ensureCourse>>;
+
+type BatchAssignmentEvaluationContext = {
+  conflictingCandidateIds: Set<string>;
+  existingBatchCandidateIds: Set<string>;
+};
+
+export type BatchAssignmentEvaluation = {
+  errors: Array<{ field?: string | null; message: string }>;
+  status: "duplicate" | "invalid" | "valid";
+};
+
+export async function listConflictingCandidateIdsForBatch(batch: BatchAssignmentContext) {
+  if (batch.allowCandidateOverlap) {
+    return [];
+  }
+
+  const overlappingBatches = (await BatchModel.find({
+    batchId: { $ne: batch.batchId },
+    status: { $in: ACTIVE_BATCH_STATUSES },
+    startDate: { $lte: batch.endDate },
+    endDate: { $gte: batch.startDate },
+  }).select({ batchId: 1 })) as Array<{ batchId: string }>;
+
+  if (overlappingBatches.length === 0) {
+    return [];
+  }
+
+  const overlappingBatchIds = overlappingBatches.map((item) => item.batchId);
+  const memberships = (await BatchCandidateModel.find({
+    batchId: { $in: overlappingBatchIds },
+  }).select({ candidateId: 1 })) as Array<{ candidateId: string }>;
+
+  return [...new Set(memberships.map((membership) => membership.candidateId))];
+}
+
+export function evaluateCandidateBatchAssignment(
+  batch: BatchAssignmentContext,
+  course: Pick<BatchAssignmentCourse, "minimumAge" | "programIds">,
+  candidate: ServiceCandidate,
+  context: BatchAssignmentEvaluationContext,
+): BatchAssignmentEvaluation {
+  if (context.existingBatchCandidateIds.has(candidate.candidateId)) {
+    return {
+      status: "duplicate",
+      errors: [{ message: "Learner is already enrolled in this batch" }],
+    };
+  }
+
+  const errors: Array<{ field?: string | null; message: string }> = [];
+
+  if (!candidate.sidhCandidateId) {
+    errors.push({
+      field: "sidhCandidateId",
+      message: "Learner must have a verified SIDH candidate ID before batch assignment",
+    });
+  }
+
+  const candidateSyncStatus = candidate.syncState?.status ?? (candidate.registrationMode === "existing_sidh_link" ? "linked" : null);
+  if (candidateSyncStatus && !["linked", "synced"].includes(candidateSyncStatus)) {
+    errors.push({
+      field: "syncState.status",
+      message: "Learner must be verified on SIDH before batch assignment",
+    });
+  }
+
+  if (batch.centerId !== UNASSIGNED_CENTER_ID && candidate.centerId !== batch.centerId) {
+    errors.push({
+      field: "centerId",
+      message: "Learner is assigned to a different training center",
+    });
+  }
+
+  const age = calculateAge(candidate.dateOfBirth, batch.startDate);
+  if (age < course.minimumAge) {
+    errors.push({
+      field: "dateOfBirth",
+      message: "Learner does not satisfy the course minimum age",
+    });
+  }
+
+  if ((course.programIds ?? []).length > 0 && !(course.programIds ?? []).includes(candidate.programId)) {
+    errors.push({
+      field: "programId",
+      message: "Learner is not aligned to the batch course program mapping",
+    });
+  }
+
+  if (context.conflictingCandidateIds.has(candidate.candidateId)) {
+    errors.push({
+      field: "candidateId",
+      message: "Learner already belongs to a conflicting active batch",
+    });
+  }
+
+  if (errors.length > 0) {
+    return { status: "invalid", errors };
+  }
+
+  return { status: "valid", errors: [] };
+}
+
 async function validateCandidateAssignments(batch: BatchAssignmentContext, candidateIds: string[]) {
   const uniqueCandidateIds = [...new Set(candidateIds.map((candidateId) => normalizeString(candidateId)).filter(Boolean))];
 
@@ -750,65 +852,35 @@ async function validateCandidateAssignments(batch: BatchAssignmentContext, candi
     throw new ApiError(400, "CANDIDATE_NOT_FOUND", "One or more candidates do not exist");
   }
 
+  const conflictingCandidateIds = new Set(await listConflictingCandidateIdsForBatch(batch));
+  const evaluationContext: BatchAssignmentEvaluationContext = {
+    conflictingCandidateIds,
+    existingBatchCandidateIds: existingIds,
+  };
+
   for (const candidate of candidates) {
-    if (!candidate.sidhCandidateId) {
-      throw new ApiError(
-        400,
-        "CANDIDATE_NOT_VERIFIED_FOR_SIDH",
-        `Candidate ${candidate.candidateId} must have a verified SIDH candidate ID before batch assignment`,
-      );
+    const evaluation = evaluateCandidateBatchAssignment(batch, course, candidate, evaluationContext);
+
+    if (evaluation.status === "duplicate") {
+      continue;
     }
 
-    const candidateSyncStatus = candidate.syncState?.status ?? (candidate.registrationMode === "existing_sidh_link" ? "linked" : null);
-    if (candidateSyncStatus && !["linked", "synced"].includes(candidateSyncStatus)) {
-      throw new ApiError(
-        400,
-        "CANDIDATE_NOT_VERIFIED_FOR_SIDH",
-        `Candidate ${candidate.candidateId} must be verified on SIDH before batch assignment`,
-      );
-    }
+    if (evaluation.status === "invalid") {
+      const firstError = evaluation.errors[0];
+      const code =
+        firstError?.field === "sidhCandidateId" || firstError?.field === "syncState.status"
+          ? "CANDIDATE_NOT_VERIFIED_FOR_SIDH"
+          : firstError?.field === "centerId"
+            ? "CANDIDATE_CENTER_MISMATCH"
+            : firstError?.field === "dateOfBirth"
+              ? "CANDIDATE_MINIMUM_AGE"
+              : firstError?.field === "programId"
+                ? "CANDIDATE_PROGRAM_MISMATCH"
+                : firstError?.field === "candidateId"
+                  ? "CANDIDATE_BATCH_OVERLAP"
+                  : "CANDIDATE_ASSIGNMENT_INVALID";
 
-    if (batch.centerId !== UNASSIGNED_CENTER_ID && candidate.centerId !== batch.centerId) {
-      throw new ApiError(400, "CANDIDATE_CENTER_MISMATCH", `Candidate ${candidate.candidateId} is assigned to a different center`);
-    }
-
-    const age = calculateAge(candidate.dateOfBirth, batch.startDate);
-    if (age < course.minimumAge) {
-      throw new ApiError(400, "CANDIDATE_MINIMUM_AGE", `Candidate ${candidate.candidateId} does not satisfy the course minimum age`);
-    }
-
-    if ((course.programIds ?? []).length > 0 && !(course.programIds ?? []).includes(candidate.programId)) {
-      throw new ApiError(400, "CANDIDATE_PROGRAM_MISMATCH", `Candidate ${candidate.candidateId} is not aligned to the batch course program mapping`);
-    }
-  }
-
-  if (!batch.allowCandidateOverlap) {
-    const otherMemberships = (await BatchCandidateModel.find({
-      batchId: { $ne: batch.batchId },
-      candidateId: { $in: incomingIds },
-    }).select({ batchId: 1, candidateId: 1 })) as Array<{ batchId: string; candidateId: string }>;
-
-    if (otherMemberships.length > 0) {
-      const overlappingBatchIds = [...new Set(otherMemberships.map((membership) => membership.batchId))];
-      const overlappingBatches = (await BatchModel.find({
-        batchId: { $in: overlappingBatchIds },
-        status: { $in: ACTIVE_BATCH_STATUSES },
-        startDate: { $lte: batch.endDate },
-        endDate: { $gte: batch.startDate },
-      }).select({ batchId: 1 })) as Array<{ batchId: string }>;
-
-      if (overlappingBatches.length > 0) {
-        const conflictingBatchIdSet = new Set(overlappingBatches.map((item) => item.batchId));
-        const conflict = otherMemberships.find((membership) => conflictingBatchIdSet.has(membership.batchId));
-
-        if (conflict) {
-          throw new ApiError(
-            409,
-            "CANDIDATE_BATCH_OVERLAP",
-            `Candidate ${conflict.candidateId} already belongs to a conflicting active batch`,
-          );
-        }
-      }
+      throw new ApiError(400, code, `Candidate ${candidate.candidateId}: ${firstError?.message ?? "Unable to assign candidate to batch"}`);
     }
   }
 

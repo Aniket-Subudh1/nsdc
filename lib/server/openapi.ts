@@ -48,6 +48,7 @@ export function getOpenApiDocument() {
       { name: "Attendance", description: "Attendance import staging, commit, and summary endpoints" },
       { name: "Sync Jobs", description: "Operator-facing sync queue visibility and retry endpoints" },
       { name: "Reference Data", description: "Normalized candidate dropdown and enum endpoints" },
+      { name: "Dashboard", description: "Operator dashboard summary endpoints" },
       { name: "Health", description: "Service liveness and readiness checks" },
       { name: "Docs", description: "OpenAPI and API documentation endpoints" },
     ],
@@ -114,6 +115,14 @@ export function getOpenApiDocument() {
           schema: { type: "string" },
           description: "Attendance import job identifier",
           example: "attup_0a1b2c3d4e5f6g7h",
+        },
+        BatchEnrollmentJobId: {
+          name: "jobId",
+          in: "path",
+          required: true,
+          schema: { type: "string" },
+          description: "Batch enrollment job identifier",
+          example: "bejob_0a1b2c3d4e5f6g7h",
         },
         SyncJobId: {
           name: "jobId",
@@ -1209,6 +1218,67 @@ export function getOpenApiDocument() {
             forceResync: { type: "boolean", default: false },
           },
         },
+        CreateBatchEnrollmentJobRequest: {
+          type: "object",
+          required: ["candidateIds"],
+          properties: {
+            candidateIds: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 80 },
+          },
+        },
+        BatchEnrollmentJob: {
+          type: "object",
+          required: [
+            "id",
+            "enrollmentJobId",
+            "batchId",
+            "status",
+            "totalRows",
+            "validRows",
+            "invalidRows",
+            "duplicateRows",
+            "committedRows",
+            "committedAt",
+            "createdAt",
+            "updatedAt",
+          ],
+          properties: {
+            id: { type: "string" },
+            enrollmentJobId: { type: "string" },
+            batchId: { type: "string" },
+            status: { type: "string", enum: ["staged", "committed", "failed"] },
+            totalRows: { type: "integer", minimum: 0 },
+            validRows: { type: "integer", minimum: 0 },
+            invalidRows: { type: "integer", minimum: 0 },
+            duplicateRows: { type: "integer", minimum: 0 },
+            committedRows: { type: "integer", minimum: 0 },
+            committedAt: { type: "string", nullable: true, format: "date-time" },
+            createdAt: { type: "string", nullable: true, format: "date-time" },
+            updatedAt: { type: "string", nullable: true, format: "date-time" },
+          },
+        },
+        BatchEnrollmentRow: {
+          type: "object",
+          required: ["rowId", "rowNumber", "candidateId", "candidateName", "candidateMobileNumber", "status", "errors"],
+          properties: {
+            rowId: { type: "string" },
+            rowNumber: { type: "integer", minimum: 1 },
+            candidateId: { type: "string" },
+            candidateName: { type: "string", nullable: true },
+            candidateMobileNumber: { type: "string", nullable: true },
+            status: { type: "string", enum: ["valid", "invalid", "duplicate", "committed", "skipped"] },
+            errors: { type: "array", items: ref("ApiErrorDetail") },
+          },
+        },
+        BatchEnrollmentRowListData: {
+          type: "object",
+          required: ["items", "page", "pageSize", "total"],
+          properties: {
+            items: { type: "array", items: ref("BatchEnrollmentRow") },
+            page: { type: "integer", minimum: 1 },
+            pageSize: { type: "integer", minimum: 1 },
+            total: { type: "integer", minimum: 0 },
+          },
+        },
         TrainingAssessmentTrainingDetails: {
           type: "object",
           required: ["trainingStatus", "attendance"],
@@ -1955,6 +2025,64 @@ export function getOpenApiDocument() {
           },
         },
       },
+      "/masters/sidh-batch-field-options": {
+        get: {
+          tags: ["Masters"],
+          summary: "List SIDH batch field option values grouped by field",
+          security: [{ cookieAuth: [] }],
+          responses: {
+            200: successResponse("SIDH batch field options loaded", { type: "object", additionalProperties: true }),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+          },
+        },
+        post: {
+          tags: ["Masters"],
+          summary: "Create a SIDH batch field option value",
+          security: [{ cookieAuth: [] }],
+          requestBody: {
+            required: true,
+            content: jsonContent({ type: "object", additionalProperties: true }),
+          },
+          responses: {
+            201: successResponse("SIDH batch field option created", { type: "object", additionalProperties: true }),
+            400: errorResponse("Validation failed"),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+          },
+        },
+      },
+      "/masters/sidh-batch-field-options/{referenceValueId}": {
+        patch: {
+          tags: ["Masters"],
+          summary: "Update a SIDH batch field option value",
+          security: [{ cookieAuth: [] }],
+          parameters: [{ name: "referenceValueId", in: "path", required: true, schema: { type: "string" } }],
+          requestBody: {
+            required: true,
+            content: jsonContent({ type: "object", additionalProperties: true }),
+          },
+          responses: {
+            200: successResponse("SIDH batch field option updated", { type: "object", additionalProperties: true }),
+            400: errorResponse("Validation failed"),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+            404: errorResponse("SIDH batch field option not found"),
+          },
+        },
+      },
+      "/dashboard/summary": {
+        get: {
+          tags: ["Dashboard"],
+          summary: "Get operator dashboard summary counts",
+          security: [{ cookieAuth: [] }],
+          responses: {
+            200: successResponse("Dashboard summary loaded", { type: "object", additionalProperties: true }),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+          },
+        },
+      },
       "/reference-data/candidate": {
         get: {
           tags: ["Reference Data"],
@@ -1980,6 +2108,11 @@ export function getOpenApiDocument() {
             { name: "centerId", in: "query", schema: { type: "string" } },
             { name: "syncStatus", in: "query", schema: ref("CandidateSyncStatus") },
             { name: "registrationMode", in: "query", schema: ref("CandidateRegistrationMode") },
+            { name: "state", in: "query", schema: { type: "string" } },
+            { name: "district", in: "query", schema: { type: "string" } },
+            { name: "referenceCourseId", in: "query", schema: { type: "string" } },
+            { name: "gender", in: "query", schema: { type: "string" } },
+            { name: "eligibleForBatchId", in: "query", schema: { type: "string" }, description: "When set, returns only learners eligible for enrollment in the given batch." },
           ],
           responses: {
             200: successResponse("Candidates loaded", ref("CandidateListData")),
@@ -2036,6 +2169,19 @@ export function getOpenApiDocument() {
             409: errorResponse("Duplicate candidate"),
           },
         },
+        delete: {
+          tags: ["Candidates"],
+          summary: "Delete a candidate that has not been synced to SIDH",
+          security: [{ cookieAuth: [] }],
+          parameters: [{ $ref: "#/components/parameters/CandidateId" }],
+          responses: {
+            200: successResponse("Candidate deleted successfully", ref("Candidate")),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+            404: errorResponse("Candidate not found"),
+            409: errorResponse("Candidate cannot be deleted after SIDH sync"),
+          },
+        },
       },
       "/candidates/link-existing-sidh": {
         post: {
@@ -2087,6 +2233,25 @@ export function getOpenApiDocument() {
               },
             }),
             400: errorResponse("Validation failed"),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+          },
+        },
+      },
+      "/candidates/imports/template": {
+        get: {
+          tags: ["Candidates"],
+          summary: "Download the latest candidate bulk import Excel template",
+          security: [{ cookieAuth: [] }],
+          responses: {
+            200: {
+              description: "Excel template file",
+              content: {
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                  schema: { type: "string", format: "binary" },
+                },
+              },
+            },
             401: errorResponse("Authentication required"),
             403: errorResponse("Forbidden"),
           },
@@ -2245,6 +2410,19 @@ export function getOpenApiDocument() {
             404: errorResponse("Batch not found"),
           },
         },
+        delete: {
+          tags: ["Batches"],
+          summary: "Delete an unpushed batch and its learner assignments",
+          security: [{ cookieAuth: [] }],
+          parameters: [{ $ref: "#/components/parameters/BatchId" }],
+          responses: {
+            200: successResponse("Batch deleted successfully", { type: "object", additionalProperties: true }),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+            404: errorResponse("Batch not found"),
+            409: errorResponse("Batch cannot be deleted after SIDH sync"),
+          },
+        },
       },
       "/batches/{batchId}/candidates": {
         post: {
@@ -2263,6 +2441,18 @@ export function getOpenApiDocument() {
             403: errorResponse("Forbidden"),
             404: errorResponse("Batch not found"),
             409: errorResponse("Candidate overlap or batch size limit exceeded"),
+          },
+        },
+        delete: {
+          tags: ["Batches"],
+          summary: "Remove all removable learners from a batch",
+          security: [{ cookieAuth: [] }],
+          parameters: [{ $ref: "#/components/parameters/BatchId" }],
+          responses: {
+            200: successResponse("Removable learners deleted from batch", ref("Batch")),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+            404: errorResponse("Batch not found"),
           },
         },
       },
@@ -2296,6 +2486,76 @@ export function getOpenApiDocument() {
             401: errorResponse("Authentication required"),
             403: errorResponse("Forbidden"),
             404: errorResponse("Batch not found"),
+          },
+        },
+      },
+      "/batches/{batchId}/enrollment-jobs": {
+        post: {
+          tags: ["Batches"],
+          summary: "Stage selected learners for batch enrollment validation",
+          security: [{ cookieAuth: [] }],
+          parameters: [{ $ref: "#/components/parameters/BatchId" }],
+          requestBody: {
+            required: true,
+            content: jsonContent(ref("CreateBatchEnrollmentJobRequest")),
+          },
+          responses: {
+            201: successResponse("Batch enrollment staged successfully", ref("BatchEnrollmentJob")),
+            400: errorResponse("Validation failed"),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+            404: errorResponse("Batch not found"),
+          },
+        },
+      },
+      "/batches/{batchId}/enrollment-jobs/{jobId}": {
+        get: {
+          tags: ["Batches"],
+          summary: "Get a staged batch enrollment job summary",
+          security: [{ cookieAuth: [] }],
+          parameters: [{ $ref: "#/components/parameters/BatchId" }, { $ref: "#/components/parameters/BatchEnrollmentJobId" }],
+          responses: {
+            200: successResponse("Batch enrollment job loaded", ref("BatchEnrollmentJob")),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+            404: errorResponse("Batch enrollment job not found"),
+          },
+        },
+      },
+      "/batches/{batchId}/enrollment-jobs/{jobId}/rows": {
+        get: {
+          tags: ["Batches"],
+          summary: "List row-level validation results for a staged batch enrollment job",
+          security: [{ cookieAuth: [] }],
+          parameters: [
+            { $ref: "#/components/parameters/BatchId" },
+            { $ref: "#/components/parameters/BatchEnrollmentJobId" },
+            { $ref: "#/components/parameters/Page" },
+            { $ref: "#/components/parameters/PageSize" },
+            { name: "status", in: "query", schema: { type: "string", enum: ["valid", "invalid", "duplicate", "committed", "skipped"] } },
+          ],
+          responses: {
+            200: successResponse("Batch enrollment rows loaded", ref("BatchEnrollmentRowListData")),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+            404: errorResponse("Batch enrollment job not found"),
+          },
+        },
+      },
+      "/batches/{batchId}/enrollment-jobs/{jobId}/commit": {
+        post: {
+          tags: ["Batches"],
+          summary: "Commit valid staged enrollment rows into the batch",
+          description: "Enrolls valid staged learners into the batch and queues SIDH enrollment sync when the batch is already synced.",
+          security: [{ cookieAuth: [] }],
+          parameters: [{ $ref: "#/components/parameters/BatchId" }, { $ref: "#/components/parameters/BatchEnrollmentJobId" }],
+          responses: {
+            200: successResponse("Batch enrollment committed successfully", ref("BatchEnrollmentJob")),
+            400: errorResponse("No valid rows to commit"),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+            404: errorResponse("Batch enrollment job not found"),
+            409: errorResponse("Enrollment job already committed"),
           },
         },
       },

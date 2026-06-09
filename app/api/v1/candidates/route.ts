@@ -17,8 +17,13 @@ export async function GET(request: Request) {
         search: url.searchParams.get("search") ?? undefined,
         programId: url.searchParams.get("programId") ?? undefined,
         centerId: url.searchParams.get("centerId") ?? undefined,
+        referenceCourseId: url.searchParams.get("referenceCourseId") ?? undefined,
+        state: url.searchParams.get("state") ?? undefined,
+        district: url.searchParams.get("district") ?? undefined,
+        gender: url.searchParams.get("gender") ?? undefined,
         syncStatus: url.searchParams.get("syncStatus") ?? undefined,
         registrationMode: url.searchParams.get("registrationMode") ?? undefined,
+        eligibleForBatchId: url.searchParams.get("eligibleForBatchId") ?? undefined,
       });
 
       return listCandidates(session, query);

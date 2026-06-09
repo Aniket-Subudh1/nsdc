@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   syncJobCreate: vi.fn(),
   syncJobDeleteMany: vi.fn(),
   courseFindOne: vi.fn(),
+  courseFind: vi.fn(),
   outboxEventCreate: vi.fn(),
   programFindOne: vi.fn(),
   trainingCenterFindOne: vi.fn(),
@@ -43,6 +44,7 @@ vi.mock("@/lib/server/models/candidate", () => ({
 vi.mock("@/lib/server/models/course", () => ({
   CourseModel: {
     findOne: mocks.courseFindOne,
+    find: mocks.courseFind,
   },
 }));
 
@@ -114,6 +116,22 @@ function createSelectQuery<T>(value: T) {
 
 async function buildWorkbook(rows: Array<Record<string, unknown>>) {
   return writeWorkbookToArrayBuffer([{ name: "Candidates", rows }]);
+}
+
+const activeReferenceCourse = {
+  courseId: "cor_001",
+  courseName: "Retail Sales Associate",
+  status: "active",
+  approvalStatus: "approved",
+} as const;
+
+function mockActiveReferenceCourseLookup() {
+  mocks.courseFindOne.mockReturnValue(createSelectQuery(activeReferenceCourse));
+  mocks.courseFind.mockReturnValue({
+    select: vi.fn().mockReturnValue({
+      sort: vi.fn().mockResolvedValue([activeReferenceCourse]),
+    }),
+  });
 }
 
 describe("candidate services", () => {
@@ -337,6 +355,7 @@ describe("candidate services", () => {
 
   it("stores reference course details when registering a learner", async () => {
     mocks.candidateFindOne.mockReturnValue(createSelectQuery(null));
+    mockActiveReferenceCourseLookup();
     mocks.candidateCreate.mockImplementation(async (value: Record<string, unknown>) => ({
       ...value,
       candidateId: "cand_001",
@@ -375,15 +394,16 @@ describe("candidate services", () => {
         referenceCourseName: "Retail Sales Associate",
       }),
     );
+    expect(mocks.courseFindOne).toHaveBeenCalledWith({ courseId: "cor_001" });
     expect(result.referenceDetails).toEqual({
       courseId: "cor_001",
       courseName: "Retail Sales Associate",
     });
   });
 
-  it("resolves reference course name from master data when only course id is provided", async () => {
+  it("resolves reference course details from master data when only course id is provided", async () => {
     mocks.candidateFindOne.mockReturnValue(createSelectQuery(null));
-    mocks.courseFindOne.mockReturnValue(createSelectQuery({ courseName: "Retail Sales Associate" }));
+    mockActiveReferenceCourseLookup();
     mocks.candidateCreate.mockImplementation(async (value: Record<string, unknown>) => ({
       ...value,
       candidateId: "cand_002",
@@ -412,11 +432,50 @@ describe("candidate services", () => {
       },
       referenceDetails: {
         courseId: "cor_001",
-        courseName: "Retail Sales Associate",
       },
     });
 
-    expect(mocks.courseFindOne).not.toHaveBeenCalled();
+    expect(mocks.courseFindOne).toHaveBeenCalledWith({ courseId: "cor_001" });
+    expect(mocks.candidateCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceCourseId: "cor_001",
+        referenceCourseName: "Retail Sales Associate",
+      }),
+    );
+  });
+
+  it("rejects unknown reference course ids", async () => {
+    mocks.candidateFindOne.mockReturnValue(createSelectQuery(null));
+    mocks.courseFindOne.mockReturnValue(createSelectQuery(null));
+
+    await expect(
+      createCandidate(actor as never, {
+        personalDetails: {
+          namePrefix: "Mr",
+          firstName: "Amit Kumar",
+          gender: "Male",
+          dob: "2005-06-10",
+          fatherName: "Suresh Kumar",
+          guardianName: "",
+        },
+        contactDetails: {
+          email: "amit@example.com",
+          phone: "9876543211",
+          countryCode: "91",
+        },
+        locationDetails: {
+          state: "ODISHA",
+          district: "CUTTACK",
+          centerName: "Center One",
+          centerId: "tc_001",
+        },
+        referenceDetails: {
+          courseId: "cor_missing",
+        },
+      }),
+    ).rejects.toMatchObject({
+      errorCode: "INVALID_REFERENCE_COURSE",
+    });
   });
 
   it("deletes learners that have not been sent to SIDH yet", async () => {
@@ -497,9 +556,7 @@ describe("candidate services", () => {
 
   it("stages import rows with reference course names from the workbook", async () => {
     mocks.candidateFindOne.mockReturnValue(createSelectQuery(null));
-    mocks.courseFindOne.mockReturnValue(
-      createSelectQuery({ courseId: "cor_001", courseName: "Retail Sales Associate" }),
-    );
+    mockActiveReferenceCourseLookup();
     mocks.importJobCreate.mockImplementation(async (value: Record<string, unknown>) => value);
     mocks.importRowInsertMany.mockResolvedValue([]);
 
@@ -528,7 +585,20 @@ describe("candidate services", () => {
 
     expect(result.totalRows).toBe(1);
     expect(result.validRows).toBe(1);
-    expect(mocks.courseFindOne).toHaveBeenCalled();
+    expect(mocks.courseFind).toHaveBeenCalled();
+    expect(mocks.importRowInsertMany).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          normalized: expect.objectContaining({
+            referenceDetails: {
+              courseId: "cor_001",
+              courseName: "Retail Sales Associate",
+            },
+          }),
+        }),
+      ]),
+      { ordered: false },
+    );
   });
 
   it("marks import rows duplicate when the phone number already exists", async () => {

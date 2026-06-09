@@ -80,9 +80,9 @@ export const Logo = () => {
       <motion.span
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        className="whitespace-pre font-medium text-black"
+        className="whitespace-pre font-semibold text-black text-sm"
       >
-        GT Training Center
+        Gram Tarang Training Center
       </motion.span>
     </div>
   );

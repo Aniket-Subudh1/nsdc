@@ -284,6 +284,7 @@ const candidateSchema = new mongoose.Schema(
       type: String,
       trim: true,
       default: null,
+      index: true,
     },
     referenceCourseName: {
       type: String,

@@ -387,7 +387,8 @@ describe("batch services", () => {
         validityStartDate: new Date("2025-01-01T00:00:00.000Z"),
       }),
     );
-    mocks.batchCandidateFind.mockReturnValueOnce(createSelectQuery([])).mockReturnValueOnce(createSelectQuery([]));
+    mocks.batchCandidateFind.mockReturnValue(createSelectQuery([]));
+    mocks.batchFind.mockReturnValue(createSelectQuery([]));
     mocks.candidateFind.mockReturnValue(
       createSelectQuery([
         {
@@ -427,7 +428,7 @@ describe("batch services", () => {
         syncEnabled: true,
         trainingHoursPerDay: 8,
       }),
-    ).rejects.toThrow("Candidate cand_001 is assigned to a different center");
+    ).rejects.toThrow("Candidate cand_001: Learner is assigned to a different training center");
 
     expect(mocks.batchCreate).not.toHaveBeenCalled();
     expect(mocks.batchCandidateInsertMany).not.toHaveBeenCalled();

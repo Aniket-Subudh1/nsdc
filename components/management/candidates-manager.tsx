@@ -9,6 +9,7 @@ import {
   IconDownload,
   IconEye,
   IconFileSpreadsheet,
+  IconFilter,
   IconLink,
   IconListCheck,
   IconLoader2,
@@ -319,9 +320,16 @@ const emptyImportForm: ImportFormState = {
 };
 
 type CandidateFilters = {
+  centerId: string;
+  district: string;
+  gender: string;
   page: number;
   pageSize: number;
+  programId: string;
+  referenceCourseId: string;
+  registrationMode: string;
   search: string;
+  state: string;
   syncStatus: string;
 };
 
@@ -423,11 +431,32 @@ const emptyLinkForm = {
 };
 
 const initialCandidateFilters: CandidateFilters = {
+  centerId: "",
+  district: "",
+  gender: "",
   page: 1,
   pageSize: 12,
+  programId: "",
+  referenceCourseId: "",
+  registrationMode: "",
   search: "",
+  state: "",
   syncStatus: "",
 };
+
+function countActiveCandidateFilters(filters: CandidateFilters) {
+  return [
+    filters.search,
+    filters.syncStatus,
+    filters.state,
+    filters.district,
+    filters.centerId,
+    filters.referenceCourseId,
+    filters.gender,
+    filters.registrationMode,
+    filters.programId,
+  ].filter(Boolean).length;
+}
 
 const emptyIndividualCandidateForm: IndividualCandidateFormState = {
   centerId: "",
@@ -451,23 +480,37 @@ const initialSyncFilters: SyncFilters = {
   status: "",
 };
 
-function formatCourseOptionLabel(course: CourseOption) {
+function formatCourseOptionLabel(course: CourseOption, duplicateCourseNames?: Set<string>) {
   const shortForm = course.shortForm?.trim();
-  return shortForm ? `${course.courseName} (${shortForm})` : course.courseName;
+  const baseLabel = shortForm ? `${course.courseName} (${shortForm})` : course.courseName;
+  const normalizedName = course.courseName.trim().toLowerCase();
+
+  if (duplicateCourseNames?.has(normalizedName)) {
+    return `${baseLabel} · ${course.courseId}`;
+  }
+
+  return baseLabel;
 }
 
-function getUniqueCourseOptions(courses: CourseOption[]) {
-  const seen = new Map<string, CourseOption>();
+function getSortedCourseOptions(courses: CourseOption[]) {
+  return courses
+    .slice()
+    .sort((left, right) => left.courseName.localeCompare(right.courseName) || left.courseId.localeCompare(right.courseId));
+}
+
+function getDuplicateCourseNames(courses: CourseOption[]) {
+  const counts = new Map<string, number>();
 
   for (const course of courses) {
     const key = course.courseName.trim().toLowerCase();
-    if (!key || seen.has(key)) {
+    if (!key) {
       continue;
     }
-    seen.set(key, course);
+
+    counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
-  return Array.from(seen.values()).sort((left, right) => left.courseName.localeCompare(right.courseName));
+  return new Set(Array.from(counts.entries()).filter(([, count]) => count > 1).map(([name]) => name));
 }
 
 function findSelectedCourse(form: IndividualCandidateFormState, courseOptions: CourseOption[]) {
@@ -502,12 +545,16 @@ function buildIndividualCandidatePayload(
       centerName: selectedCenter?.centerName ?? "",
       centerId: form.centerId,
     },
-    ...(form.courseId && selectedCourse
+    ...(form.courseId
       ? {
-          referenceDetails: {
-            courseId: selectedCourse.courseId,
-            courseName: selectedCourse.courseName,
-          },
+          referenceDetails: selectedCourse
+            ? {
+                courseId: selectedCourse.courseId,
+                courseName: selectedCourse.courseName,
+              }
+            : {
+                courseId: form.courseId,
+              },
         }
       : {}),
   };
@@ -517,7 +564,6 @@ function buildIndividualCandidateUpdatePayload(
   form: IndividualCandidateFormState,
   centers: CenterOption[],
   courseOptions: CourseOption[],
-  existingReference?: { courseId: string | null; courseName: string | null } | null,
 ) {
   const selectedCenter = centers.find((center) => center.centerId === form.centerId);
   const selectedCourse = findSelectedCourse(form, courseOptions);
@@ -547,10 +593,14 @@ function buildIndividualCandidateUpdatePayload(
       district: form.district,
     },
     referenceDetails: form.courseId
-      ? {
-          courseId: form.courseId,
-          courseName: selectedCourse?.courseName ?? existingReference?.courseName ?? "",
-        }
+      ? selectedCourse
+        ? {
+            courseId: selectedCourse.courseId,
+            courseName: selectedCourse.courseName,
+          }
+        : {
+            courseId: form.courseId,
+          }
       : null,
   };
 }
@@ -800,6 +850,13 @@ async function fetchCandidates(filters: CandidateFilters) {
     pageSize: filters.pageSize,
     search: filters.search || undefined,
     syncStatus: filters.syncStatus || undefined,
+    state: filters.state || undefined,
+    district: filters.district || undefined,
+    centerId: filters.centerId || undefined,
+    referenceCourseId: filters.referenceCourseId || undefined,
+    gender: filters.gender || undefined,
+    registrationMode: filters.registrationMode || undefined,
+    programId: filters.programId || undefined,
   });
 
   return apiFetch<PagedCandidates>(`/api/v1/candidates?${query}`);
@@ -832,6 +889,8 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   const [activeTab, setActiveTab] = useState<CandidateWorkspaceTab>("all_candidates");
   const [candidates, setCandidates] = useState<CandidateRecord[]>([]);
   const [candidateFilters, setCandidateFilters] = useState(initialCandidateFilters);
+  const [searchDraft, setSearchDraft] = useState("");
+  const [showAdvancedCandidateFilters, setShowAdvancedCandidateFilters] = useState(false);
   const [candidatePagination, setCandidatePagination] = useState({ page: 1, pageSize: 12, total: 0 });
   const [syncJobs, setSyncJobs] = useState<SyncJobRecord[]>([]);
   const [syncFilters, setSyncFilters] = useState(initialSyncFilters);
@@ -857,10 +916,6 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   const [isProcessingSyncJobs, setIsProcessingSyncJobs] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingCandidateId, setEditingCandidateId] = useState<string | null>(null);
-  const [editingCandidateReference, setEditingCandidateReference] = useState<{
-    courseId: string | null;
-    courseName: string | null;
-  } | null>(null);
   const [showSyncDetailModal, setShowSyncDetailModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [showLinkModal, setShowLinkModal] = useState(false);
@@ -872,11 +927,17 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   const [centers, setCenters] = useState<CenterOption[]>([]);
   const [courses, setCourses] = useState<CourseOption[]>([]);
   const [programs, setPrograms] = useState<ProgramOption[]>([]);
-  const uniqueCourses = useMemo(() => getUniqueCourseOptions(courses), [courses]);
+  const sortedCourses = useMemo(() => getSortedCourseOptions(courses), [courses]);
+  const duplicateCourseNames = useMemo(() => getDuplicateCourseNames(courses), [courses]);
+  const filterDistrictOptions = useMemo(
+    () => listCandidateDistrictsForState(candidateFilters.state),
+    [candidateFilters.state],
+  );
   const candidateDistrictOptions = useMemo(
     () => listCandidateDistrictsForState(individualCandidateForm.state),
     [individualCandidateForm.state],
   );
+  const activeCandidateFilterCount = useMemo(() => countActiveCandidateFilters(candidateFilters), [candidateFilters]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -917,7 +978,12 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
 
   function clearLearnerFilters() {
     setActiveTab("all_candidates");
-    setCandidateFilters((current) => ({ ...current, page: 1, search: "", syncStatus: "" }));
+    setSearchDraft("");
+    setCandidateFilters({ ...initialCandidateFilters });
+  }
+
+  function updateCandidateFilters(patch: Partial<CandidateFilters>) {
+    setCandidateFilters((current) => ({ ...current, page: 1, ...patch }));
   }
 
   function switchTab(tab: CandidateWorkspaceTab) {
@@ -975,6 +1041,21 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
     }
   }
 
+  async function loadReferenceOptions() {
+    try {
+      const [centerData, courseData, programData] = await Promise.all([
+        apiFetch<{ items: CenterOption[] }>("/api/v1/masters/training-centers?page=1&pageSize=100"),
+        apiFetch<{ items: CourseOption[] }>("/api/v1/masters/courses?page=1&pageSize=100&status=active&approvalStatus=approved"),
+        apiFetch<{ items: ProgramOption[] }>("/api/v1/masters/programs?page=1&pageSize=100"),
+      ]);
+      setCenters(centerData.items);
+      setCourses(courseData.items);
+      setPrograms(programData.items);
+    } catch {
+      // Reference data is optional for the main list; link modal will show empty selects.
+    }
+  }
+
   async function refreshVisibleData() {
     setIsLoading(true);
 
@@ -1006,40 +1087,24 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   }
 
   useEffect(() => {
-    let isMounted = true;
-
-    async function initialize() {
-      setIsLoading(true);
-
-      try {
-        const [candidateData, syncJobData] = await Promise.all([fetchCandidates(initialCandidateFilters), fetchSyncJobs(initialSyncFilters)]);
-
-        if (!isMounted) {
-          return;
-        }
-
-        setCandidates(candidateData.items);
-        setCandidatePagination({ page: candidateData.page, pageSize: candidateData.pageSize, total: candidateData.total });
-        setSyncJobs(syncJobData.items);
-        setSyncPagination({ page: syncJobData.page, pageSize: syncJobData.pageSize, total: syncJobData.total });
-      } catch (error) {
-        if (isMounted) {
-          setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to load candidate operations data");
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      }
-    }
-
-    void initialize();
-    void loadReferenceOptions();
-
-    return () => {
-      isMounted = false;
-    };
+    startTransition(() => {
+      void loadReferenceOptions();
+    });
   }, []);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setCandidateFilters((current) => {
+        if (current.search === searchDraft) {
+          return current;
+        }
+
+        return { ...current, page: 1, search: searchDraft };
+      });
+    }, 300);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [searchDraft]);
 
   useEffect(() => {
     let isMounted = true;
@@ -1144,13 +1209,11 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   function closeLearnerFormModal() {
     setShowCreateModal(false);
     setEditingCandidateId(null);
-    setEditingCandidateReference(null);
     setIndividualCandidateForm(emptyIndividualCandidateForm);
   }
 
   function openEditLearner(candidate: CandidateRecord) {
     setIndividualCandidateForm(candidateToIndividualForm(candidate));
-    setEditingCandidateReference(candidate.referenceDetails ?? null);
     setEditingCandidateId(candidate.candidateId);
     setShowCreateModal(true);
     setShowDetailModal(false);
@@ -1171,8 +1234,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
             buildIndividualCandidateUpdatePayload(
               individualCandidateForm,
               centers,
-              uniqueCourses,
-              editingCandidateReference,
+              sortedCourses,
             ),
           ),
         });
@@ -1181,7 +1243,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
         await apiFetch<CandidateRecord>("/api/v1/candidates", {
           method: "POST",
           body: JSON.stringify(
-            buildIndividualCandidatePayload(individualCandidateForm, centers, uniqueCourses),
+            buildIndividualCandidatePayload(individualCandidateForm, centers, sortedCourses),
           ),
         });
         setSuccessMessage("Learner registered successfully");
@@ -1269,21 +1331,6 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
       setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to load learner details");
     } finally {
       setIsLoadingDetail(false);
-    }
-  }
-
-  async function loadReferenceOptions() {
-    try {
-      const [centerData, courseData, programData] = await Promise.all([
-        apiFetch<{ items: CenterOption[] }>("/api/v1/masters/training-centers?page=1&pageSize=100"),
-        apiFetch<{ items: CourseOption[] }>("/api/v1/masters/courses?page=1&pageSize=100&status=active&approvalStatus=approved"),
-        apiFetch<{ items: ProgramOption[] }>("/api/v1/masters/programs?page=1&pageSize=100"),
-      ]);
-      setCenters(centerData.items);
-      setCourses(courseData.items);
-      setPrograms(programData.items);
-    } catch {
-      // Reference data is optional for the main list; link modal will show empty selects.
     }
   }
 
@@ -1611,59 +1658,211 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
               </div>
 
               {/* Search & filters */}
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <div className="relative flex-1 lg:max-w-sm">
-                  <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <input
-                    value={candidateFilters.search}
-                    onChange={(event) =>
-                      setCandidateFilters((current) => ({ ...current, page: 1, search: event.target.value }))
-                    }
-                    className={cn(inputClassName, "pl-9")}
-                    placeholder="Search name, mobile, or ID…"
-                  />
+              <div className="space-y-3">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="relative flex-1 lg:max-w-sm">
+                    <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <input
+                      value={searchDraft}
+                      onChange={(event) => setSearchDraft(event.target.value)}
+                      className={cn(inputClassName, "pl-9")}
+                      placeholder="Search name, mobile, email, or ID…"
+                    />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvancedCandidateFilters((current) => !current)}
+                      className={cn(
+                        "inline-flex h-10 items-center gap-2 rounded-xl border px-3 text-sm font-medium transition",
+                        showAdvancedCandidateFilters || activeCandidateFilterCount > 0
+                          ? "border-sky-200 bg-sky-50 text-sky-700"
+                          : "border-slate-200 bg-white text-slate-700 hover:border-sky-200 hover:text-sky-700",
+                      )}
+                    >
+                      <IconFilter className="h-4 w-4" />
+                      Advanced filters
+                      {activeCandidateFilterCount > 0 ? (
+                        <span className="rounded-full bg-sky-600 px-2 py-0.5 text-[10px] font-semibold text-white">
+                          {activeCandidateFilterCount}
+                        </span>
+                      ) : null}
+                    </button>
+                    {activeCandidateFilterCount > 0 ? (
+                      <button
+                        type="button"
+                        onClick={clearLearnerFilters}
+                        className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 hover:bg-slate-50"
+                      >
+                        <IconX className="h-4 w-4" />
+                        Clear all
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
-                <select
-                  value={candidateFilters.syncStatus}
-                  onChange={(event) =>
-                    setCandidateFilters((current) => ({ ...current, page: 1, syncStatus: event.target.value }))
-                  }
-                  className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-sky-300"
-                >
-                  <option value="">All sync statuses</option>
-                  {candidateSyncStatusOptions.map((status) => (
-                    <option key={status} value={status}>
-                      {formatStatusLabel(status)}
-                    </option>
-                  ))}
-                </select>
-              </div>
 
-              <div className="flex flex-wrap gap-1.5">
-                {[
-                  { label: "All", value: "" },
-                  { label: "Ready to send", value: "not_queued" },
-                  { label: "In queue", value: "queued" },
-                  { label: "Registered", value: "synced" },
-                  { label: "Failed", value: "failed" },
-                ].map((pill) => (
-                  <button
-                    key={pill.value || "all"}
-                    type="button"
-                    onClick={() =>
-                      setCandidateFilters((current) => ({ ...current, page: 1, syncStatus: pill.value }))
-                    }
-                    className={cn(
-                      "rounded-full px-3 py-1 text-xs font-medium transition",
-                      candidateFilters.syncStatus === pill.value
-                        ? "bg-sky-100 text-sky-700"
-                        : "bg-slate-100 text-slate-600 hover:bg-slate-200",
-                    )}
-                  >
-                    {pill.label}
-                  </button>
-                ))}
-              </div>
+                {showAdvancedCandidateFilters ? (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <FormField label="State">
+                        <select
+                          value={candidateFilters.state}
+                          onChange={(event) => {
+                            const nextState = event.target.value;
+                            setCandidateFilters((current) => {
+                              const nextDistricts = listCandidateDistrictsForState(nextState);
+                              return {
+                                ...current,
+                                page: 1,
+                                state: nextState,
+                                district: nextDistricts.includes(current.district) ? current.district : "",
+                              };
+                            });
+                          }}
+                          className={inputClassName}
+                        >
+                          <option value="">All states</option>
+                          {CANDIDATE_STATE_OPTIONS.map((state) => (
+                            <option key={state} value={state}>
+                              {state}
+                            </option>
+                          ))}
+                        </select>
+                      </FormField>
+
+                      <FormField label="District">
+                        <select
+                          value={candidateFilters.district}
+                          onChange={(event) => updateCandidateFilters({ district: event.target.value })}
+                          className={inputClassName}
+                          disabled={!candidateFilters.state}
+                        >
+                          <option value="">
+                            {candidateFilters.state ? "All districts" : "Select state first"}
+                          </option>
+                          {filterDistrictOptions.map((district) => (
+                            <option key={district} value={district}>
+                              {district}
+                            </option>
+                          ))}
+                        </select>
+                      </FormField>
+
+                      <FormField label="Training center">
+                        <select
+                          value={candidateFilters.centerId}
+                          onChange={(event) => updateCandidateFilters({ centerId: event.target.value })}
+                          className={inputClassName}
+                        >
+                          <option value="">All training centers</option>
+                          {centers.map((center) => (
+                            <option key={center.centerId} value={center.centerId}>
+                              {center.centerName}
+                            </option>
+                          ))}
+                        </select>
+                      </FormField>
+
+                      <FormField label="Course (reference)">
+                        <select
+                          value={candidateFilters.referenceCourseId}
+                          onChange={(event) => updateCandidateFilters({ referenceCourseId: event.target.value })}
+                          className={inputClassName}
+                        >
+                          <option value="">All courses</option>
+                          {sortedCourses.map((course) => (
+                            <option key={course.courseId} value={course.courseId}>
+                              {formatCourseOptionLabel(course, duplicateCourseNames)}
+                            </option>
+                          ))}
+                        </select>
+                      </FormField>
+
+                      <FormField label="Gender">
+                        <select
+                          value={candidateFilters.gender}
+                          onChange={(event) => updateCandidateFilters({ gender: event.target.value })}
+                          className={inputClassName}
+                        >
+                          <option value="">All genders</option>
+                          {CANDIDATE_GENDER_OPTIONS.map((gender) => (
+                            <option key={gender} value={gender}>
+                              {gender}
+                            </option>
+                          ))}
+                        </select>
+                      </FormField>
+
+                      <FormField label="Registration type">
+                        <select
+                          value={candidateFilters.registrationMode}
+                          onChange={(event) => updateCandidateFilters({ registrationMode: event.target.value })}
+                          className={inputClassName}
+                        >
+                          <option value="">All registration types</option>
+                          <option value="internal_registration">Registered here</option>
+                          <option value="existing_sidh_link">Linked from Skill India</option>
+                        </select>
+                      </FormField>
+
+                      <FormField label="Program">
+                        <select
+                          value={candidateFilters.programId}
+                          onChange={(event) => updateCandidateFilters({ programId: event.target.value })}
+                          className={inputClassName}
+                        >
+                          <option value="">All programs</option>
+                          {programs.map((program) => (
+                            <option key={program.programId} value={program.programId}>
+                              {program.name}
+                            </option>
+                          ))}
+                        </select>
+                      </FormField>
+
+                      <FormField label="Sync status">
+                        <select
+                          value={candidateFilters.syncStatus}
+                          onChange={(event) => updateCandidateFilters({ syncStatus: event.target.value })}
+                          className={inputClassName}
+                        >
+                          <option value="">All sync statuses</option>
+                          {candidateSyncStatusOptions.map((status) => (
+                            <option key={status} value={status}>
+                              {formatStatusLabel(status)}
+                            </option>
+                          ))}
+                        </select>
+                      </FormField>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {[
+                        { label: "All", value: "" },
+                        { label: "Ready to send", value: "not_queued" },
+                        { label: "In queue", value: "queued" },
+                        { label: "Registered", value: "synced" },
+                        { label: "Failed", value: "failed" },
+                      ].map((pill) => (
+                        <button
+                          key={pill.value || "all"}
+                          type="button"
+                          onClick={() =>
+                            setCandidateFilters((current) => ({ ...current, page: 1, syncStatus: pill.value }))
+                          }
+                          className={cn(
+                            "rounded-full px-3 py-1 text-xs font-medium transition",
+                            candidateFilters.syncStatus === pill.value
+                              ? "bg-sky-100 text-sky-700"
+                              : "bg-slate-100 text-slate-600 hover:bg-slate-200",
+                          )}
+                        >
+                          {pill.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
 
               {isLoading ? (
                 <div className="flex items-center justify-center py-16 text-slate-400">
@@ -1874,6 +2073,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                 total={candidatePagination.total}
                 onPageChange={(page) => setCandidateFilters((current) => ({ ...current, page }))}
               />
+              </div>
             </div>
           ) : null}
 
@@ -2408,11 +2608,11 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                     className={inputClassName}
                   >
                     <option value="">
-                      {uniqueCourses.length > 0 ? "Select course (optional)" : "No courses available"}
+                      {sortedCourses.length > 0 ? "Select course (optional)" : "No courses available"}
                     </option>
-                    {uniqueCourses.map((course) => (
+                    {sortedCourses.map((course) => (
                       <option key={course.courseId} value={course.courseId}>
-                        {formatCourseOptionLabel(course)}
+                        {formatCourseOptionLabel(course, duplicateCourseNames)}
                       </option>
                     ))}
                   </select>

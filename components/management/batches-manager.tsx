@@ -3,9 +3,11 @@
 import { startTransition, useEffect, useMemo, useState } from "react";
 import {
   IconCalendar,
+  IconCircleCheck,
   IconCloudUpload,
   IconEdit,
   IconEye,
+  IconFilter,
   IconLoader2,
   IconPlus,
   IconRefresh,
@@ -33,6 +35,8 @@ import { getSidhBatchFieldDefault, resolveSidhBatchFieldOptions } from "@/lib/si
 import { formatDisplayDate, formatDisplayDateTime, formatDisplayTime } from "@/lib/sidh-display";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { CANDIDATE_GENDER_OPTIONS } from "@/lib/candidate-field-options";
+import { CANDIDATE_STATE_OPTIONS, listCandidateDistrictsForState } from "@/lib/candidate-location-options";
 
 type BatchesManagerProps = {
   portal: "admin" | "training_partner";
@@ -147,7 +151,8 @@ type CandidateOption = {
   createdAt: string | null;
   locationDetails: {
     centerName: string | null;
-    city: string | null;
+    city?: string | null;
+    district?: string | null;
     state: string | null;
   };
   personalDetails: {
@@ -159,6 +164,70 @@ type CandidateOption = {
     status?: string | null;
   } | null;
 };
+
+type AssignCandidateFilters = {
+  centerId: string;
+  district: string;
+  gender: string;
+  programId: string;
+  referenceCourseId: string;
+  registrationMode: string;
+  state: string;
+  syncStatus: string;
+};
+
+type EnrollmentJobRecord = {
+  batchId: string;
+  committedAt: string | null;
+  committedRows: number;
+  duplicateRows: number;
+  enrollmentJobId: string;
+  invalidRows: number;
+  status: "committed" | "failed" | "staged";
+  totalRows: number;
+  validRows: number;
+};
+
+type EnrollmentRowRecord = {
+  candidateId: string;
+  candidateMobileNumber: string | null;
+  candidateName: string | null;
+  errors: Array<{ field?: string | null; message: string }>;
+  rowId: string;
+  rowNumber: number;
+  status: string;
+};
+
+type PagedEnrollmentRows = {
+  items: EnrollmentRowRecord[];
+  page: number;
+  pageSize: number;
+  total: number;
+};
+
+const initialAssignCandidateFilters: AssignCandidateFilters = {
+  centerId: "",
+  district: "",
+  gender: "",
+  programId: "",
+  referenceCourseId: "",
+  registrationMode: "",
+  state: "",
+  syncStatus: "",
+};
+
+const assignSyncStatusOptions = ["not_queued", "queued", "processing", "synced", "failed", "manual_review", "linked"];
+
+const assignInputClassName =
+  "h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-900 outline-none transition focus:border-sky-300 focus:bg-white focus:ring-2 focus:ring-sky-100 disabled:cursor-not-allowed disabled:opacity-60";
+
+function countActiveAssignFilters(filters: AssignCandidateFilters) {
+  return Object.values(filters).filter(Boolean).length;
+}
+
+function getSortedCourseOptions(courses: CourseOption[]) {
+  return [...courses].sort((left, right) => left.courseName.localeCompare(right.courseName));
+}
 
 type PagedCandidates = {
   items: CandidateOption[];
@@ -525,6 +594,32 @@ function createGeneratedBatchCode(course: CourseOption | undefined, startDate: s
   return `${coursePart || "BAT"}${datePart}${Date.now().toString().slice(-4)}`;
 }
 
+function EnrollmentStat({
+  label,
+  tone,
+  value,
+}: {
+  label: string;
+  tone?: "danger" | "success" | "warning";
+  value: React.ReactNode;
+}) {
+  const toneClass =
+    tone === "danger"
+      ? "border-rose-200 bg-rose-50"
+      : tone === "success"
+        ? "border-emerald-200 bg-emerald-50"
+        : tone === "warning"
+          ? "border-amber-200 bg-amber-50"
+          : "border-slate-200 bg-slate-50";
+
+  return (
+    <div className={cn("rounded-xl border px-3 py-2.5", toneClass)}>
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{label}</div>
+      <div className="mt-0.5 text-lg font-bold text-slate-900">{value}</div>
+    </div>
+  );
+}
+
 function StatusBadge({ tone = "slate", value }: { tone?: "emerald" | "slate" | "amber" | "rose" | "sky"; value: string }) {
   const tones = {
     amber: "border-amber-200 bg-amber-50 text-amber-800",
@@ -715,9 +810,17 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
   const [assignBatchId, setAssignBatchId] = useState("");
   const [assignCandidates, setAssignCandidates] = useState<CandidateOption[]>([]);
   const [assignSearch, setAssignSearch] = useState("");
+  const [assignFilters, setAssignFilters] = useState(initialAssignCandidateFilters);
+  const [showAdvancedAssignFilters, setShowAdvancedAssignFilters] = useState(false);
   const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
   const [isLoadingCandidates, setIsLoadingCandidates] = useState(false);
   const [isAssigningCandidates, setIsAssigningCandidates] = useState(false);
+  const [currentEnrollmentJob, setCurrentEnrollmentJob] = useState<EnrollmentJobRecord | null>(null);
+  const [enrollmentRows, setEnrollmentRows] = useState<EnrollmentRowRecord[]>([]);
+  const [enrollmentRowStatusFilter, setEnrollmentRowStatusFilter] = useState("");
+  const [enrollmentPagination, setEnrollmentPagination] = useState({ page: 1, pageSize: 25, total: 0 });
+  const [isLoadingEnrollmentRows, setIsLoadingEnrollmentRows] = useState(false);
+  const [isCommittingEnrollment, setIsCommittingEnrollment] = useState(false);
   const [deletingBatchId, setDeletingBatchId] = useState<string | null>(null);
   const [isDeletingAllUnpushed, setIsDeletingAllUnpushed] = useState(false);
   const [removingCandidateId, setRemovingCandidateId] = useState<string | null>(null);
@@ -811,12 +914,26 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
     });
   }, [batchForm, referenceData?.sidhBatchContext?.tpId, selectedCenter?.sidhTcId, selectedCourse, selectedProgram, selectedScheme]);
   const assignBatch = batches.find((batch) => batch.batchId === assignBatchId);
+  const sortedAssignCourses = useMemo(() => getSortedCourseOptions(referenceData?.courses ?? []), [referenceData?.courses]);
+  const duplicateAssignCourseNames = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const course of sortedAssignCourses) {
+      counts.set(course.courseName, (counts.get(course.courseName) ?? 0) + 1);
+    }
+
+    return new Set([...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name));
+  }, [sortedAssignCourses]);
+  const assignFilterDistrictOptions = useMemo(
+    () => listCandidateDistrictsForState(assignFilters.state),
+    [assignFilters.state],
+  );
+  const activeAssignFilterCount = useMemo(() => countActiveAssignFilters(assignFilters), [assignFilters]);
   const assignedCandidateIds = useMemo(
     () => new Set(selectedBatch?.batchId === assignBatchId ? selectedBatch.candidates.map((candidate) => candidate.candidateId) : []),
     [assignBatchId, selectedBatch],
   );
   const assignableCandidates = useMemo(
-    () => assignCandidates.filter((candidate) => isSidhVerifiedCandidate(candidate) && !assignedCandidateIds.has(candidate.candidateId)),
+    () => assignCandidates.filter((candidate) => !assignedCandidateIds.has(candidate.candidateId)),
     [assignCandidates, assignedCandidateIds],
   );
   const activeSelectedCandidateIds = selectedCandidateIds.filter((candidateId) => assignableCandidates.some((candidate) => candidate.candidateId === candidateId));
@@ -959,13 +1076,28 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
     setAssignBatchId(batchId);
     setSelectedCandidateIds([]);
     setAssignCandidates([]);
+    setAssignSearch("");
+    setAssignFilters(initialAssignCandidateFilters);
+    setShowAdvancedAssignFilters(false);
+    setCurrentEnrollmentJob(null);
+    setEnrollmentRows([]);
+    setEnrollmentRowStatusFilter("");
+    setEnrollmentPagination({ page: 1, pageSize: 25, total: 0 });
     setShowAssignModal(true);
     if (batchId) {
       void loadAssignableCandidates(batchId);
     }
   }
 
-  async function loadAssignableCandidates(batchId: string, search = assignSearch) {
+  function updateAssignFilters(patch: Partial<AssignCandidateFilters>) {
+    setAssignFilters((current) => ({ ...current, ...patch }));
+  }
+
+  function clearAssignFilters() {
+    setAssignFilters(initialAssignCandidateFilters);
+  }
+
+  async function loadAssignableCandidates(batchId: string, search = assignSearch, filters = assignFilters) {
     const batch = batches.find((item) => item.batchId === batchId);
 
     if (!batch) {
@@ -976,12 +1108,35 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
     setIsLoadingCandidates(true);
 
     try {
-      const params = new URLSearchParams({ page: "1", pageSize: "100" });
+      const params = new URLSearchParams({ page: "1", pageSize: "200", eligibleForBatchId: batchId });
       if (search.trim()) {
         params.set("search", search.trim());
       }
-      if (batch.centerId && batch.centerId !== "unassigned") {
+      if (filters.state) {
+        params.set("state", filters.state);
+      }
+      if (filters.district) {
+        params.set("district", filters.district);
+      }
+      if (filters.centerId) {
+        params.set("centerId", filters.centerId);
+      } else if (batch.centerId && batch.centerId !== "unassigned") {
         params.set("centerId", batch.centerId);
+      }
+      if (filters.referenceCourseId) {
+        params.set("referenceCourseId", filters.referenceCourseId);
+      }
+      if (filters.gender) {
+        params.set("gender", filters.gender);
+      }
+      if (filters.registrationMode) {
+        params.set("registrationMode", filters.registrationMode);
+      }
+      if (filters.programId) {
+        params.set("programId", filters.programId);
+      }
+      if (filters.syncStatus) {
+        params.set("syncStatus", filters.syncStatus);
       }
 
       const [candidatePage] = await Promise.all([
@@ -989,12 +1144,42 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
         handleViewBatch(batchId, false),
       ]);
 
-      setAssignCandidates(candidatePage.items.filter(isSidhVerifiedCandidate));
+      setAssignCandidates(candidatePage.items);
       setSelectedCandidateIds([]);
     } catch (error) {
-      toast.error(error instanceof ClientApiError ? error.message : "Unable to load verified SIDH candidates");
+      toast.error(error instanceof ClientApiError ? error.message : "Unable to load eligible learners");
     } finally {
       setIsLoadingCandidates(false);
+    }
+  }
+
+  async function loadEnrollmentRows(
+    batchId: string,
+    jobId: string,
+    page = enrollmentPagination.page,
+    pageSize = enrollmentPagination.pageSize,
+    status = enrollmentRowStatusFilter,
+  ) {
+    setIsLoadingEnrollmentRows(true);
+
+    try {
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize),
+      });
+      if (status) {
+        params.set("status", status);
+      }
+
+      const rowPage = await apiFetch<PagedEnrollmentRows>(
+        `/api/v1/batches/${batchId}/enrollment-jobs/${jobId}/rows?${params.toString()}`,
+      );
+      setEnrollmentRows(rowPage.items);
+      setEnrollmentPagination({ page: rowPage.page, pageSize: rowPage.pageSize, total: rowPage.total });
+    } catch (error) {
+      toast.error(error instanceof ClientApiError ? error.message : "Unable to load staged enrollment rows");
+    } finally {
+      setIsLoadingEnrollmentRows(false);
     }
   }
 
@@ -1335,33 +1520,65 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
     }
   }
 
-  async function handleAssignCandidates() {
+  async function handleStageEnrollment() {
     if (!assignBatchId) {
-      toast.error("Select a batch before assigning candidates");
+      toast.error("Select a batch before enrolling learners");
       return;
     }
 
     if (activeSelectedCandidateIds.length === 0) {
-      toast.error("Select at least one verified SIDH candidate");
+      toast.error("Select at least one eligible learner");
       return;
     }
 
     setIsAssigningCandidates(true);
 
     try {
-      const detail = await apiFetch<BatchDetail>(`/api/v1/batches/${assignBatchId}/candidates`, {
+      const job = await apiFetch<EnrollmentJobRecord>(`/api/v1/batches/${assignBatchId}/enrollment-jobs`, {
         body: JSON.stringify({ candidateIds: activeSelectedCandidateIds }),
         method: "POST",
       });
-      setSelectedBatch(detail);
-      setSelectedCandidateIds([]);
-      toast.success("Candidates saved and enrollment queued");
-      await loadData();
-      await loadAssignableCandidates(assignBatchId);
+      setCurrentEnrollmentJob(job);
+      setEnrollmentRowStatusFilter("");
+      setEnrollmentPagination((current) => ({ ...current, page: 1 }));
+      await loadEnrollmentRows(assignBatchId, job.enrollmentJobId, 1, enrollmentPagination.pageSize, "");
+      toast.success(`${job.validRows} of ${job.totalRows} selected learners are ready to enroll`);
     } catch (error) {
-      toast.error(error instanceof ClientApiError ? error.message : "Unable to assign candidates to batch");
+      toast.error(error instanceof ClientApiError ? error.message : "Unable to stage batch enrollment");
     } finally {
       setIsAssigningCandidates(false);
+    }
+  }
+
+  async function handleCommitEnrollment() {
+    if (!assignBatchId || !currentEnrollmentJob) {
+      return;
+    }
+
+    setIsCommittingEnrollment(true);
+
+    try {
+      const committedJob = await apiFetch<EnrollmentJobRecord>(
+        `/api/v1/batches/${assignBatchId}/enrollment-jobs/${currentEnrollmentJob.enrollmentJobId}/commit`,
+        { method: "POST" },
+      );
+      setCurrentEnrollmentJob(committedJob);
+      setSelectedCandidateIds([]);
+      setSelectedBatch(await apiFetch<BatchDetail>(`/api/v1/batches/${assignBatchId}`));
+      toast.success(`${committedJob.committedRows} learner${committedJob.committedRows === 1 ? "" : "s"} enrolled and queued for SIDH sync`);
+      await loadData();
+      await loadAssignableCandidates(assignBatchId);
+      await loadEnrollmentRows(
+        assignBatchId,
+        committedJob.enrollmentJobId,
+        enrollmentPagination.page,
+        enrollmentPagination.pageSize,
+        enrollmentRowStatusFilter,
+      );
+    } catch (error) {
+      toast.error(error instanceof ClientApiError ? error.message : "Unable to commit batch enrollment");
+    } finally {
+      setIsCommittingEnrollment(false);
     }
   }
 
@@ -2233,12 +2450,12 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
           icon={<IconUsers className="h-5 w-5 text-sky-600" />}
           iconBg="bg-sky-50"
           title="Enroll learners"
-          subtitle="Select a batch and add registered learners from the government portal."
+          subtitle="Select a batch, filter registered learners, stage enrollment, then commit eligible learners to the batch."
           onClose={() => setShowAssignModal(false)}
           wide
         >
           <div className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-end">
               <div className="space-y-2">
                 <Label htmlFor="assignBatchId">Batch</Label>
                 <FieldSelect
@@ -2248,6 +2465,8 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                     setAssignBatchId(value);
                     setSelectedCandidateIds([]);
                     setAssignCandidates([]);
+                    setCurrentEnrollmentJob(null);
+                    setEnrollmentRows([]);
                     if (value) {
                       void loadAssignableCandidates(value);
                     }
@@ -2261,16 +2480,27 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
               </div>
               <button
                 type="button"
-                disabled={!assignBatchId || activeSelectedCandidateIds.length === 0 || isAssigningCandidates}
-                onClick={() => void handleAssignCandidates()}
+                disabled={!assignBatchId || activeSelectedCandidateIds.length === 0 || isAssigningCandidates || currentEnrollmentJob?.status === "committed"}
+                onClick={() => void handleStageEnrollment()}
                 className="inline-flex h-11 w-full items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white disabled:opacity-60 sm:w-auto"
               >
                 {isAssigningCandidates ? <IconLoader2 className="h-4 w-4 animate-spin" /> : <IconUserPlus className="h-4 w-4" />}
-                Enroll {activeSelectedCandidateIds.length > 0 ? activeSelectedCandidateIds.length : ""} selected
+                Stage {activeSelectedCandidateIds.length > 0 ? activeSelectedCandidateIds.length : ""} selected
               </button>
+              {currentEnrollmentJob ? (
+                <button
+                  type="button"
+                  disabled={isCommittingEnrollment || currentEnrollmentJob.status === "committed" || currentEnrollmentJob.validRows === 0}
+                  onClick={() => void handleCommitEnrollment()}
+                  className="inline-flex h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 text-sm font-semibold text-emerald-700 disabled:opacity-60 sm:w-auto"
+                >
+                  {isCommittingEnrollment ? <IconLoader2 className="h-4 w-4 animate-spin" /> : <IconCircleCheck className="h-4 w-4" />}
+                  Enroll {currentEnrollmentJob.validRows} ready
+                </button>
+              ) : null}
             </div>
 
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
               <div className="relative flex-1">
                 <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <Input
@@ -2285,24 +2515,212 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                   }}
                 />
               </div>
-              <button
-                type="button"
-                disabled={!assignBatchId || isLoadingCandidates}
-                onClick={() => void loadAssignableCandidates(assignBatchId, assignSearch)}
-                className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 px-3 text-sm font-medium text-slate-700"
-              >
-                {isLoadingCandidates ? <IconLoader2 className="h-4 w-4 animate-spin" /> : <IconRefresh className="h-4 w-4" />}
-                Search
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedAssignFilters((current) => !current)}
+                  className={cn(
+                    "inline-flex h-10 items-center gap-2 rounded-xl border px-3 text-sm font-medium transition",
+                    showAdvancedAssignFilters || activeAssignFilterCount > 0
+                      ? "border-sky-200 bg-sky-50 text-sky-700"
+                      : "border-slate-200 bg-white text-slate-700 hover:border-sky-200 hover:text-sky-700",
+                  )}
+                >
+                  <IconFilter className="h-4 w-4" />
+                  Advanced filters
+                  {activeAssignFilterCount > 0 ? (
+                    <span className="rounded-full bg-sky-600 px-2 py-0.5 text-[10px] font-semibold text-white">
+                      {activeAssignFilterCount}
+                    </span>
+                  ) : null}
+                </button>
+                {activeAssignFilterCount > 0 ? (
+                  <button
+                    type="button"
+                    onClick={clearAssignFilters}
+                    className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 hover:bg-slate-50"
+                  >
+                    <IconX className="h-4 w-4" />
+                    Clear all
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={!assignBatchId || isLoadingCandidates}
+                  onClick={() => void loadAssignableCandidates(assignBatchId, assignSearch)}
+                  className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 px-3 text-sm font-medium text-slate-700"
+                >
+                  {isLoadingCandidates ? <IconLoader2 className="h-4 w-4 animate-spin" /> : <IconRefresh className="h-4 w-4" />}
+                  Search
+                </button>
+              </div>
             </div>
+
+            {showAdvancedAssignFilters ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <div className="space-y-2">
+                    <Label>State</Label>
+                    <select
+                      value={assignFilters.state}
+                      onChange={(event) => {
+                        const nextState = event.target.value;
+                        setAssignFilters((current) => {
+                          const nextDistricts = listCandidateDistrictsForState(nextState);
+                          return {
+                            ...current,
+                            state: nextState,
+                            district: nextDistricts.includes(current.district) ? current.district : "",
+                          };
+                        });
+                      }}
+                      className={assignInputClassName}
+                    >
+                      <option value="">All states</option>
+                      {CANDIDATE_STATE_OPTIONS.map((state) => (
+                        <option key={state} value={state}>{state}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>District</Label>
+                    <select
+                      value={assignFilters.district}
+                      onChange={(event) => updateAssignFilters({ district: event.target.value })}
+                      className={assignInputClassName}
+                      disabled={!assignFilters.state}
+                    >
+                      <option value="">{assignFilters.state ? "All districts" : "Select state first"}</option>
+                      {assignFilterDistrictOptions.map((district) => (
+                        <option key={district} value={district}>{district}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Training center</Label>
+                    <select
+                      value={assignFilters.centerId}
+                      onChange={(event) => updateAssignFilters({ centerId: event.target.value })}
+                      className={assignInputClassName}
+                    >
+                      <option value="">All training centers</option>
+                      {(referenceData?.trainingCenters ?? []).map((center) => (
+                        <option key={center.centerId} value={center.centerId}>{center.centerName}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Course (reference)</Label>
+                    <select
+                      value={assignFilters.referenceCourseId}
+                      onChange={(event) => updateAssignFilters({ referenceCourseId: event.target.value })}
+                      className={assignInputClassName}
+                    >
+                      <option value="">All courses</option>
+                      {sortedAssignCourses.map((course) => (
+                        <option key={course.courseId} value={course.courseId}>
+                          {duplicateAssignCourseNames.has(course.courseName)
+                            ? `${formatCourseOptionLabel(course)} · ${course.courseId}`
+                            : formatCourseOptionLabel(course)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Gender</Label>
+                    <select
+                      value={assignFilters.gender}
+                      onChange={(event) => updateAssignFilters({ gender: event.target.value })}
+                      className={assignInputClassName}
+                    >
+                      <option value="">All genders</option>
+                      {CANDIDATE_GENDER_OPTIONS.map((gender) => (
+                        <option key={gender} value={gender}>{gender}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Registration type</Label>
+                    <select
+                      value={assignFilters.registrationMode}
+                      onChange={(event) => updateAssignFilters({ registrationMode: event.target.value })}
+                      className={assignInputClassName}
+                    >
+                      <option value="">All registration types</option>
+                      <option value="internal_registration">Registered here</option>
+                      <option value="existing_sidh_link">Linked from Skill India</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Program</Label>
+                    <select
+                      value={assignFilters.programId}
+                      onChange={(event) => updateAssignFilters({ programId: event.target.value })}
+                      className={assignInputClassName}
+                    >
+                      <option value="">All programs</option>
+                      {(referenceData?.programs ?? []).map((program) => (
+                        <option key={program.programId} value={program.programId}>{program.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Sync status</Label>
+                    <select
+                      value={assignFilters.syncStatus}
+                      onChange={(event) => updateAssignFilters({ syncStatus: event.target.value })}
+                      className={assignInputClassName}
+                    >
+                      <option value="">All sync statuses</option>
+                      {assignSyncStatusOptions.map((status) => (
+                        <option key={status} value={status}>{formatStatusLabel(status)}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {currentEnrollmentJob ? (
+              <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Staged enrollment</p>
+                    <p className="text-xs text-slate-500">
+                      {currentEnrollmentJob.status === "committed"
+                        ? `${currentEnrollmentJob.committedRows} learner${currentEnrollmentJob.committedRows === 1 ? "" : "s"} enrolled and queued for SIDH sync`
+                        : `${currentEnrollmentJob.validRows} of ${currentEnrollmentJob.totalRows} selected learners are ready to enroll`}
+                    </p>
+                  </div>
+                  {currentEnrollmentJob.status === "committed" ? (
+                    <span className="inline-flex w-fit items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                      Enrollment complete
+                    </span>
+                  ) : null}
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <EnrollmentStat label="Selected" value={currentEnrollmentJob.totalRows} />
+                  <EnrollmentStat label="Ready to enroll" value={currentEnrollmentJob.validRows} tone="success" />
+                  <EnrollmentStat label="Need fixes" value={currentEnrollmentJob.invalidRows} tone="danger" />
+                  <EnrollmentStat label="Already enrolled" value={currentEnrollmentJob.duplicateRows} tone="warning" />
+                </div>
+              </div>
+            ) : null}
 
             {!assignBatchId ? (
               <p className="rounded-xl border border-dashed border-slate-200 py-10 text-center text-sm text-slate-500">Select a batch to load learners.</p>
-            ) : isLoadingCandidates ? (
+            ) : isLoadingCandidates && !currentEnrollmentJob ? (
               <div className="flex justify-center py-10 text-slate-400"><IconLoader2 className="h-6 w-6 animate-spin" /></div>
-            ) : assignableCandidates.length === 0 ? (
+            ) : !currentEnrollmentJob && assignableCandidates.length === 0 ? (
               <p className="rounded-xl border border-dashed border-slate-200 py-10 text-center text-sm text-slate-500">No eligible learners found for this batch.</p>
-            ) : (
+            ) : !currentEnrollmentJob ? (
               <div className="overflow-hidden rounded-xl border border-slate-200">
                 <table className="w-full table-fixed text-sm">
                   <thead>
@@ -2341,12 +2759,80 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                         <td className="min-w-0 truncate px-3 py-2.5 font-medium text-slate-900">{candidate.personalDetails.fullName}</td>
                         <td className="px-3 py-2.5 text-slate-600">{candidate.contactDetails.mobileNumber}</td>
                         <td className="min-w-0 truncate px-3 py-2.5 text-slate-600">
-                          {[candidate.locationDetails.district, candidate.locationDetails.state].filter(Boolean).join(", ") || "—"}
+                          {[candidate.locationDetails.district ?? candidate.locationDetails.city, candidate.locationDetails.state].filter(Boolean).join(", ") || "—"}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-1.5">
+                  {(
+                    [
+                      { count: currentEnrollmentJob.totalRows, label: "All rows", value: "" },
+                      { count: currentEnrollmentJob.validRows, label: "Ready to enroll", value: "valid" },
+                      { count: currentEnrollmentJob.invalidRows, label: "Need fixes", value: "invalid" },
+                      { count: currentEnrollmentJob.duplicateRows, label: "Already enrolled", value: "duplicate" },
+                    ] as const
+                  ).map((pill) => (
+                    <button
+                      key={pill.value || "all"}
+                      type="button"
+                      onClick={() => {
+                        setEnrollmentRowStatusFilter(pill.value);
+                        setEnrollmentPagination((current) => ({ ...current, page: 1 }));
+                        void loadEnrollmentRows(assignBatchId, currentEnrollmentJob.enrollmentJobId, 1, enrollmentPagination.pageSize, pill.value);
+                      }}
+                      className={cn(
+                        "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition",
+                        enrollmentRowStatusFilter === pill.value
+                          ? "bg-sky-100 text-sky-700"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200",
+                      )}
+                    >
+                      {pill.label}
+                      <span className="rounded-full bg-white/80 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">{pill.count}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {isLoadingEnrollmentRows ? (
+                  <div className="flex justify-center py-10 text-slate-400"><IconLoader2 className="h-6 w-6 animate-spin" /></div>
+                ) : enrollmentRows.length === 0 ? (
+                  <p className="rounded-xl border border-dashed border-slate-200 py-10 text-center text-sm text-slate-500">No rows match this filter.</p>
+                ) : (
+                  <div className="overflow-hidden rounded-xl border border-slate-200">
+                    <table className="w-full table-fixed text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-100 bg-slate-50 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                          <th className="px-3 py-2">Learner</th>
+                          <th className="px-3 py-2">Mobile</th>
+                          <th className="px-3 py-2">Status</th>
+                          <th className="px-3 py-2">Details</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {enrollmentRows.map((row) => (
+                          <tr key={row.rowId}>
+                            <td className="min-w-0 truncate px-3 py-2.5 font-medium text-slate-900">{row.candidateName ?? row.candidateId}</td>
+                            <td className="px-3 py-2.5 text-slate-600">{row.candidateMobileNumber ?? "—"}</td>
+                            <td className="px-3 py-2.5">
+                              <StatusBadge
+                                tone={row.status === "valid" || row.status === "committed" ? "emerald" : row.status === "duplicate" ? "amber" : "rose"}
+                                value={row.status}
+                              />
+                            </td>
+                            <td className="px-3 py-2.5 text-xs text-slate-500">
+                              {row.errors.length > 0 ? row.errors.map((error) => error.message).join("; ") : "Ready for batch enrollment"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
           </div>

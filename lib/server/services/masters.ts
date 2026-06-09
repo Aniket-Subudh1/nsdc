@@ -16,7 +16,7 @@ import { ReferenceValueModel } from "@/lib/server/models/reference-value";
 import { SchemeModel } from "@/lib/server/models/scheme";
 import { SectorModel } from "@/lib/server/models/sector";
 import { TrainingCenterModel } from "@/lib/server/models/training-center";
-import { canManageMasters, getPermissionsForRoles } from "@/lib/server/rbac";
+import { canManageCoreMasters, canManageMasters, getPermissionsForRoles } from "@/lib/server/rbac";
 import { writeAuditLog } from "@/lib/server/services/audit";
 import { type AuthSession } from "@/lib/server/services/session";
 
@@ -125,6 +125,12 @@ function ensureCanReadMasters(actor: AuthSession) {
 function ensureCanWriteMasters(actor: AuthSession) {
   if (!canManageMasters(actor.user.roles)) {
     throw new ApiError(403, "FORBIDDEN", "You do not have access to manage master data");
+  }
+}
+
+function ensureCanWriteCoreMasters(actor: AuthSession) {
+  if (!canManageCoreMasters(actor.user.roles)) {
+    throw new ApiError(403, "FORBIDDEN", "You do not have access to manage programs, sectors, or schemes");
   }
 }
 
@@ -486,7 +492,7 @@ export async function listPrograms(
 
 export async function createProgram(actor: AuthSession, input: ProgramInput) {
   await connectToDatabase();
-  ensureCanWriteMasters(actor);
+  ensureCanWriteCoreMasters(actor);
 
   const existingProgram = await ProgramModel.findOne({
     $or: [{ code: normalizeString(input.code) }, { name: normalizeString(input.name) }],
@@ -536,7 +542,7 @@ export async function updateProgram(
   input: Partial<ProgramInput>,
 ) {
   await connectToDatabase();
-  ensureCanWriteMasters(actor);
+  ensureCanWriteCoreMasters(actor);
 
   const program = await ProgramModel.findOne({ programId: normalizeString(programId) });
 
@@ -630,7 +636,7 @@ export async function updateProgram(
 
 export async function verifyProgramForSidh(actor: AuthSession, programId: string, requestId?: string) {
   await connectToDatabase();
-  ensureCanWriteMasters(actor);
+  ensureCanWriteCoreMasters(actor);
 
   const program = await ProgramModel.findOne({ programId: normalizeString(programId) });
 
@@ -662,7 +668,7 @@ export async function verifyProgramForSidh(actor: AuthSession, programId: string
 
 export async function deleteProgram(actor: AuthSession, programId: string, requestId?: string) {
   await connectToDatabase();
-  ensureCanWriteMasters(actor);
+  ensureCanWriteCoreMasters(actor);
 
   const normalizedProgramId = normalizeString(programId);
   const program = await ProgramModel.findOne({ programId: normalizedProgramId });
@@ -708,7 +714,7 @@ export async function deleteProgram(actor: AuthSession, programId: string, reque
 
 export async function syncProgramToSidh(actor: AuthSession, programId: string, requestId?: string) {
   await connectToDatabase();
-  ensureCanWriteMasters(actor);
+  ensureCanWriteCoreMasters(actor);
 
   const program = await ProgramModel.findOne({ programId: normalizeString(programId) });
 
@@ -770,7 +776,7 @@ export async function listSectors(actor: AuthSession, input: ListMastersInput): 
 
 export async function createSector(actor: AuthSession, input: SectorInput) {
   await connectToDatabase();
-  ensureCanWriteMasters(actor);
+  ensureCanWriteCoreMasters(actor);
 
   const existingSector = await SectorModel.findOne({
     $or: [{ code: normalizeString(input.code) }, { name: normalizeString(input.name) }],
@@ -804,7 +810,7 @@ export async function createSector(actor: AuthSession, input: SectorInput) {
 
 export async function updateSector(actor: AuthSession, sectorId: string, input: Partial<SectorInput>) {
   await connectToDatabase();
-  ensureCanWriteMasters(actor);
+  ensureCanWriteCoreMasters(actor);
 
   const sector = await SectorModel.findOne({ sectorId: normalizeString(sectorId) });
 
@@ -856,7 +862,7 @@ export async function updateSector(actor: AuthSession, sectorId: string, input: 
 
 export async function deleteSector(actor: AuthSession, sectorId: string, requestId?: string) {
   await connectToDatabase();
-  ensureCanWriteMasters(actor);
+  ensureCanWriteCoreMasters(actor);
 
   const normalizedSectorId = normalizeString(sectorId);
   const sector = await SectorModel.findOne({ sectorId: normalizedSectorId });
@@ -924,7 +930,7 @@ export async function listSchemes(
 
 export async function createScheme(actor: AuthSession, input: SchemeInput) {
   await connectToDatabase();
-  ensureCanWriteMasters(actor);
+  ensureCanWriteCoreMasters(actor);
   await ensureSchemeSyncMetadata(input);
 
   const existingScheme = await SchemeModel.findOne({
@@ -974,7 +980,7 @@ export async function createScheme(actor: AuthSession, input: SchemeInput) {
 
 export async function updateScheme(actor: AuthSession, schemeId: string, input: Partial<SchemeInput>) {
   await connectToDatabase();
-  ensureCanWriteMasters(actor);
+  ensureCanWriteCoreMasters(actor);
 
   const scheme = await SchemeModel.findOne({ schemeId: normalizeString(schemeId) });
 
@@ -1081,7 +1087,7 @@ export async function updateScheme(actor: AuthSession, schemeId: string, input: 
 
 export async function verifySchemeForSidh(actor: AuthSession, schemeId: string, requestId?: string) {
   await connectToDatabase();
-  ensureCanWriteMasters(actor);
+  ensureCanWriteCoreMasters(actor);
 
   const scheme = await SchemeModel.findOne({ schemeId: normalizeString(schemeId) });
 
@@ -1113,7 +1119,7 @@ export async function verifySchemeForSidh(actor: AuthSession, schemeId: string, 
 
 export async function deleteScheme(actor: AuthSession, schemeId: string, requestId?: string) {
   await connectToDatabase();
-  ensureCanWriteMasters(actor);
+  ensureCanWriteCoreMasters(actor);
 
   const normalizedSchemeId = normalizeString(schemeId);
   const scheme = await SchemeModel.findOne({ schemeId: normalizedSchemeId });
@@ -1159,7 +1165,7 @@ export async function deleteScheme(actor: AuthSession, schemeId: string, request
 
 export async function syncSchemeToSidh(actor: AuthSession, schemeId: string, requestId?: string) {
   await connectToDatabase();
-  ensureCanWriteMasters(actor);
+  ensureCanWriteCoreMasters(actor);
 
   const scheme = await SchemeModel.findOne({ schemeId: normalizeString(schemeId) });
 
@@ -1630,7 +1636,7 @@ export async function createSidhBatchFieldOption(
   requestId?: string,
 ) {
   await connectToDatabase();
-  ensureCanWriteMasters(actor);
+  ensureCanWriteCoreMasters(actor);
 
   const category = SIDH_BATCH_ENUM_CATEGORIES[input.field];
   const label = normalizeString(input.label);
@@ -1670,7 +1676,7 @@ export async function updateSidhBatchFieldOption(
   requestId?: string,
 ) {
   await connectToDatabase();
-  ensureCanWriteMasters(actor);
+  ensureCanWriteCoreMasters(actor);
 
   const referenceValue = await ReferenceValueModel.findOne({ referenceValueId });
 

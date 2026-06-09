@@ -13,7 +13,6 @@ import {
   IconPlus,
   IconRefresh,
   IconSearch,
-  IconSparkles,
   IconStack2,
   IconTrash,
   IconX,
@@ -135,37 +134,10 @@ const portalContent = {
   },
   training_partner: {
     description:
-      "View and manage the course catalog available for your training operations and batch setup.",
+      "Browse programs, sectors, and schemes. Manage courses available for your training operations and batch setup.",
     heading: "Course Catalog",
   },
 } as const;
-
-// Default seed values from NsdcConstants.java / sidh-defaults.ts
-const SIDH_SEED = {
-  program: {
-    code: "NSDC_MARKET_LED_PROGRAMME",
-    description: "Default local program seeded from the legacy SIDH constants.",
-    name: "NSDC Market led programme",
-    status: "active" as const,
-    syncToSidh: false,
-  },
-  sector: {
-    code: "GENERAL",
-    description: "Default local sector seeded for starter master data setup.",
-    name: "General",
-    status: "active" as const,
-  },
-  scheme: {
-    beneficiaryType: "",
-    code: "Scheme_2",
-    description: "Default local scheme seeded from the legacy SIDH constants.",
-    fundingType: "",
-    name: "Fee Based",
-    sidhSchemeId: "Scheme_2",
-    status: "active" as const,
-    syncEnabled: true,
-  },
-};
 
 type SidhWorkflowState = "draft" | "ready" | "verified";
 
@@ -240,7 +212,8 @@ const emptyCourseForm = {
 };
 
 export default function MasterDataManager({ portal }: MasterDataManagerProps) {
-  const [activeTab, setActiveTab] = useState<Tab>("programs");
+  const canManageCoreMasters = portal === "admin";
+  const [activeTab, setActiveTab] = useState<Tab>(canManageCoreMasters ? "programs" : "courses");
   const [programs, setPrograms] = useState<ProgramRecord[]>([]);
   const [sectors, setSectors] = useState<SectorRecord[]>([]);
   const [schemes, setSchemes] = useState<SchemeRecord[]>([]);
@@ -263,7 +236,6 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
   const [sidhFieldOptions, setSidhFieldOptions] = useState<SidhBatchFieldOptionsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [isSeeding, setIsSeeding] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -697,34 +669,6 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
     }
   }
 
-  async function handleSeedDefaults() {
-    setIsSeeding(true);
-    const results = await Promise.allSettled([
-      apiFetch("/api/v1/masters/programs", {
-        method: "POST",
-        body: JSON.stringify(SIDH_SEED.program),
-      }),
-      apiFetch("/api/v1/masters/sectors", {
-        method: "POST",
-        body: JSON.stringify(SIDH_SEED.sector),
-      }),
-      apiFetch("/api/v1/masters/schemes", {
-        method: "POST",
-        body: JSON.stringify(SIDH_SEED.scheme),
-      }),
-    ]);
-    const created = results.filter((r) => r.status === "fulfilled").length;
-    const alreadyExist = results.filter(
-      (r) => r.status === "rejected" && r.reason instanceof ClientApiError && r.reason.status === 409,
-    ).length;
-    const errors = results.length - created - alreadyExist;
-    if (created > 0) toast.success(`Seeded ${created} default SIDH record(s)`);
-    if (alreadyExist > 0) toast.success(`${alreadyExist} default(s) already exist — no changes needed`);
-    if (errors > 0) toast.error(`${errors} default(s) could not be created`);
-    await loadData();
-    setIsSeeding(false);
-  }
-
   const addLabel =
     activeTab === "programs"
       ? "Add program"
@@ -759,28 +703,16 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
             <IconRefresh className={cn("h-4 w-4", isLoading && "animate-spin")} />
             Refresh
           </button>
-          <button
-            type="button"
-            title="Creates starter program, sector, and scheme records if they do not exist yet"
-            onClick={() => void handleSeedDefaults()}
-            disabled={isSeeding}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-700 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isSeeding ? (
-              <IconLoader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <IconSparkles className="h-4 w-4" />
-            )}
-            Load starter data
-          </button>
-          <button
-            type="button"
-            onClick={openCreateModal}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700"
-          >
-            <IconPlus className="h-4 w-4" />
-            {addLabel}
-          </button>
+          {(canManageCoreMasters || activeTab === "courses") && (
+            <button
+              type="button"
+              onClick={openCreateModal}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700"
+            >
+              <IconPlus className="h-4 w-4" />
+              {addLabel}
+            </button>
+          )}
         </div>
       </div>
 
@@ -895,6 +827,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           {activeTab === "programs" && (
             <ProgramsTable
               isLoading={isLoading}
+              readOnly={!canManageCoreMasters}
               onDelete={handleDelete}
               programs={filteredPrograms}
               onEdit={(id) => openEditModal(id)}
@@ -905,6 +838,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           {activeTab === "sectors" && (
             <SectorsTable
               isLoading={isLoading}
+              readOnly={!canManageCoreMasters}
               onDelete={handleDelete}
               onEdit={(id) => openEditModal(id)}
               sectors={filteredSectors}
@@ -913,6 +847,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           {activeTab === "schemes" && (
             <SchemesTable
               isLoading={isLoading}
+              readOnly={!canManageCoreMasters}
               onDelete={handleDelete}
               schemes={filteredSchemes}
               onEdit={(id) => openEditModal(id)}
@@ -939,6 +874,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           {activeTab === "programs" && (
             <ProgramsMobileList
               isLoading={isLoading}
+              readOnly={!canManageCoreMasters}
               onDelete={handleDelete}
               onEdit={(id) => openEditModal(id)}
               onSync={handleSync}
@@ -949,6 +885,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           {activeTab === "sectors" && (
             <SectorsMobileList
               isLoading={isLoading}
+              readOnly={!canManageCoreMasters}
               onDelete={handleDelete}
               onEdit={(id) => openEditModal(id)}
               sectors={filteredSectors}
@@ -957,6 +894,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           {activeTab === "schemes" && (
             <SchemesMobileList
               isLoading={isLoading}
+              readOnly={!canManageCoreMasters}
               onDelete={handleDelete}
               onEdit={(id) => openEditModal(id)}
               onSync={handleSync}
@@ -1111,6 +1049,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
 
 function ProgramsMobileList({
   isLoading,
+  readOnly = false,
   onDelete,
   onEdit,
   onSync,
@@ -1118,6 +1057,7 @@ function ProgramsMobileList({
   programs,
 }: {
   isLoading: boolean;
+  readOnly?: boolean;
   onDelete: (tab: Tab, id: string, label: string) => void;
   onEdit: (id: string) => void;
   onSync: (tab: "programs" | "schemes", id: string, label: string) => void;
@@ -1135,41 +1075,58 @@ function ProgramsMobileList({
         const workflow = resolveSidhWorkflowState(program.verifiedForSidh, program.syncToSidh);
         return (
           <div key={program.id} className="px-4 py-4">
-            <button type="button" onClick={() => onEdit(program.programId)} className="w-full text-left">
-              <MasterDataIdentity
-                accentClass="bg-violet-100 text-violet-700"
-                code={program.code}
-                name={program.name}
-                subtitle={program.description}
-              />
-              <div className="mt-3 flex flex-wrap gap-2">
-                <WorkflowBadge state={workflow} />
-                <StatusBadge status={program.status} />
+            {readOnly ? (
+              <div className="w-full text-left">
+                <MasterDataIdentity
+                  accentClass="bg-violet-100 text-violet-700"
+                  code={program.code}
+                  name={program.name}
+                  subtitle={program.description}
+                />
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <WorkflowBadge state={workflow} />
+                  <StatusBadge status={program.status} />
+                </div>
               </div>
-            </button>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <RowActionButton
-                label={workflow === "draft" ? "Verify" : workflow === "verified" ? "Verified" : "Ready"}
-                onClick={() => onVerify("programs", program.programId, program.name)}
-                icon={<IconCircleCheck className="h-3.5 w-3.5" />}
-                tone={workflow === "draft" ? "primary" : "neutral"}
-                disabled={workflow !== "draft"}
-              />
-              <RowActionButton
-                label={program.syncToSidh ? "Ready" : "Mark ready"}
-                onClick={() => onSync("programs", program.programId, program.name)}
-                icon={<IconRefresh className="h-3.5 w-3.5" />}
-                tone={program.syncToSidh ? "neutral" : "primary"}
-                disabled={workflow !== "verified"}
-              />
-              <EditButton onClick={() => onEdit(program.programId)} />
-              <RowActionButton
-                label="Delete"
-                onClick={() => onDelete("programs", program.programId, program.name)}
-                icon={<IconTrash className="h-3.5 w-3.5" />}
-                tone="danger"
-              />
-            </div>
+            ) : (
+              <>
+                <button type="button" onClick={() => onEdit(program.programId)} className="w-full text-left">
+                  <MasterDataIdentity
+                    accentClass="bg-violet-100 text-violet-700"
+                    code={program.code}
+                    name={program.name}
+                    subtitle={program.description}
+                  />
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <WorkflowBadge state={workflow} />
+                    <StatusBadge status={program.status} />
+                  </div>
+                </button>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <RowActionButton
+                    label={workflow === "draft" ? "Verify" : workflow === "verified" ? "Verified" : "Ready"}
+                    onClick={() => onVerify("programs", program.programId, program.name)}
+                    icon={<IconCircleCheck className="h-3.5 w-3.5" />}
+                    tone={workflow === "draft" ? "primary" : "neutral"}
+                    disabled={workflow !== "draft"}
+                  />
+                  <RowActionButton
+                    label={program.syncToSidh ? "Ready" : "Mark ready"}
+                    onClick={() => onSync("programs", program.programId, program.name)}
+                    icon={<IconRefresh className="h-3.5 w-3.5" />}
+                    tone={program.syncToSidh ? "neutral" : "primary"}
+                    disabled={workflow !== "verified"}
+                  />
+                  <EditButton onClick={() => onEdit(program.programId)} />
+                  <RowActionButton
+                    label="Delete"
+                    onClick={() => onDelete("programs", program.programId, program.name)}
+                    icon={<IconTrash className="h-3.5 w-3.5" />}
+                    tone="danger"
+                  />
+                </div>
+              </>
+            )}
           </div>
         );
       })}
@@ -1179,11 +1136,13 @@ function ProgramsMobileList({
 
 function SectorsMobileList({
   isLoading,
+  readOnly = false,
   onDelete,
   onEdit,
   sectors,
 }: {
   isLoading: boolean;
+  readOnly?: boolean;
   onDelete: (tab: Tab, id: string, label: string) => void;
   onEdit: (id: string) => void;
   sectors: SectorRecord[];
@@ -1197,21 +1156,32 @@ function SectorsMobileList({
     <>
       {sectors.map((sector) => (
         <div key={sector.id} className="px-4 py-4">
-          <button type="button" onClick={() => onEdit(sector.sectorId)} className="w-full text-left">
-            <MasterDataIdentity accentClass="bg-sky-100 text-sky-700" code={sector.code} name={sector.name} subtitle={sector.description} />
-          </button>
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-            <StatusBadge status={sector.status} />
-            <div className="flex flex-wrap gap-2">
-              <EditButton onClick={() => onEdit(sector.sectorId)} />
-              <RowActionButton
-                label="Delete"
-                onClick={() => onDelete("sectors", sector.sectorId, sector.name)}
-                icon={<IconTrash className="h-3.5 w-3.5" />}
-                tone="danger"
-              />
+          {readOnly ? (
+            <div className="w-full text-left">
+              <MasterDataIdentity accentClass="bg-sky-100 text-sky-700" code={sector.code} name={sector.name} subtitle={sector.description} />
+              <div className="mt-3">
+                <StatusBadge status={sector.status} />
+              </div>
             </div>
-          </div>
+          ) : (
+            <>
+              <button type="button" onClick={() => onEdit(sector.sectorId)} className="w-full text-left">
+                <MasterDataIdentity accentClass="bg-sky-100 text-sky-700" code={sector.code} name={sector.name} subtitle={sector.description} />
+              </button>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                <StatusBadge status={sector.status} />
+                <div className="flex flex-wrap gap-2">
+                  <EditButton onClick={() => onEdit(sector.sectorId)} />
+                  <RowActionButton
+                    label="Delete"
+                    onClick={() => onDelete("sectors", sector.sectorId, sector.name)}
+                    icon={<IconTrash className="h-3.5 w-3.5" />}
+                    tone="danger"
+                  />
+                </div>
+              </div>
+            </>
+          )}
         </div>
       ))}
     </>
@@ -1220,6 +1190,7 @@ function SectorsMobileList({
 
 function SchemesMobileList({
   isLoading,
+  readOnly = false,
   onDelete,
   onEdit,
   onSync,
@@ -1227,6 +1198,7 @@ function SchemesMobileList({
   schemes,
 }: {
   isLoading: boolean;
+  readOnly?: boolean;
   onDelete: (tab: Tab, id: string, label: string) => void;
   onEdit: (id: string) => void;
   onSync: (tab: "programs" | "schemes", id: string, label: string) => void;
@@ -1237,7 +1209,6 @@ function SchemesMobileList({
   if (schemes.length === 0) {
     return (
       <MobileEmptyState
-        hint='Use "Load starter data" to create the default Fee Based scheme'
         icon={<IconHierarchy className="mx-auto h-8 w-8 text-slate-300" />}
         message="No schemes found"
       />
@@ -1250,41 +1221,58 @@ function SchemesMobileList({
         const workflow = resolveSidhWorkflowState(scheme.verifiedForSidh, scheme.syncEnabled);
         return (
           <div key={scheme.id} className="px-4 py-4">
-            <button type="button" onClick={() => onEdit(scheme.schemeId)} className="w-full text-left">
-              <MasterDataIdentity
-                accentClass="bg-emerald-100 text-emerald-700"
-                code={scheme.code}
-                name={scheme.name}
-                subtitle={scheme.sidhSchemeId ?? scheme.fundingType ?? undefined}
-              />
-              <div className="mt-3 flex flex-wrap gap-2">
-                <WorkflowBadge state={workflow} />
-                <StatusBadge status={scheme.status} />
+            {readOnly ? (
+              <div className="w-full text-left">
+                <MasterDataIdentity
+                  accentClass="bg-emerald-100 text-emerald-700"
+                  code={scheme.code}
+                  name={scheme.name}
+                  subtitle={scheme.sidhSchemeId ?? scheme.fundingType ?? undefined}
+                />
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <WorkflowBadge state={workflow} />
+                  <StatusBadge status={scheme.status} />
+                </div>
               </div>
-            </button>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <RowActionButton
-                label={workflow === "draft" ? "Verify" : workflow === "verified" ? "Verified" : "Ready"}
-                onClick={() => onVerify("schemes", scheme.schemeId, scheme.name)}
-                icon={<IconCircleCheck className="h-3.5 w-3.5" />}
-                tone={workflow === "draft" ? "primary" : "neutral"}
-                disabled={workflow !== "draft"}
-              />
-              <RowActionButton
-                label={scheme.syncEnabled ? "Ready" : "Mark ready"}
-                onClick={() => onSync("schemes", scheme.schemeId, scheme.name)}
-                icon={<IconRefresh className="h-3.5 w-3.5" />}
-                tone={scheme.syncEnabled ? "neutral" : "primary"}
-                disabled={workflow !== "verified"}
-              />
-              <EditButton onClick={() => onEdit(scheme.schemeId)} />
-              <RowActionButton
-                label="Delete"
-                onClick={() => onDelete("schemes", scheme.schemeId, scheme.name)}
-                icon={<IconTrash className="h-3.5 w-3.5" />}
-                tone="danger"
-              />
-            </div>
+            ) : (
+              <>
+                <button type="button" onClick={() => onEdit(scheme.schemeId)} className="w-full text-left">
+                  <MasterDataIdentity
+                    accentClass="bg-emerald-100 text-emerald-700"
+                    code={scheme.code}
+                    name={scheme.name}
+                    subtitle={scheme.sidhSchemeId ?? scheme.fundingType ?? undefined}
+                  />
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <WorkflowBadge state={workflow} />
+                    <StatusBadge status={scheme.status} />
+                  </div>
+                </button>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <RowActionButton
+                    label={workflow === "draft" ? "Verify" : workflow === "verified" ? "Verified" : "Ready"}
+                    onClick={() => onVerify("schemes", scheme.schemeId, scheme.name)}
+                    icon={<IconCircleCheck className="h-3.5 w-3.5" />}
+                    tone={workflow === "draft" ? "primary" : "neutral"}
+                    disabled={workflow !== "draft"}
+                  />
+                  <RowActionButton
+                    label={scheme.syncEnabled ? "Ready" : "Mark ready"}
+                    onClick={() => onSync("schemes", scheme.schemeId, scheme.name)}
+                    icon={<IconRefresh className="h-3.5 w-3.5" />}
+                    tone={scheme.syncEnabled ? "neutral" : "primary"}
+                    disabled={workflow !== "verified"}
+                  />
+                  <EditButton onClick={() => onEdit(scheme.schemeId)} />
+                  <RowActionButton
+                    label="Delete"
+                    onClick={() => onDelete("schemes", scheme.schemeId, scheme.name)}
+                    icon={<IconTrash className="h-3.5 w-3.5" />}
+                    tone="danger"
+                  />
+                </div>
+              </>
+            )}
           </div>
         );
       })}
@@ -1442,6 +1430,7 @@ function MobileEmptyState({
 
 function ProgramsTable({
   isLoading,
+  readOnly = false,
   onDelete,
   onEdit,
   onVerify,
@@ -1449,19 +1438,22 @@ function ProgramsTable({
   programs,
 }: {
   isLoading: boolean;
+  readOnly?: boolean;
   onDelete: (tab: Tab, id: string, label: string) => void;
   onEdit: (id: string) => void;
   onVerify: (tab: "programs" | "schemes", id: string, label: string) => void;
   onSync: (tab: "programs" | "schemes", id: string, label: string) => void;
   programs: ProgramRecord[];
 }) {
+  const headers = readOnly ? ["Program", "Code", "Setup status", "Status"] : ["Program", "Code", "Setup status", "Status", ""];
+
   return (
     <table className="w-full text-sm">
       <thead>
         <tr className="border-b border-slate-100 bg-slate-50/80">
-          {["Program", "Code", "Setup status", "Status", ""].map((h) => (
+          {headers.map((h) => (
             <th
-              key={h}
+              key={h || "actions"}
               className="px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500 last:text-right"
             >
               {h}
@@ -1471,10 +1463,10 @@ function ProgramsTable({
       </thead>
       <tbody className="divide-y divide-slate-100">
         {isLoading ? (
-          <LoadingRow cols={5} />
+          <LoadingRow cols={headers.length} />
         ) : programs.length === 0 ? (
           <EmptyRow
-            cols={5}
+            cols={headers.length}
             icon={<IconBriefcase className="mx-auto h-8 w-8 text-slate-300" />}
             message="No programs found"
           />
@@ -1485,8 +1477,8 @@ function ProgramsTable({
             return (
               <tr
                 key={p.id}
-                className="group cursor-pointer transition-colors hover:bg-slate-50/80"
-                onClick={() => onEdit(p.programId)}
+                className={cn("group transition-colors", !readOnly && "cursor-pointer hover:bg-slate-50/80")}
+                onClick={readOnly ? undefined : () => onEdit(p.programId)}
               >
                 <td className="px-5 py-4">
                   <div className="flex items-center gap-3">
@@ -1510,31 +1502,33 @@ function ProgramsTable({
                 <td className="px-4 py-4">
                   <StatusBadge status={p.status} />
                 </td>
-                <td className="px-4 py-4 text-right">
-                  <div className="flex justify-end gap-2 opacity-0 transition group-hover:opacity-100">
-                    <RowActionButton
-                      label={workflow === "draft" ? "Verify" : workflow === "verified" ? "Verified" : "Ready"}
-                      onClick={() => onVerify("programs", p.programId, p.name)}
-                      icon={<IconCircleCheck className="h-3 w-3" />}
-                      tone={workflow === "draft" ? "primary" : "neutral"}
-                      disabled={workflow !== "draft"}
-                    />
-                    <RowActionButton
-                      label={p.syncToSidh ? "Ready" : "Mark Ready"}
-                      onClick={() => onSync("programs", p.programId, p.name)}
-                      icon={<IconRefresh className="h-3 w-3" />}
-                      tone={p.syncToSidh ? "neutral" : "primary"}
-                      disabled={workflow !== "verified"}
-                    />
-                    <EditButton onClick={() => onEdit(p.programId)} />
-                    <RowActionButton
-                      label="Delete"
-                      onClick={() => onDelete("programs", p.programId, p.name)}
-                      icon={<IconTrash className="h-3 w-3" />}
-                      tone="danger"
-                    />
-                  </div>
-                </td>
+                {!readOnly ? (
+                  <td className="px-4 py-4 text-right">
+                    <div className="flex justify-end gap-2 opacity-0 transition group-hover:opacity-100">
+                      <RowActionButton
+                        label={workflow === "draft" ? "Verify" : workflow === "verified" ? "Verified" : "Ready"}
+                        onClick={() => onVerify("programs", p.programId, p.name)}
+                        icon={<IconCircleCheck className="h-3 w-3" />}
+                        tone={workflow === "draft" ? "primary" : "neutral"}
+                        disabled={workflow !== "draft"}
+                      />
+                      <RowActionButton
+                        label={p.syncToSidh ? "Ready" : "Mark Ready"}
+                        onClick={() => onSync("programs", p.programId, p.name)}
+                        icon={<IconRefresh className="h-3 w-3" />}
+                        tone={p.syncToSidh ? "neutral" : "primary"}
+                        disabled={workflow !== "verified"}
+                      />
+                      <EditButton onClick={() => onEdit(p.programId)} />
+                      <RowActionButton
+                        label="Delete"
+                        onClick={() => onDelete("programs", p.programId, p.name)}
+                        icon={<IconTrash className="h-3 w-3" />}
+                        tone="danger"
+                      />
+                    </div>
+                  </td>
+                ) : null}
               </tr>
             );
           })
@@ -1546,22 +1540,26 @@ function ProgramsTable({
 
 function SectorsTable({
   isLoading,
+  readOnly = false,
   onDelete,
   onEdit,
   sectors,
 }: {
   isLoading: boolean;
+  readOnly?: boolean;
   onDelete: (tab: Tab, id: string, label: string) => void;
   onEdit: (id: string) => void;
   sectors: SectorRecord[];
 }) {
+  const headers = readOnly ? ["Sector", "Code", "Description", "Status"] : ["Sector", "Code", "Description", "Status", ""];
+
   return (
     <table className="w-full text-sm">
       <thead>
         <tr className="border-b border-slate-100 bg-slate-50/80">
-          {["Sector", "Code", "Description", "Status", ""].map((h) => (
+          {headers.map((h) => (
             <th
-              key={h}
+              key={h || "actions"}
               className="px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500 last:text-right"
             >
               {h}
@@ -1571,16 +1569,20 @@ function SectorsTable({
       </thead>
       <tbody className="divide-y divide-slate-100">
         {isLoading ? (
-          <LoadingRow cols={5} />
+          <LoadingRow cols={headers.length} />
         ) : sectors.length === 0 ? (
           <EmptyRow
-            cols={5}
+            cols={headers.length}
             icon={<IconStack2 className="mx-auto h-8 w-8 text-slate-300" />}
             message="No sectors found"
           />
         ) : (
           sectors.map((s) => (
-            <tr key={s.id} className="group cursor-pointer transition-colors hover:bg-slate-50/80" onClick={() => onEdit(s.sectorId)}>
+            <tr
+              key={s.id}
+              className={cn("group transition-colors", !readOnly && "cursor-pointer hover:bg-slate-50/80")}
+              onClick={readOnly ? undefined : () => onEdit(s.sectorId)}
+            >
               <td className="px-5 py-4">
                 <div className="flex items-center gap-3">
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-sky-100 text-sm font-bold text-sky-700">
@@ -1596,17 +1598,19 @@ function SectorsTable({
               <td className="px-4 py-4">
                 <StatusBadge status={s.status} />
               </td>
-              <td className="px-4 py-4 text-right" onClick={(event) => event.stopPropagation()}>
-                <div className="flex justify-end gap-2 opacity-0 transition group-hover:opacity-100">
-                  <EditButton onClick={() => onEdit(s.sectorId)} />
-                  <RowActionButton
-                    label="Delete"
-                    onClick={() => onDelete("sectors", s.sectorId, s.name)}
-                    icon={<IconTrash className="h-3 w-3" />}
-                    tone="danger"
-                  />
-                </div>
-              </td>
+              {!readOnly ? (
+                <td className="px-4 py-4 text-right" onClick={(event) => event.stopPropagation()}>
+                  <div className="flex justify-end gap-2 opacity-0 transition group-hover:opacity-100">
+                    <EditButton onClick={() => onEdit(s.sectorId)} />
+                    <RowActionButton
+                      label="Delete"
+                      onClick={() => onDelete("sectors", s.sectorId, s.name)}
+                      icon={<IconTrash className="h-3 w-3" />}
+                      tone="danger"
+                    />
+                  </div>
+                </td>
+              ) : null}
             </tr>
           ))
         )}
@@ -1617,6 +1621,7 @@ function SectorsTable({
 
 function SchemesTable({
   isLoading,
+  readOnly = false,
   onDelete,
   onEdit,
   onVerify,
@@ -1624,19 +1629,24 @@ function SchemesTable({
   schemes,
 }: {
   isLoading: boolean;
+  readOnly?: boolean;
   onDelete: (tab: Tab, id: string, label: string) => void;
   onEdit: (id: string) => void;
   onVerify: (tab: "programs" | "schemes", id: string, label: string) => void;
   onSync: (tab: "programs" | "schemes", id: string, label: string) => void;
   schemes: SchemeRecord[];
 }) {
+  const headers = readOnly
+    ? ["Scheme", "Code", "Government ID", "Setup status", "Valid until", "Status"]
+    : ["Scheme", "Code", "Government ID", "Setup status", "Valid until", "Status", ""];
+
   return (
     <table className="w-full text-sm">
       <thead>
         <tr className="border-b border-slate-100 bg-slate-50/80">
-          {["Scheme", "Code", "Government ID", "Setup status", "Valid until", "Status", ""].map((h) => (
+          {headers.map((h) => (
             <th
-              key={h}
+              key={h || "actions"}
               className="px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500 last:text-right"
             >
               {h}
@@ -1646,13 +1656,12 @@ function SchemesTable({
       </thead>
       <tbody className="divide-y divide-slate-100">
         {isLoading ? (
-          <LoadingRow cols={7} />
+          <LoadingRow cols={headers.length} />
         ) : schemes.length === 0 ? (
           <EmptyRow
-            cols={7}
+            cols={headers.length}
             icon={<IconHierarchy className="mx-auto h-8 w-8 text-slate-300" />}
             message="No schemes found"
-            hint='Use "Load starter data" to create the default Fee Based scheme'
           />
         ) : (
           schemes.map((s) => {
@@ -1661,8 +1670,8 @@ function SchemesTable({
             return (
               <tr
                 key={s.id}
-                className="group cursor-pointer transition-colors hover:bg-slate-50/80"
-                onClick={() => onEdit(s.schemeId)}
+                className={cn("group transition-colors", !readOnly && "cursor-pointer hover:bg-slate-50/80")}
+                onClick={readOnly ? undefined : () => onEdit(s.schemeId)}
               >
                 <td className="px-5 py-4">
                   <div className="flex items-center gap-3">
@@ -1704,31 +1713,33 @@ function SchemesTable({
                 <td className="px-4 py-4">
                   <StatusBadge status={s.status} />
                 </td>
-                <td className="px-4 py-4 text-right">
-                  <div className="flex justify-end gap-2 opacity-0 transition group-hover:opacity-100">
-                    <RowActionButton
-                      label={workflow === "draft" ? "Verify" : workflow === "verified" ? "Verified" : "Ready"}
-                      onClick={() => onVerify("schemes", s.schemeId, s.name)}
-                      icon={<IconCircleCheck className="h-3 w-3" />}
-                      tone={workflow === "draft" ? "primary" : "neutral"}
-                      disabled={workflow !== "draft"}
-                    />
-                    <RowActionButton
-                      label={s.syncEnabled ? "Ready" : "Mark Ready"}
-                      onClick={() => onSync("schemes", s.schemeId, s.name)}
-                      icon={<IconRefresh className="h-3 w-3" />}
-                      tone={s.syncEnabled ? "neutral" : "primary"}
-                      disabled={workflow !== "verified"}
-                    />
-                    <EditButton onClick={() => onEdit(s.schemeId)} />
-                    <RowActionButton
-                      label="Delete"
-                      onClick={() => onDelete("schemes", s.schemeId, s.name)}
-                      icon={<IconTrash className="h-3 w-3" />}
-                      tone="danger"
-                    />
-                  </div>
-                </td>
+                {!readOnly ? (
+                  <td className="px-4 py-4 text-right">
+                    <div className="flex justify-end gap-2 opacity-0 transition group-hover:opacity-100">
+                      <RowActionButton
+                        label={workflow === "draft" ? "Verify" : workflow === "verified" ? "Verified" : "Ready"}
+                        onClick={() => onVerify("schemes", s.schemeId, s.name)}
+                        icon={<IconCircleCheck className="h-3 w-3" />}
+                        tone={workflow === "draft" ? "primary" : "neutral"}
+                        disabled={workflow !== "draft"}
+                      />
+                      <RowActionButton
+                        label={s.syncEnabled ? "Ready" : "Mark Ready"}
+                        onClick={() => onSync("schemes", s.schemeId, s.name)}
+                        icon={<IconRefresh className="h-3 w-3" />}
+                        tone={s.syncEnabled ? "neutral" : "primary"}
+                        disabled={workflow !== "verified"}
+                      />
+                      <EditButton onClick={() => onEdit(s.schemeId)} />
+                      <RowActionButton
+                        label="Delete"
+                        onClick={() => onDelete("schemes", s.schemeId, s.name)}
+                        icon={<IconTrash className="h-3 w-3" />}
+                        tone="danger"
+                      />
+                    </div>
+                  </td>
+                ) : null}
               </tr>
             );
           })

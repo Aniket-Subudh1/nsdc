@@ -58,11 +58,6 @@ export const TRAINING_PARTNER_SIDEBAR_LINKS = [
     icon: <IconBrandTabler className="h-5 w-5 shrink-0" />,
   },
   {
-    label: "Users",
-    href: "/training-partner/users",
-    icon: <IconUsers className="h-5 w-5 shrink-0" />,
-  },
-  {
     label: "Training Centers",
     href: "/training-partner/training-centers",
     icon: <IconBuildingCommunity className="h-5 w-5 shrink-0" />,

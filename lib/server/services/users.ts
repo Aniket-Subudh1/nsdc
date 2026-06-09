@@ -10,6 +10,12 @@ import {
   getPermissionsForRoles,
   type RoleKey,
 } from "@/lib/server/rbac";
+import {
+  isPlatformAdminOnly,
+  validateRoleCenterAssignment,
+  validateRoleCenterState,
+  type RoleCenterValidationCode,
+} from "@/lib/server/user-role-policy";
 import { writeAuditLog } from "@/lib/server/services/audit";
 import { type AuthSession, serializeUser } from "@/lib/server/services/session";
 
@@ -47,6 +53,30 @@ function ensureCanManageUsers(actor: AuthSession) {
 function ensureAssignableRoles(actor: AuthSession, roles: RoleKey[]) {
   if (!actor.user.roles.includes("platform_admin") && roles.includes("platform_admin")) {
     throw new ApiError(403, "FORBIDDEN", "Only platform admins can assign platform_admin role");
+  }
+}
+
+const ROLE_CENTER_MESSAGES: Record<RoleCenterValidationCode, string> = {
+  CENTER_REQUIRED: "Training partners must be assigned to a training center",
+  CENTER_COUNT_INVALID: "Training partners must be assigned to exactly one training center",
+  CENTER_NOT_ALLOWED: "Admins cannot be assigned to specific training centers",
+};
+
+function throwRoleCenterValidationError(code: RoleCenterValidationCode) {
+  throw new ApiError(400, code, ROLE_CENTER_MESSAGES[code]);
+}
+
+function ensureRoleCenterRequirements(roles: RoleKey[], centerIds: string[]) {
+  const errorCode = validateRoleCenterAssignment(roles, centerIds);
+  if (errorCode) {
+    throwRoleCenterValidationError(errorCode);
+  }
+}
+
+function ensureFinalRoleCenterState(roles: RoleKey[], centerIds: string[]) {
+  const errorCode = validateRoleCenterState(roles, centerIds);
+  if (errorCode) {
+    throwRoleCenterValidationError(errorCode);
   }
 }
 
@@ -95,6 +125,7 @@ export async function createUser(actor: AuthSession, input: CreateUserInput) {
     throw new ApiError(409, "USER_EXISTS", "A user with this email already exists");
   }
 
+  ensureFinalRoleCenterState(input.roles, input.centerIds);
   await ensureCenterIdsExist(input.centerIds);
 
   const user = await UserModel.create({
@@ -104,7 +135,7 @@ export async function createUser(actor: AuthSession, input: CreateUserInput) {
     mobileNumber: input.mobileNumber?.trim() || null,
     passwordHash: await hashPassword(input.temporaryPassword),
     roles: input.roles,
-    centerIds: input.centerIds,
+    centerIds: isPlatformAdminOnly(input.roles) ? [] : input.centerIds,
     status: "active",
     mustChangePassword: true,
     createdByUserId: actor.user.id,
@@ -213,7 +244,10 @@ export async function assignUserRoles(
   ensureAssignableRoles(actor, roles);
 
   const user = await getScopedUser(actor, userId);
+  const nextCenterIds = isPlatformAdminOnly(roles) ? [] : user.centerIds;
+  ensureFinalRoleCenterState(roles, nextCenterIds);
   user.roles = roles;
+  user.centerIds = nextCenterIds;
   user.updatedByUserId = actor.user.id;
   await user.save();
 
@@ -245,6 +279,7 @@ export async function assignUserCenters(
   await ensureCenterIdsExist(centerIds);
 
   const user = await getScopedUser(actor, userId);
+  ensureRoleCenterRequirements(user.roles, centerIds);
   user.centerIds = centerIds;
   user.updatedByUserId = actor.user.id;
   await user.save();

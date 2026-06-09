@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 
+import { normalizeCandidateGender, normalizeCandidateNamePrefix } from "@/lib/candidate-field-options";
 import { ApiError } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
 import { connectToDatabase } from "@/lib/server/mongodb";
 import { readWorkbookSheetsFromArrayBuffer } from "@/lib/spreadsheet/node";
 import { CandidateModel } from "@/lib/server/models/candidate";
+import { CourseModel } from "@/lib/server/models/course";
 import { CandidateImportRowModel } from "@/lib/server/models/candidate-import-row";
 import { ImportJobModel } from "@/lib/server/models/import-job";
 import { OutboxEventModel } from "@/lib/server/models/outbox-event";
@@ -44,6 +46,9 @@ type PagedList<T> = {
 
 type CandidateCreateOptions = {
   queueSync?: boolean;
+  referenceCourseId?: string | null;
+  referenceCourseName?: string | null;
+  registrationField?: "phone" | "mobileNumber";
   requestId?: string;
   skipAudit?: boolean;
   sourceImportJobId?: string;
@@ -94,6 +99,8 @@ type CandidateLike = {
   permanentAddress: AddressLike;
   previousExperienceSector?: string | null;
   programId: string;
+  referenceCourseId?: string | null;
+  referenceCourseName?: string | null;
   registrationMode: "internal_registration" | "existing_sidh_link";
   religion?: string | null;
   salutation?: string | null;
@@ -214,6 +221,10 @@ function parseTemplateDate(value: unknown) {
   return parseUserDateInput(value);
 }
 
+function normalizeMobileNumber(value: string) {
+  return value.replace(/\D/g, "");
+}
+
 function createDuplicateHash(input: {
   dateOfBirth: string;
   fullName: string;
@@ -226,12 +237,24 @@ function createDuplicateHash(input: {
       [
         normalizeFullName(input.fullName),
         input.dateOfBirth,
-        input.mobileNumber.replace(/\D/g, ""),
+        normalizeMobileNumber(input.mobileNumber),
         normalizeWhitespace(input.idType).toUpperCase(),
         normalizeIdValue(input.idNumber),
       ].join("|"),
     )
     .digest("hex");
+}
+
+async function findCandidateByMobileNumber(mobileNumber: string, excludeCandidateId?: string) {
+  const normalizedMobileNumber = normalizeMobileNumber(mobileNumber);
+  if (!normalizedMobileNumber) {
+    return null;
+  }
+
+  return CandidateModel.findOne({
+    mobileNumber: normalizedMobileNumber,
+    ...(excludeCandidateId ? { candidateId: { $ne: excludeCandidateId } } : {}),
+  }).select({ candidateId: 1, fullName: 1 });
 }
 
 function createSearchRegex(search?: string) {
@@ -291,14 +314,121 @@ function createTechnicalCenterId(centerName?: string | null) {
   return `candidate_center_${createHash("sha256").update(normalizedCenterName).digest("hex").slice(0, 12)}`;
 }
 
-function resolveCandidateRegistrationContext(actor: AuthSession, overrides?: Partial<CandidateImportInput> & { centerName?: string }) {
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function resolveCandidateRegistrationContext(
+  actor: AuthSession,
+  overrides?: Partial<CandidateImportInput> & { centerName?: string },
+) {
+  const centerIdOverride = overrides?.centerId?.trim();
+
+  if (centerIdOverride) {
+    const center = await ensureTrainingCenterExists(centerIdOverride);
+    resolveScopedCenterFilter(actor, center.centerId);
+
+    return {
+      centerId: center.centerId,
+      programId: overrides?.programId ?? "candidate_registration",
+      registrationMode: overrides?.registrationMode ?? "internal_registration",
+    } as const;
+  }
+
   const centerName = normalizeWhitespace(overrides?.centerName);
 
+  if (centerName) {
+    const center = await TrainingCenterModel.findOne({
+      centerName: { $regex: new RegExp(`^${escapeRegExp(centerName)}$`, "i") },
+      status: "active",
+    }).select({ centerId: 1, centerName: 1, status: 1 });
+
+    if (center) {
+      resolveScopedCenterFilter(actor, center.centerId);
+
+      return {
+        centerId: center.centerId,
+        programId: overrides?.programId ?? "candidate_registration",
+        registrationMode: overrides?.registrationMode ?? "internal_registration",
+      } as const;
+    }
+  }
+
+  if (actor.user.centerIds[0]) {
+    return {
+      centerId: actor.user.centerIds[0],
+      programId: overrides?.programId ?? "candidate_registration",
+      registrationMode: overrides?.registrationMode ?? "internal_registration",
+    } as const;
+  }
+
   return {
-    centerId: overrides?.centerId ?? actor.user.centerIds[0] ?? createTechnicalCenterId(centerName),
+    centerId: createTechnicalCenterId(centerName),
     programId: overrides?.programId ?? "candidate_registration",
     registrationMode: overrides?.registrationMode ?? "internal_registration",
   } as const;
+}
+
+function assertLearnerMutableBeforeSidh(candidate: CandidateLike) {
+  if (candidate.registrationMode === "existing_sidh_link") {
+    throw new ApiError(409, "CANDIDATE_NOT_MUTABLE", "Linked government portal learners cannot be changed here");
+  }
+
+  if (candidate.sidhCandidateId) {
+    throw new ApiError(409, "CANDIDATE_ALREADY_SYNCED", "Learner is already registered on the government portal");
+  }
+
+  const status = String(candidate.syncState?.status ?? "not_queued");
+
+  if (status === "queued" || status === "processing") {
+    throw new ApiError(409, "CANDIDATE_SYNC_IN_PROGRESS", "Learner is already in the government sync queue");
+  }
+
+  if (status === "synced" || status === "succeeded") {
+    throw new ApiError(409, "CANDIDATE_ALREADY_SYNCED", "Learner is already registered on the government portal");
+  }
+}
+
+async function resolveReferenceCourseDetails(
+  referenceDetails?: { courseId?: string; courseName?: string } | null,
+) {
+  if (!referenceDetails) {
+    return { courseId: null, courseName: null };
+  }
+
+  const courseId = normalizeWhitespace(referenceDetails.courseId);
+  let courseName = normalizeWhitespace(referenceDetails.courseName);
+
+  if (!courseId && !courseName) {
+    return { courseId: null, courseName: null };
+  }
+
+  if (courseId) {
+    if (!courseName) {
+      const course = await CourseModel.findOne({ courseId }).select({ courseId: 1, courseName: 1 });
+      courseName = normalizeWhitespace(course?.courseName);
+    }
+  } else if (courseName) {
+    const course = await CourseModel.findOne({
+      courseName: { $regex: new RegExp(`^${escapeRegExp(courseName)}$`, "i") },
+      status: "active",
+    }).select({ courseId: 1, courseName: 1 });
+
+    if (!course) {
+      throw new ApiError(400, "INVALID_REFERENCE_COURSE", `Course "${courseName}" could not be resolved`);
+    }
+
+    return {
+      courseId: course.courseId,
+      courseName: course.courseName,
+    };
+  }
+
+  if (!courseName) {
+    throw new ApiError(400, "INVALID_REFERENCE_COURSE", "Selected course could not be resolved");
+  }
+
+  return { courseId: courseId || null, courseName };
 }
 
 function expandCandidateRegistrationInput(
@@ -422,6 +552,10 @@ function serializeCandidate(candidate: CandidateLike) {
       city: candidate.permanentAddress?.city ?? null,
       centerName: candidate.centerName ?? null,
     },
+    referenceDetails: {
+      courseId: candidate.referenceCourseId ?? null,
+      courseName: candidate.referenceCourseName ?? null,
+    },
     domicile: {
       state: candidate.domicileState ?? null,
       district: candidate.domicileDistrict ?? null,
@@ -470,12 +604,22 @@ function serializeImportJob(job: ImportJobLike) {
   };
 }
 
+function readImportRowValidationErrors(row: Record<string, unknown>) {
+  const validationErrors = row.validationErrors;
+  if (Array.isArray(validationErrors)) {
+    return validationErrors;
+  }
+
+  const legacyErrors = row.errors;
+  return Array.isArray(legacyErrors) ? legacyErrors : [];
+}
+
 function serializeImportRow(row: Record<string, unknown>) {
   return {
     rowId: row.rowId,
     rowNumber: row.rowNumber,
     status: row.status,
-    errors: row.errors ?? [],
+    errors: readImportRowValidationErrors(row),
     duplicateOfCandidateId: row.duplicateOfCandidateId ?? null,
     candidateId: row.candidateId ?? null,
     normalized: row.normalized ?? {},
@@ -493,7 +637,7 @@ async function persistImportRows(importJobId: string, rows: Array<Record<string,
       raw: row.raw ?? {},
       normalized: row.normalized ?? {},
       status: row.status,
-      errors: row.errors ?? [],
+      validationErrors: readImportRowValidationErrors(row),
       duplicateOfCandidateId: row.duplicateOfCandidateId ?? null,
       candidateId: row.candidateId ?? null,
     }));
@@ -721,7 +865,7 @@ function buildCandidateRecord(input: CreateCandidateInput) {
     idNumber: normalizeWhitespace(input.identity.idNumber) || null,
     normalizedIdNumber: normalizeIdValue(input.identity.idNumber || input.identity.aadhaarReferenceNo || duplicateIdentityValue),
     countryCode: normalizeWhitespace(input.contactDetails.countryCode) || "91",
-    mobileNumber: input.contactDetails.mobileNumber.replace(/\D/g, ""),
+    mobileNumber: normalizeMobileNumber(input.contactDetails.mobileNumber),
     educationLevel: normalizeWhitespace(input.personalDetails.educationLevel) || null,
     permanentAddress,
     communicationAddress,
@@ -739,19 +883,20 @@ function buildCandidateRecord(input: CreateCandidateInput) {
   };
 }
 
-async function ensureNoDuplicateCandidate(duplicateHash: string, programId: string, centerId: string, excludeCandidateId?: string) {
-  const existing = await CandidateModel.findOne({
-    duplicateHash,
-    programId,
-    centerId,
-    ...(excludeCandidateId ? { candidateId: { $ne: excludeCandidateId } } : {}),
-  }).select({ candidateId: 1, fullName: 1 });
+async function ensureUniqueMobileNumber(
+  mobileNumber: string,
+  options: { excludeCandidateId?: string; registrationField?: "phone" | "mobileNumber" } = {},
+) {
+  const existing = await findCandidateByMobileNumber(mobileNumber, options.excludeCandidateId);
 
   if (existing) {
-    throw new ApiError(409, "DUPLICATE_CANDIDATE", "A matching candidate already exists", [
+    const field =
+      options.registrationField === "phone" ? "contactDetails.phone" : "contactDetails.mobileNumber";
+
+    throw new ApiError(409, "DUPLICATE_MOBILE_NUMBER", "A candidate with this mobile number already exists", [
       {
-        field: "duplicateHash",
-        message: `Candidate matches existing record ${existing.candidateId}`,
+        field,
+        message: `Mobile number already used by ${existing.candidateId}`,
       },
     ]);
   }
@@ -824,11 +969,15 @@ async function createCandidateRecord(actor: AuthSession, input: CreateCandidateI
   ensureCanWriteCandidates(actor);
 
   const normalized = buildCandidateRecord(createCandidateSchema.parse(input));
-  await ensureNoDuplicateCandidate(normalized.duplicateHash, input.programId, input.centerId);
+  await ensureUniqueMobileNumber(normalized.mobileNumber, {
+    registrationField: options.registrationField,
+  });
 
   const created = await CandidateModel.create({
     candidateId: createPrefixedId("cand"),
     ...normalized,
+    referenceCourseId: options.referenceCourseId?.trim() || null,
+    referenceCourseName: options.referenceCourseName?.trim() || null,
     sidhCandidateId: null,
     syncState: {
       status: "not_queued",
@@ -890,11 +1039,23 @@ function getCellValue(row: Record<string, unknown>, keys: string[]) {
 }
 
 function mapImportRowToCandidateInput(row: Record<string, unknown>): CreateCandidateRegistrationInput {
+  const courseName = String(
+    getCellValue(row, [
+      "Course (reference only)",
+      "Course",
+      "Course Name",
+      "CourseName",
+      "Reference Course",
+    ]),
+  ).trim();
+
   return {
     personalDetails: {
-      namePrefix: String(getCellValue(row, ["Name Prefix", "NamePrefix", "Salutation"])),
-      firstName: String(getCellValue(row, ["First Name", "FirstName", "FullName", "Full Name"])),
-      gender: String(getCellValue(row, ["Gender"])),
+      namePrefix: normalizeCandidateNamePrefix(
+        getCellValue(row, ["Name Prefix", "NamePrefix", "Salutation"]),
+      ) as CreateCandidateRegistrationInput["personalDetails"]["namePrefix"],
+      firstName: String(getCellValue(row, ["Full Name", "FullName", "First Name", "FirstName"])),
+      gender: normalizeCandidateGender(getCellValue(row, ["Gender"])) as CreateCandidateRegistrationInput["personalDetails"]["gender"],
       dob: parseTemplateDate(getCellValue(row, ["DOB", "DateofBirth", "Date of Birth"])),
       fatherName: String(getCellValue(row, ["Father's Name", "FathersName", "Father Name", "FatherName"])),
       guardianName: String(getCellValue(row, ["Guardian Name", "GuardianName", "Guardian's Name"])),
@@ -909,14 +1070,31 @@ function mapImportRowToCandidateInput(row: Record<string, unknown>): CreateCandi
       city: String(getCellValue(row, ["City"])),
       centerName: String(getCellValue(row, ["Center Name", "Centre Name", "CenterName", "CentreName"])),
     },
+    ...(courseName
+      ? {
+          referenceDetails: {
+            courseName,
+          },
+        }
+      : {}),
   };
 }
 
 export async function createCandidate(actor: AuthSession, input: CreateCandidateRegistrationInput, options?: CandidateCreateOptions) {
   await connectToDatabase();
   const registrationInput = createCandidateRegistrationSchema.parse(input);
-  const context = resolveCandidateRegistrationContext(actor, { centerName: registrationInput.locationDetails?.centerName });
-  return createCandidateRecord(actor, expandCandidateRegistrationInput(registrationInput, context), options);
+  const context = await resolveCandidateRegistrationContext(actor, {
+    centerId: registrationInput.locationDetails?.centerId,
+    centerName: registrationInput.locationDetails?.centerName,
+  });
+  const referenceCourse = await resolveReferenceCourseDetails(registrationInput.referenceDetails ?? null);
+
+  return createCandidateRecord(actor, expandCandidateRegistrationInput(registrationInput, context), {
+    ...options,
+    referenceCourseId: referenceCourse.courseId,
+    referenceCourseName: referenceCourse.courseName,
+    registrationField: "phone",
+  });
 }
 
 export async function updateCandidate(actor: AuthSession, candidateId: string, patch: UpdateCandidateInput, requestId?: string) {
@@ -930,14 +1108,24 @@ export async function updateCandidate(actor: AuthSession, candidateId: string, p
   }
 
   resolveScopedCenterFilter(actor, candidate.centerId);
+  assertLearnerMutableBeforeSidh(candidate as never);
 
   const mergedInput = createCandidateSchema.parse(mergeCandidateInput(buildCandidateInputFromDocument(candidate as never), patch));
   const normalized = buildCandidateRecord(mergedInput);
+  const referenceCourse =
+    patch.referenceDetails !== undefined
+      ? await resolveReferenceCourseDetails(patch.referenceDetails)
+      : {
+          courseId: candidate.referenceCourseId ?? null,
+          courseName: candidate.referenceCourseName ?? null,
+        };
 
   await Promise.all([ensureProgramExists(mergedInput.programId), ensureTrainingCenterExists(mergedInput.centerId)]);
-  await ensureNoDuplicateCandidate(normalized.duplicateHash, mergedInput.programId, mergedInput.centerId, candidateId);
+  await ensureUniqueMobileNumber(normalized.mobileNumber, { excludeCandidateId: candidateId });
 
   Object.assign(candidate, normalized, {
+    referenceCourseId: referenceCourse.courseId,
+    referenceCourseName: referenceCourse.courseName,
     updatedByUserId: actor.user.id,
   });
   await candidate.save();
@@ -947,11 +1135,49 @@ export async function updateCandidate(actor: AuthSession, candidateId: string, p
     actorUserId: actor.user.id,
     entityType: "candidate",
     entityId: candidateId,
-    metadata: { programId: candidate.programId, centerId: candidate.centerId },
+    metadata: {
+      programId: candidate.programId,
+      centerId: candidate.centerId,
+      referenceCourseId: candidate.referenceCourseId,
+    },
     requestId,
   });
 
   return serializeCandidate(candidate);
+}
+
+export async function deleteCandidate(actor: AuthSession, candidateId: string, requestId?: string) {
+  await connectToDatabase();
+  ensureCanWriteCandidates(actor);
+
+  const candidate = await CandidateModel.findOne({ candidateId });
+
+  if (!candidate) {
+    throw new ApiError(404, "CANDIDATE_NOT_FOUND", "Candidate not found");
+  }
+
+  resolveScopedCenterFilter(actor, candidate.centerId);
+  assertLearnerMutableBeforeSidh(candidate as never);
+
+  await Promise.all([
+    SyncJobModel.deleteMany({ candidateId }),
+    candidate.deleteOne(),
+  ]);
+
+  await writeAuditLog({
+    action: "candidate.deleted",
+    actorUserId: actor.user.id,
+    entityType: "candidate",
+    entityId: candidateId,
+    metadata: {
+      centerId: candidate.centerId,
+      programId: candidate.programId,
+      fullName: candidate.fullName,
+    },
+    requestId,
+  });
+
+  return { candidateId, deleted: true };
 }
 
 export async function getCandidate(actor: AuthSession, candidateId: string) {
@@ -1039,7 +1265,7 @@ export async function linkExistingSidhCandidate(actor: AuthSession, input: LinkE
     mobileNumber: input.mobileNumber,
   });
 
-  await ensureNoDuplicateCandidate(duplicateHash, input.programId, input.centerId);
+  await ensureUniqueMobileNumber(input.mobileNumber, { registrationField: "mobileNumber" });
 
   const candidate = await CandidateModel.create({
     candidateId: createPrefixedId("cand"),
@@ -1132,9 +1358,22 @@ export async function createCandidateImportJob(
 ) {
   await connectToDatabase();
   ensureCanWriteCandidates(actor);
-  const context = resolveCandidateRegistrationContext(actor, input);
+  const context = await resolveCandidateRegistrationContext(actor, input);
 
-  const workbookSheets = await readWorkbookSheetsFromArrayBuffer(workbookBuffer, { defaultValue: "" });
+  let workbookSheets: Awaited<ReturnType<typeof readWorkbookSheetsFromArrayBuffer>>;
+
+  try {
+    workbookSheets = await readWorkbookSheetsFromArrayBuffer(workbookBuffer, { defaultValue: "" });
+  } catch (error) {
+    throw new ApiError(
+      400,
+      "IMPORT_WORKBOOK_UNREADABLE",
+      error instanceof Error
+        ? `Unable to read the Excel file. Re-download the latest template and try again. (${error.message})`
+        : "Unable to read the Excel file. Re-download the latest template and try again.",
+    );
+  }
+
   const firstSheet = workbookSheets.find((sheet) => normalizeWhitespace(sheet.name).toLowerCase() === "candidate import template") ?? workbookSheets[0];
 
   if (!firstSheet) {
@@ -1142,7 +1381,7 @@ export async function createCandidateImportJob(
   }
 
   const rawRows = firstSheet.rows;
-  const seenHashes = new Set<string>();
+  const seenMobileNumbers = new Set<string>();
   const rows: Array<Record<string, unknown>> = [];
   let validRows = 0;
   let invalidRows = 0;
@@ -1155,20 +1394,16 @@ export async function createCandidateImportJob(
 
     try {
       const parsedRegistrationInput = createCandidateRegistrationSchema.parse(registrationInput);
+      if (parsedRegistrationInput.referenceDetails?.courseName) {
+        await resolveReferenceCourseDetails(parsedRegistrationInput.referenceDetails);
+      }
       const candidateInput = expandCandidateRegistrationInput(parsedRegistrationInput, context);
       const parsed = createCandidateSchema.parse(candidateInput);
       const normalized = buildCandidateRecord(parsed);
-      const duplicateIdentityValue = parsed.identity.idNumber || parsed.identity.aadhaarReferenceNo || parsed.contactDetails.mobileNumber;
-      const duplicateHash = createDuplicateHash({
-        dateOfBirth: parsed.personalDetails.dateOfBirth,
-        fullName: parsed.personalDetails.fullName,
-        idNumber: duplicateIdentityValue,
-        idType: parsed.identity.idType,
-        mobileNumber: parsed.contactDetails.mobileNumber,
-      });
-      const existing = await CandidateModel.findOne({ duplicateHash, programId: parsed.programId, centerId: parsed.centerId }).select({ candidateId: 1 });
+      const mobileNumber = normalizeMobileNumber(parsed.contactDetails.mobileNumber);
+      const existing = await findCandidateByMobileNumber(mobileNumber);
 
-      if (existing || seenHashes.has(duplicateHash)) {
+      if (existing || seenMobileNumbers.has(mobileNumber)) {
         duplicateRows += 1;
         rows.push({
           rowId,
@@ -1176,14 +1411,17 @@ export async function createCandidateImportJob(
           raw: rawRow,
           normalized: parsedRegistrationInput,
           status: "duplicate",
-          errors: [{ field: "duplicateHash", message: existing ? `Matches existing candidate ${existing.candidateId}` : "Matches another row in this import" }],
+          errors: [{
+            field: "contactDetails.phone",
+            message: existing ? `Matches existing candidate ${existing.candidateId}` : "Matches another row in this import",
+          }],
           duplicateOfCandidateId: existing?.candidateId ?? null,
           candidateId: null,
         });
         continue;
       }
 
-      seenHashes.add(duplicateHash);
+      seenMobileNumbers.add(mobileNumber);
       validRows += 1;
       rows.push({
         rowId,
@@ -1334,16 +1572,24 @@ export async function commitCandidateImportJob(actor: AuthSession, importJobId: 
 
       for (const row of batch) {
         try {
-          const candidateInput = normalizeImportedRowToCandidateInput(row.normalized as Record<string, unknown>, {
+          const normalizedRow = row.normalized as Record<string, unknown>;
+          const candidateInput = normalizeImportedRowToCandidateInput(normalizedRow, {
             centerId: job.centerId,
             programId: job.programId,
             registrationMode: job.registrationMode as "internal_registration" | "existing_sidh_link",
           });
+          const referenceDetails =
+            normalizedRow.referenceDetails && typeof normalizedRow.referenceDetails === "object"
+              ? (normalizedRow.referenceDetails as { courseId?: string; courseName?: string })
+              : null;
+          const referenceCourse = await resolveReferenceCourseDetails(referenceDetails);
           const createdCandidate = await createCandidateRecord(actor, candidateInput, {
             queueSync: false,
             requestId,
             skipAudit: true,
             sourceImportJobId: importJobId,
+            referenceCourseId: referenceCourse.courseId,
+            referenceCourseName: referenceCourse.courseName,
           });
 
           committedRows += 1;
@@ -1362,8 +1608,8 @@ export async function commitCandidateImportJob(actor: AuthSession, importJobId: 
             {
               $set: {
                 status: "skipped",
-                errors: [
-                  ...(Array.isArray(row.errors) ? row.errors : []),
+                validationErrors: [
+                  ...readImportRowValidationErrors(row as Record<string, unknown>),
                   {
                     message: error instanceof Error ? error.message : "Unable to commit row",
                   },
@@ -1384,16 +1630,24 @@ export async function commitCandidateImportJob(actor: AuthSession, importJobId: 
       }
 
       try {
-        const candidateInput = normalizeImportedRowToCandidateInput(row.normalized as Record<string, unknown>, {
+        const normalizedRow = row.normalized as Record<string, unknown>;
+        const candidateInput = normalizeImportedRowToCandidateInput(normalizedRow, {
           centerId: job.centerId,
           programId: job.programId,
           registrationMode: job.registrationMode as "internal_registration" | "existing_sidh_link",
         });
+        const referenceDetails =
+          normalizedRow.referenceDetails && typeof normalizedRow.referenceDetails === "object"
+            ? (normalizedRow.referenceDetails as { courseId?: string; courseName?: string })
+            : null;
+        const referenceCourse = await resolveReferenceCourseDetails(referenceDetails);
         const createdCandidate = await createCandidateRecord(actor, candidateInput, {
           queueSync: false,
           requestId,
           skipAudit: true,
           sourceImportJobId: importJobId,
+          referenceCourseId: referenceCourse.courseId,
+          referenceCourseName: referenceCourse.courseName,
         });
 
         committedRows += 1;
@@ -1406,8 +1660,8 @@ export async function commitCandidateImportJob(actor: AuthSession, importJobId: 
         updatedRows.push({
           ...row,
           status: "skipped",
-          errors: [
-            ...(Array.isArray(row.errors) ? (row.errors as Array<Record<string, unknown>>) : []),
+          validationErrors: [
+            ...readImportRowValidationErrors(row as Record<string, unknown>),
             {
               message: error instanceof Error ? error.message : "Unable to commit row",
             },

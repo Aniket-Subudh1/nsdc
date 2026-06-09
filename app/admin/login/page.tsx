@@ -4,22 +4,14 @@ import Image from "next/image";
 import { ShieldCheck } from "lucide-react";
 import { redirect } from "next/navigation";
 
-import {
-  assertPortalAccess,
-  getDefaultRedirectPath,
-  getServerSession,
-} from "@/lib/server/services/session";
+import { getPortalRedirectPath } from "@/lib/auth-redirect";
+import { getServerSession } from "@/lib/server/services/session";
 
 const AdminLoginPage = async () => {
   const session = await getServerSession();
 
   if (session) {
-    try {
-      assertPortalAccess(session.user.roles, "admin");
-      redirect("/admin/dashboard");
-    } catch {
-      redirect(getDefaultRedirectPath(session.user.roles));
-    }
+    redirect(getPortalRedirectPath("admin", session.user.roles));
   }
 
   return (

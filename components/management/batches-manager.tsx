@@ -21,8 +21,15 @@ import { toast } from "sonner";
 
 import { apiFetch, ClientApiError } from "@/lib/client/api";
 import { cn } from "@/lib/utils";
-import { buildSidhBatchPayload, calculateBatchEndDate, resolveBatchSchemeId, resolveSidhBatchFieldSelection } from "@/lib/sidh-batch-payload";
-import { SIDH_BATCH_FIELD_OPTIONS } from "@/lib/sidh-batch-field-options";
+import {
+  buildSidhBatchPayload,
+  calculateBatchEndDate,
+  calculateMinimumAssessmentDate,
+  resolveAssessmentDate,
+  resolveBatchSchemeId,
+  resolveSidhBatchFieldSelection,
+} from "@/lib/sidh-batch-payload";
+import { getSidhBatchFieldDefault, resolveSidhBatchFieldOptions } from "@/lib/sidh-batch-field-options";
 import { formatDisplayDate, formatDisplayDateTime, formatDisplayTime } from "@/lib/sidh-display";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -93,6 +100,7 @@ type ReferenceData = {
 };
 
 type BatchListItem = {
+  assessmentDate: string | null;
   batchCode: string;
   batchId: string;
   batchName: string | null;
@@ -221,25 +229,29 @@ const portalContent = {
   },
 } as const;
 
-const emptyBatchForm: BatchFormState = {
-  assessmentDate: "",
-  assessmentMode: SIDH_BATCH_FIELD_OPTIONS.assessmentMode[0],
-  batchName: "",
-  batchType: SIDH_BATCH_FIELD_OPTIONS.batchType[0],
-  categoryType: SIDH_BATCH_FIELD_OPTIONS.categoryType[0],
-  centerId: "",
-  courseId: "",
-  createdSource: SIDH_BATCH_FIELD_OPTIONS.createdSource[0],
-  endDate: "",
-  endTime: "17:00",
-  fee: "",
-  feePaidBy: SIDH_BATCH_FIELD_OPTIONS.feePaidBy[0],
-  size: "",
-  startDate: "",
-  startTime: "09:00",
-  tpId: "",
-  trainingHoursPerDay: "",
-};
+function createEmptyBatchForm(enums?: ReferenceData["enums"]): BatchFormState {
+  return {
+    assessmentDate: "",
+    assessmentMode: getSidhBatchFieldDefault("assessmentMode", enums),
+    batchName: "",
+    batchType: getSidhBatchFieldDefault("batchType", enums),
+    categoryType: getSidhBatchFieldDefault("categoryType", enums),
+    centerId: "",
+    courseId: "",
+    createdSource: getSidhBatchFieldDefault("createdSource", enums),
+    endDate: "",
+    endTime: "17:00",
+    fee: "",
+    feePaidBy: getSidhBatchFieldDefault("feePaidBy", enums),
+    size: "",
+    startDate: "",
+    startTime: "09:00",
+    tpId: "",
+    trainingHoursPerDay: "",
+  };
+}
+
+const emptyBatchForm = createEmptyBatchForm();
 
 function canEditBatch(batch: Pick<BatchListItem, "sidhBatchId" | "syncState">) {
   const status = batch.syncState.batchSync.status;
@@ -255,20 +267,20 @@ function canRemoveCandidate(batch: Pick<BatchListItem, "sidhBatchId">, enrollmen
   return !batch.sidhBatchId || enrollmentStatus !== "synced";
 }
 
-function detailToForm(detail: BatchDetail): BatchFormState {
+function detailToForm(detail: BatchDetail, enums?: ReferenceData["enums"]): BatchFormState {
   return {
-    assessmentDate: detail.assessmentDate ?? "",
-    assessmentMode: detail.sidhAssessmentMode ?? SIDH_BATCH_FIELD_OPTIONS.assessmentMode[0],
+    assessmentDate: detail.endDate ? resolveAssessmentDate(detail.endDate, detail.assessmentDate) : detail.assessmentDate ?? "",
+    assessmentMode: getSidhBatchFieldDefault("assessmentMode", enums, detail.sidhAssessmentMode),
     batchName: detail.batchName ?? detail.batchCode,
-    batchType: detail.sidhBatchType ?? SIDH_BATCH_FIELD_OPTIONS.batchType[0],
-    categoryType: detail.sidhCategoryType ?? SIDH_BATCH_FIELD_OPTIONS.categoryType[0],
+    batchType: getSidhBatchFieldDefault("batchType", enums, detail.sidhBatchType),
+    categoryType: getSidhBatchFieldDefault("categoryType", enums, detail.sidhCategoryType),
     centerId: detail.centerId,
     courseId: detail.courseId,
-    createdSource: detail.sidhCreatedSource ?? SIDH_BATCH_FIELD_OPTIONS.createdSource[0],
+    createdSource: getSidhBatchFieldDefault("createdSource", enums, detail.sidhCreatedSource),
     endDate: detail.endDate ?? "",
     endTime: detail.endTime,
     fee: String(detail.fee ?? 0),
-    feePaidBy: detail.sidhFeePaidBy ?? SIDH_BATCH_FIELD_OPTIONS.feePaidBy[0],
+    feePaidBy: getSidhBatchFieldDefault("feePaidBy", enums, detail.sidhFeePaidBy),
     size: String(detail.batchSize ?? 80),
     startDate: detail.startDate ?? "",
     startTime: detail.startTime,
@@ -306,11 +318,20 @@ function applyMasterDataDefaults(
   sidhContext: ReferenceData["sidhBatchContext"] | undefined,
   startDate: string,
   current: BatchFormState,
+  enums?: ReferenceData["enums"],
 ): BatchFormState {
   const next = applyCourseDefaults(course, startDate, current);
+  const fieldDefaults = resolveSidhBatchFieldOptions(enums);
   const sidhFields = resolveSidhBatchFieldSelection({
     batch: { tpId: current.tpId },
     configuredTpId: sidhContext?.tpId,
+    defaults: {
+      assessmentMode: fieldDefaults.assessmentMode[0],
+      batchType: fieldDefaults.batchType[0],
+      categoryType: fieldDefaults.categoryType[0],
+      createdSource: fieldDefaults.createdSource[0],
+      feePaidBy: fieldDefaults.feePaidBy[0],
+    },
     program: program
       ? {
           assessmentMode: program.assessmentMode,
@@ -333,7 +354,7 @@ function applyMasterDataDefaults(
 
   return {
     ...next,
-    assessmentDate: next.assessmentDate || next.endDate,
+    assessmentDate: resolveAssessmentDate(next.endDate, next.assessmentDate),
     assessmentMode: sidhFields.assessmentMode,
     batchType: sidhFields.batchType,
     categoryType: sidhFields.categoryType,
@@ -356,7 +377,7 @@ function applyCourseDefaults(course: CourseOption, startDate: string, current: B
     ...current,
     courseId: course.courseId,
     endDate,
-    assessmentDate: current.assessmentDate || endDate,
+    assessmentDate: resolveAssessmentDate(endDate, current.assessmentDate),
     fee: current.fee || String(course.price ?? 0),
     size: current.size || "80",
     trainingHoursPerDay: current.trainingHoursPerDay || String(course.trainingPerDayHours || 8),
@@ -487,6 +508,11 @@ function SidhPayloadPreview({ payload }: { payload: Record<string, unknown> }) {
       </details>
     </div>
   );
+}
+
+function formatCourseOptionLabel(course: CourseOption) {
+  const shortForm = course.shortForm?.trim();
+  return shortForm ? `${course.courseName} (${shortForm})` : course.courseName;
 }
 
 function createGeneratedBatchCode(course: CourseOption | undefined, startDate: string) {
@@ -645,11 +671,13 @@ function BatchActionsBar({ children, className }: { children: React.ReactNode; c
 
 function FieldSelect({
   children,
+  disabled = false,
   id,
   onChange,
   value,
 }: {
   children: React.ReactNode;
+  disabled?: boolean;
   id: string;
   onChange: (value: string) => void;
   value: string;
@@ -657,7 +685,8 @@ function FieldSelect({
   return (
     <select
       id={id}
-      className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-900 outline-none transition focus:border-sky-300 focus:bg-white focus:ring-2 focus:ring-sky-100"
+      disabled={disabled}
+      className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-900 outline-none transition focus:border-sky-300 focus:bg-white focus:ring-2 focus:ring-sky-100 disabled:cursor-not-allowed disabled:opacity-60"
       value={value}
       onChange={(event) => onChange(event.target.value)}
     >
@@ -693,14 +722,31 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
   const [isDeletingAllUnpushed, setIsDeletingAllUnpushed] = useState(false);
   const [removingCandidateId, setRemovingCandidateId] = useState<string | null>(null);
   const [isRemovingAllCandidates, setIsRemovingAllCandidates] = useState(false);
+  const [selectedSectorId, setSelectedSectorId] = useState("");
+  const [sectorCourses, setSectorCourses] = useState<CourseOption[]>([]);
+  const [isLoadingSectorCourses, setIsLoadingSectorCourses] = useState(false);
 
-  const courseMap = useMemo(() => new Map((referenceData?.courses ?? []).map((course) => [course.courseId, course])), [referenceData]);
+  const courseMap = useMemo(() => {
+    const courses = new Map((referenceData?.courses ?? []).map((course) => [course.courseId, course]));
+    for (const course of sectorCourses) {
+      courses.set(course.courseId, course);
+    }
+    return courses;
+  }, [referenceData, sectorCourses]);
   const programMap = useMemo(() => new Map((referenceData?.programs ?? []).map((program) => [program.programId, program])), [referenceData]);
   const sectorMap = useMemo(() => new Map((referenceData?.sectors ?? []).map((sector) => [sector.sectorId, sector])), [referenceData]);
   const schemeMap = useMemo(() => new Map((referenceData?.schemes ?? []).map((scheme) => [scheme.schemeId, scheme])), [referenceData]);
   const centerMap = useMemo(
     () => new Map((referenceData?.trainingCenters ?? []).map((center) => [center.centerId, center])),
     [referenceData],
+  );
+  const sidhFieldOptionLabels = useMemo(
+    () => resolveSidhBatchFieldOptions(referenceData?.enums),
+    [referenceData?.enums],
+  );
+  const minimumAssessmentDate = useMemo(
+    () => (batchForm.endDate ? calculateMinimumAssessmentDate(batchForm.endDate) : ""),
+    [batchForm.endDate],
   );
 
   const selectedCourse = courseMap.get(batchForm.courseId);
@@ -722,7 +768,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
     }
 
     return buildSidhBatchPayload({
-      assessmentDate: batchForm.assessmentDate || batchForm.endDate,
+      assessmentDate: resolveAssessmentDate(batchForm.endDate, batchForm.assessmentDate),
       batchName: batchForm.batchName || `${selectedCourse.courseName} ${batchForm.startDate}`,
       batchSize: Number(batchForm.size || 80),
       configuredTpId: referenceData?.sidhBatchContext?.tpId,
@@ -805,6 +851,49 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
     () => (selectedBatch ? selectedBatch.candidates.filter((candidate) => canRemoveCandidate(selectedBatch, candidate.enrollmentStatus)) : []),
     [selectedBatch],
   );
+
+  function resetSectorCourseSelection() {
+    setSelectedSectorId("");
+    setSectorCourses([]);
+    setIsLoadingSectorCourses(false);
+  }
+
+  async function loadCoursesForSector(sectorId: string) {
+    if (!sectorId) {
+      setSectorCourses([]);
+      return;
+    }
+
+    setIsLoadingSectorCourses(true);
+
+    try {
+      const coursePage = await apiFetch<PagedCourses>(
+        `/api/v1/masters/courses?page=1&pageSize=100&status=active&approvalStatus=approved&sectorId=${encodeURIComponent(sectorId)}`,
+      );
+      setSectorCourses(coursePage.items);
+    } catch (error) {
+      setSectorCourses([]);
+      toast.error(error instanceof ClientApiError ? error.message : "Unable to load courses for the selected sector");
+    } finally {
+      setIsLoadingSectorCourses(false);
+    }
+  }
+
+  function openCreateModal() {
+    setBatchForm(createEmptyBatchForm(referenceData?.enums));
+    resetSectorCourseSelection();
+
+    const sectors = referenceData?.sectors ?? [];
+    if (sectors.length === 1) {
+      const sectorId = sectors[0]?.sectorId ?? "";
+      setSelectedSectorId(sectorId);
+      if (sectorId) {
+        void loadCoursesForSector(sectorId);
+      }
+    }
+
+    setShowCreateModal(true);
+  }
 
   async function loadData() {
     setIsLoading(true);
@@ -925,7 +1014,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
       const batchName = batchForm.batchName.trim() || `${selectedCourse?.courseName} ${batchForm.startDate}`;
       const createdBatch = await apiFetch<BatchDetail>("/api/v1/batches", {
         body: JSON.stringify({
-          assessmentDate: batchForm.assessmentDate || batchForm.endDate,
+          assessmentDate: resolveAssessmentDate(batchForm.endDate, batchForm.assessmentDate),
           assessmentEligibilityThreshold: 70,
           assessmentMode: batchForm.assessmentMode,
           batchCode,
@@ -953,7 +1042,8 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
 
       toast.success("Batch saved locally. Review details and push to SIDH when ready.");
 
-      setBatchForm(emptyBatchForm);
+      setBatchForm(createEmptyBatchForm(referenceData?.enums));
+      resetSectorCourseSelection();
       setShowCreateModal(false);
       await loadData();
       await handleViewBatch(createdBatch.batchId, true);
@@ -966,6 +1056,10 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
 
   function validateBatchForm() {
     const schemeId = selectedSchemeId;
+
+    if (!selectedSectorId) {
+      return "Select a sector before choosing a course";
+    }
 
     if (!batchForm.centerId || !batchForm.courseId || !batchForm.startDate || !batchForm.endDate || !batchForm.startTime || !batchForm.endTime) {
       return "Select a training center, course, start date, and end date before saving the batch";
@@ -995,6 +1089,14 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
       return "Select a SIDH TP ID before saving the batch";
     }
 
+    if (!batchForm.assessmentDate) {
+      return "Set an assessment date before saving the batch";
+    }
+
+    if (batchForm.endDate && batchForm.assessmentDate < minimumAssessmentDate) {
+      return `Assessment date must be at least 7 days after the batch end date (${minimumAssessmentDate})`;
+    }
+
     return null;
   }
 
@@ -1011,8 +1113,19 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
     void (async () => {
       try {
         const detail = await apiFetch<BatchDetail>(`/api/v1/batches/${batchId}`);
-        setBatchForm(detailToForm(detail));
+        setBatchForm(detailToForm(detail, referenceData?.enums));
         setSelectedBatch(detail);
+
+        const course =
+          (referenceData?.courses ?? []).find((item) => item.courseId === detail.courseId) ??
+          courseMap.get(detail.courseId);
+        const sectorId = course?.sectorId ?? "";
+        setSelectedSectorId(sectorId);
+        if (sectorId) {
+          await loadCoursesForSector(sectorId);
+        } else {
+          setSectorCourses([]);
+        }
       } catch (error) {
         toast.error(error instanceof ClientApiError ? error.message : "Unable to load batch for editing");
         setShowEditModal(false);
@@ -1038,7 +1151,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
     try {
       const updatedBatch = await apiFetch<BatchDetail>(`/api/v1/batches/${editingBatchId}`, {
         body: JSON.stringify({
-          assessmentDate: batchForm.assessmentDate || batchForm.endDate,
+          assessmentDate: resolveAssessmentDate(batchForm.endDate, batchForm.assessmentDate),
           assessmentMode: batchForm.assessmentMode,
           batchName: batchForm.batchName.trim() || `${selectedCourse?.courseName} ${batchForm.startDate}`,
           batchSize: Number(batchForm.size || 80),
@@ -1065,7 +1178,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
       toast.success("Batch updated. Push to SIDH when you are ready.");
       setShowEditModal(false);
       setEditingBatchId(null);
-      setBatchForm(emptyBatchForm);
+      setBatchForm(createEmptyBatchForm(referenceData?.enums));
       setSelectedBatch(updatedBatch);
       await loadData();
     } catch (error) {
@@ -1145,7 +1258,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
     try {
       await apiFetch<BatchDetail>(`/api/v1/batches/${batchId}`, {
         body: JSON.stringify({
-          assessmentDate: batchForm.assessmentDate || batchForm.endDate,
+          assessmentDate: resolveAssessmentDate(batchForm.endDate, batchForm.assessmentDate),
           assessmentMode: batchForm.assessmentMode,
           batchName: batchForm.batchName.trim() || `${selectedCourse?.courseName} ${batchForm.startDate}`,
           batchSize: Number(batchForm.size || 80),
@@ -1171,7 +1284,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
 
       setShowEditModal(false);
       setEditingBatchId(null);
-      setBatchForm(emptyBatchForm);
+      setBatchForm(createEmptyBatchForm(referenceData?.enums));
       await loadData();
       await handlePushToSidh(batchId);
     } catch (error) {
@@ -1341,7 +1454,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
   }
 
   async function handleRemoveAllCandidates(batchId: string) {
-    const batch = batches.find((item) => item.batchId === batchId) ?? selectedBatch;
+    const batch = selectedBatch?.batchId === batchId ? selectedBatch : null;
     const removableCount =
       batch?.candidates.filter((candidate) => canRemoveCandidate(batch, candidate.enrollmentStatus)).length ?? 0;
 
@@ -1410,7 +1523,27 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
             <option value="">{(referenceData?.trainingCenters.length ?? 0) > 0 ? "Select center" : "No centers available"}</option>
             {(referenceData?.trainingCenters ?? []).map((center) => (
               <option key={center.centerId} value={center.centerId}>
-                {center.centerName} ({center.centerCode}){center.sidhTcId ? ` · TC ${center.sidhTcId}` : ""}
+                {center.centerName} ({center.centerCode}){center.sidhTcId ? ` · TC Id: ${center.sidhTcId}` : ""}
+              </option>
+            ))}
+          </FieldSelect>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="sectorId">Sector</Label>
+          <FieldSelect
+            id="sectorId"
+            value={selectedSectorId}
+            onChange={(value) => {
+              setSelectedSectorId(value);
+              updateBatchForm({ courseId: "" });
+              void loadCoursesForSector(value);
+            }}
+          >
+            <option value="">{(referenceData?.sectors.length ?? 0) > 0 ? "Select sector" : "No sectors available"}</option>
+            {(referenceData?.sectors ?? []).map((sector) => (
+              <option key={sector.sectorId} value={sector.sectorId}>
+                {sector.name}
+                {sector.code ? ` (${sector.code})` : ""}
               </option>
             ))}
           </FieldSelect>
@@ -1420,6 +1553,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
           <FieldSelect
             id="courseId"
             value={batchForm.courseId}
+            disabled={!selectedSectorId || isLoadingSectorCourses}
             onChange={(value) => {
               const course = courseMap.get(value);
               if (!course) {
@@ -1430,17 +1564,33 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
               const scheme = schemeIdForCourse ? schemeMap.get(schemeIdForCourse) : undefined;
               const program = course.programIds[0] ? programMap.get(course.programIds[0]) : undefined;
               setBatchForm((current) =>
-                applyMasterDataDefaults(course, program, scheme, referenceData?.sidhBatchContext, current.startDate, {
-                  ...current,
-                  courseId: value,
-                }),
+                applyMasterDataDefaults(
+                  course,
+                  program,
+                  scheme,
+                  referenceData?.sidhBatchContext,
+                  current.startDate,
+                  {
+                    ...current,
+                    courseId: value,
+                  },
+                  referenceData?.enums,
+                ),
               );
             }}
           >
-            <option value="">Select course</option>
-            {(referenceData?.courses ?? []).map((course) => (
+            <option value="">
+              {!selectedSectorId
+                ? "Select a sector first"
+                : isLoadingSectorCourses
+                  ? "Loading courses…"
+                  : sectorCourses.length > 0
+                    ? "Select course"
+                    : "No approved courses in this sector"}
+            </option>
+            {sectorCourses.map((course) => (
               <option key={course.courseId} value={course.courseId}>
-                {course.courseName}
+                {formatCourseOptionLabel(course)}
               </option>
             ))}
           </FieldSelect>
@@ -1466,6 +1616,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                   referenceData?.sidhBatchContext,
                   nextStartDate,
                   { ...current, startDate: nextStartDate },
+                  referenceData?.enums,
                 );
               });
             }}
@@ -1481,12 +1632,13 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
             id="endDate"
             type="date"
             value={batchForm.endDate}
-            onChange={(event) =>
+            onChange={(event) => {
+              const nextEndDate = event.target.value;
               updateBatchForm({
-                assessmentDate: batchForm.assessmentDate || event.target.value,
-                endDate: event.target.value,
-              })
-            }
+                assessmentDate: resolveAssessmentDate(nextEndDate, batchForm.assessmentDate),
+                endDate: nextEndDate,
+              });
+            }}
           />
         </div>
         <div className="space-y-2">
@@ -1499,7 +1651,33 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
         </div>
         <div className="space-y-2">
           <Label htmlFor="assessmentDate">Assessment date</Label>
-          <Input id="assessmentDate" type="date" value={batchForm.assessmentDate} onChange={(event) => updateBatchForm({ assessmentDate: event.target.value })} />
+          <Input
+            id="assessmentDate"
+            type="date"
+            min={minimumAssessmentDate || undefined}
+            value={batchForm.assessmentDate}
+            disabled={!batchForm.endDate}
+            onChange={(event) => {
+              const nextAssessmentDate = event.target.value;
+              if (!minimumAssessmentDate) {
+                return;
+              }
+
+              updateBatchForm({
+                assessmentDate: !nextAssessmentDate || nextAssessmentDate < minimumAssessmentDate
+                  ? minimumAssessmentDate
+                  : nextAssessmentDate,
+              });
+            }}
+          />
+          {minimumAssessmentDate ? (
+            <p className="text-xs text-slate-500">
+              Defaults to 7 days after the batch end date. You can choose a later date, but not earlier than{" "}
+              {minimumAssessmentDate}.
+            </p>
+          ) : (
+            <p className="text-xs text-slate-500">Set the batch end date first to configure the assessment date.</p>
+          )}
         </div>
         <div className="space-y-2">
           <Label htmlFor="trainingHoursPerDay">Training hours / day</Label>
@@ -1536,7 +1714,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
           <div className="space-y-2">
             <Label htmlFor="assessmentMode">Assessment mode</Label>
             <FieldSelect id="assessmentMode" value={batchForm.assessmentMode} onChange={(value) => updateBatchForm({ assessmentMode: value })}>
-              {SIDH_BATCH_FIELD_OPTIONS.assessmentMode.map((option) => (
+              {sidhFieldOptionLabels.assessmentMode.map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>
@@ -1546,7 +1724,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
           <div className="space-y-2">
             <Label htmlFor="batchType">Batch type</Label>
             <FieldSelect id="batchType" value={batchForm.batchType} onChange={(value) => updateBatchForm({ batchType: value })}>
-              {SIDH_BATCH_FIELD_OPTIONS.batchType.map((option) => (
+              {sidhFieldOptionLabels.batchType.map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>
@@ -1556,7 +1734,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
           <div className="space-y-2">
             <Label htmlFor="categoryType">Category type</Label>
             <FieldSelect id="categoryType" value={batchForm.categoryType} onChange={(value) => updateBatchForm({ categoryType: value })}>
-              {SIDH_BATCH_FIELD_OPTIONS.categoryType.map((option) => (
+              {sidhFieldOptionLabels.categoryType.map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>
@@ -1566,7 +1744,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
           <div className="space-y-2">
             <Label htmlFor="feePaidBy">Fee paid by</Label>
             <FieldSelect id="feePaidBy" value={batchForm.feePaidBy} onChange={(value) => updateBatchForm({ feePaidBy: value })}>
-              {SIDH_BATCH_FIELD_OPTIONS.feePaidBy.map((option) => (
+              {sidhFieldOptionLabels.feePaidBy.map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>
@@ -1576,7 +1754,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
           <div className="space-y-2 lg:col-span-2">
             <Label htmlFor="createdSource">Created source</Label>
             <FieldSelect id="createdSource" value={batchForm.createdSource} onChange={(value) => updateBatchForm({ createdSource: value })}>
-              {SIDH_BATCH_FIELD_OPTIONS.createdSource.map((option) => (
+              {sidhFieldOptionLabels.createdSource.map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>
@@ -1623,7 +1801,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
           </button>
           <button
             type="button"
-            onClick={() => setShowCreateModal(true)}
+            onClick={openCreateModal}
             className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 sm:w-auto"
           >
             <IconPlus className="h-4 w-4" />
@@ -1826,12 +2004,22 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
           iconBg="bg-sky-50"
           title="Create batch"
           subtitle="Save locally first, review the SIDH payload, then push when ready."
-          onClose={() => setShowCreateModal(false)}
+          onClose={() => {
+            resetSectorCourseSelection();
+            setShowCreateModal(false);
+          }}
           wide
         >
           {createFormFields}
           <div className="mt-5 flex flex-col-reverse gap-2 border-t border-slate-100 pt-4 sm:flex-row sm:flex-wrap sm:justify-end">
-            <button type="button" onClick={() => setShowCreateModal(false)} className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 sm:w-auto">
+            <button
+              type="button"
+              onClick={() => {
+                resetSectorCourseSelection();
+                setShowCreateModal(false);
+              }}
+              className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 sm:w-auto"
+            >
               Cancel
             </button>
             <button
@@ -1856,7 +2044,8 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
           onClose={() => {
             setShowEditModal(false);
             setEditingBatchId(null);
-            setBatchForm(emptyBatchForm);
+            setBatchForm(createEmptyBatchForm(referenceData?.enums));
+            resetSectorCourseSelection();
           }}
           wide
         >
@@ -1867,7 +2056,8 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
               onClick={() => {
                 setShowEditModal(false);
                 setEditingBatchId(null);
-                setBatchForm(emptyBatchForm);
+                setBatchForm(createEmptyBatchForm(referenceData?.enums));
+                resetSectorCourseSelection();
               }}
               className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 sm:w-auto"
             >

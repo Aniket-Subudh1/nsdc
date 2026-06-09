@@ -219,7 +219,7 @@ Single-candidate create uses:
 }
 ```
 
-Bulk upload uses `public/candidate_details.xlsx` as the sample workbook. Accepted headers are `Name Prefix`, `First Name`, `Gender`, `DOB`, `Father's Name`, `Guardian's Name`, `Email`, `Phone`, `Country Code`, `State`, `City`, and `Center Name`. Upload can be file-only; optional `programId`, `centerId`, and `registrationMode` form fields default internally when omitted.
+Bulk upload uses `public/candidate_details.xlsx` as the sample workbook. Accepted headers are `Name Prefix`, `Full Name`, `Gender`, `DOB`, `Father's Name`, `Guardian's Name`, `Email`, `Phone`, `Country Code`, `State`, `City`, and `Center Name`. `Full Name` is stored as `personalDetails.firstName` (legacy `First Name` headers are still accepted). `Name Prefix` must be one of `Mr`, `Mrs`, `Ms`, `Mx`. `Gender` must be one of `Male`, `Female`, `Transgender`. The template includes Excel dropdowns for both fields. Upload can be file-only; optional `programId`, `centerId`, and `registrationMode` form fields default internally when omitted.
 
 Import commit saves valid candidate rows locally only. Operators then select candidates and queue them through `/api/v1/candidates/:candidateId/sync` or `/api/v1/candidates/sync/bulk`.
 

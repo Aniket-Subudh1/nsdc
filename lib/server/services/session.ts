@@ -10,7 +10,7 @@ import {
   verifyPassword,
 } from "@/lib/server/auth";
 import { ensureBootstrapData } from "@/lib/server/bootstrap";
-import { getEnv } from "@/lib/server/env";
+import { getSessionExpiresAt } from "@/lib/server/auth-session";
 import { ApiError } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
 import { connectToDatabase } from "@/lib/server/mongodb";
@@ -167,7 +167,7 @@ export async function loginUser(input: LoginInput) {
     centerIds: normalizeStringArray(user.centerIds),
   });
 
-  const expiresAt = new Date(Date.now() + getEnv().SESSION_TTL_HOURS * 60 * 60 * 1000);
+  const expiresAt = getSessionExpiresAt();
 
   await SessionModel.create({
     sessionId,

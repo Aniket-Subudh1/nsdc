@@ -6,6 +6,98 @@ export const SIDH_BATCH_FIELD_OPTIONS = {
   feePaidBy: ["Self-Paid"],
 } as const;
 
+export type SidhBatchFieldKey = keyof typeof SIDH_BATCH_FIELD_OPTIONS;
+
+export const SIDH_BATCH_ENUM_CATEGORIES = {
+  assessmentMode: "sidh_assessment_mode",
+  batchType: "sidh_batch_type",
+  categoryType: "sidh_batch_category",
+  createdSource: "sidh_created_source",
+  feePaidBy: "sidh_fee_paid_by",
+} as const satisfies Record<SidhBatchFieldKey, string>;
+
+export type SidhBatchEnumCategory = (typeof SIDH_BATCH_ENUM_CATEGORIES)[SidhBatchFieldKey];
+
+export type SidhBatchReferenceOption = {
+  code: string;
+  label: string;
+  referenceValueId: string;
+  sortOrder: number;
+};
+
+export type SidhBatchFieldOptionsMap = Record<SidhBatchFieldKey, string[]>;
+
+export type SidhBatchFieldOptionsResponse = Record<
+  SidhBatchFieldKey,
+  {
+    category: SidhBatchEnumCategory;
+    options: SidhBatchReferenceOption[];
+  }
+>;
+
+type EnumLike = Record<string, Array<{ code: string; label: string }>> | null | undefined;
+
+export function deriveSidhBatchReferenceCode(label: string) {
+  const normalized = label
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  return normalized || "option";
+}
+
+function resolveCategoryLabels(
+  enums: EnumLike,
+  category: SidhBatchEnumCategory,
+  fallback: readonly string[],
+): string[] {
+  const labels = enums?.[category]?.map((option) => option.label.trim()).filter(Boolean) ?? [];
+
+  if (labels.length > 0) {
+    return labels;
+  }
+
+  return [...fallback];
+}
+
+export function resolveSidhBatchFieldOptions(enums?: EnumLike): SidhBatchFieldOptionsMap {
+  return {
+    assessmentMode: resolveCategoryLabels(
+      enums,
+      SIDH_BATCH_ENUM_CATEGORIES.assessmentMode,
+      SIDH_BATCH_FIELD_OPTIONS.assessmentMode,
+    ),
+    batchType: resolveCategoryLabels(enums, SIDH_BATCH_ENUM_CATEGORIES.batchType, SIDH_BATCH_FIELD_OPTIONS.batchType),
+    categoryType: resolveCategoryLabels(
+      enums,
+      SIDH_BATCH_ENUM_CATEGORIES.categoryType,
+      SIDH_BATCH_FIELD_OPTIONS.categoryType,
+    ),
+    createdSource: resolveCategoryLabels(
+      enums,
+      SIDH_BATCH_ENUM_CATEGORIES.createdSource,
+      SIDH_BATCH_FIELD_OPTIONS.createdSource,
+    ),
+    feePaidBy: resolveCategoryLabels(enums, SIDH_BATCH_ENUM_CATEGORIES.feePaidBy, SIDH_BATCH_FIELD_OPTIONS.feePaidBy),
+  };
+}
+
+export function getSidhBatchFieldDefault(
+  field: SidhBatchFieldKey,
+  enums?: EnumLike,
+  currentValue?: string | null,
+) {
+  const options = resolveSidhBatchFieldOptions(enums)[field];
+  const normalizedCurrent = currentValue?.trim();
+
+  if (normalizedCurrent && options.includes(normalizedCurrent)) {
+    return normalizedCurrent;
+  }
+
+  return options[0] ?? SIDH_BATCH_FIELD_OPTIONS[field][0];
+}
+
 export type SidhBatchFieldSelection = {
   assessmentMode: string;
   batchType: string;

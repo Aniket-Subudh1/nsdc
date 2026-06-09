@@ -37,6 +37,33 @@ export type SidhBatchPayloadSource = {
   tcId?: string | null;
 };
 
+export const MIN_ASSESSMENT_DAYS_AFTER_BATCH_END = 7;
+
+export function addDaysToDateInput(dateInput: string, days: number) {
+  const date = new Date(`${dateInput}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+export function calculateMinimumAssessmentDate(endDate: string) {
+  return addDaysToDateInput(endDate, MIN_ASSESSMENT_DAYS_AFTER_BATCH_END);
+}
+
+export function resolveAssessmentDate(endDate: string, assessmentDate?: string | null) {
+  if (!endDate.trim()) {
+    return assessmentDate?.trim() ?? "";
+  }
+
+  const minimumAssessmentDate = calculateMinimumAssessmentDate(endDate);
+  const normalizedAssessmentDate = assessmentDate?.trim();
+
+  if (!normalizedAssessmentDate || normalizedAssessmentDate < minimumAssessmentDate) {
+    return minimumAssessmentDate;
+  }
+
+  return normalizedAssessmentDate;
+}
+
 export function calculateBatchEndDate(startDate: string, totalHours: number, trainingHoursPerDay: number) {
   const hoursPerDay = Math.max(1, trainingHoursPerDay);
   const trainingDays = Math.max(1, Math.ceil(Math.max(1, totalHours) / hoursPerDay));

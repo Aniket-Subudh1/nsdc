@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, startTransition, useEffect, useState } from "react";
+import { memo, startTransition, useEffect, useMemo, useState } from "react";
 import {
   IconArrowRight,
   IconChevronLeft,
@@ -12,8 +12,10 @@ import {
   IconLink,
   IconListCheck,
   IconLoader2,
+  IconPencil,
   IconPlayerPlay,
   IconPlus,
+  IconTrash,
   IconRefresh,
   IconRotateClockwise,
   IconSearch,
@@ -26,6 +28,10 @@ import {
 import { toast } from "sonner";
 
 import { apiFetch, ClientApiError, type ApiEnvelope } from "@/lib/client/api";
+import {
+  CANDIDATE_GENDER_OPTIONS,
+  CANDIDATE_NAME_PREFIX_OPTIONS,
+} from "@/lib/candidate-field-options";
 import { cn } from "@/lib/utils";
 
 type CandidatesManagerProps = {
@@ -48,6 +54,11 @@ type CandidateRecord = {
   contactDetails: {
     email: string | null;
     mobileNumber: string;
+  };
+  locationDetails: {
+    centerName: string | null;
+    city: string | null;
+    state: string | null;
   };
   experience: {
     employmentDetails: string | null;
@@ -85,6 +96,10 @@ type CandidateRecord = {
     state: string | null;
   };
   programId: string;
+  referenceDetails?: {
+    courseId: string | null;
+    courseName: string | null;
+  };
   registrationMode: "internal_registration" | "existing_sidh_link";
   sidhCandidateId: string | null;
   syncState: {
@@ -185,10 +200,10 @@ type ImportRowPreview = {
   centerName: string;
   city: string;
   countryCode: string;
+  courseName: string;
   dob: string;
   email: string;
   fatherName: string;
-  firstName: string;
   fullName: string;
   gender: string;
   guardianName: string;
@@ -208,18 +223,19 @@ function extractImportRowPreview(normalized: Record<string, unknown>): ImportRow
   const personal = (normalized.personalDetails ?? {}) as Record<string, unknown>;
   const contact = (normalized.contactDetails ?? {}) as Record<string, unknown>;
   const location = (normalized.locationDetails ?? {}) as Record<string, unknown>;
+  const reference = (normalized.referenceDetails ?? {}) as Record<string, unknown>;
   const namePrefix = String(personal.namePrefix ?? personal.salutation ?? "").trim();
-  const firstName = String(personal.firstName ?? "").trim();
+  const fullName = String(personal.firstName ?? "").trim();
 
   return {
     centerName: displayImportValue(String(location.centerName ?? "")),
+    courseName: displayImportValue(String(reference.courseName ?? "")),
     city: displayImportValue(String(location.city ?? "")),
     countryCode: displayImportValue(String(contact.countryCode ?? "91")),
     dob: displayImportValue(String(personal.dob ?? personal.dateOfBirth ?? "")),
     email: displayImportValue(String(contact.email ?? "")),
     fatherName: displayImportValue(String(personal.fatherName ?? personal.fathersName ?? "")),
-    firstName: displayImportValue(firstName),
-    fullName: [namePrefix, firstName].filter(Boolean).join(" ") || EMPTY_FIELD,
+    fullName: displayImportValue(fullName),
     gender: displayImportValue(String(personal.gender ?? "")),
     guardianName: displayImportValue(String(personal.guardianName ?? personal.guardiansName ?? "")),
     mobile: displayImportValue(String(contact.phone ?? contact.mobileNumber ?? "")),
@@ -237,10 +253,11 @@ const IMPORT_FIELD_LABELS: Record<string, string> = {
   "locationDetails.state": "State",
   "personalDetails.dob": "Date of birth",
   "personalDetails.fatherName": "Father name",
-  "personalDetails.firstName": "First name",
+  "personalDetails.firstName": "Full name",
   "personalDetails.gender": "Gender",
   "personalDetails.guardianName": "Guardian name",
   "personalDetails.namePrefix": "Name prefix",
+  "referenceDetails.courseName": "Course (reference only)",
 };
 
 function formatImportError(error: { field?: string; message: string }) {
@@ -249,7 +266,8 @@ function formatImportError(error: { field?: string; message: string }) {
     : null;
   const message = error.message
     .replace(/Matches existing candidate (\S+)/, "Already saved as learner $1")
-    .replace(/Matches another row in this import/, "Same person appears again in this file");
+    .replace(/Matches another row in this import/, "Same phone number appears again in this file")
+    .replace(/Mobile number already used by (\S+)/, "Phone already used by learner $1");
 
   return fieldLabel ? `${fieldLabel}: ${message}` : message;
 }
@@ -301,8 +319,15 @@ type CandidateFilters = {
   syncStatus: string;
 };
 
+type CourseOption = {
+  courseId: string;
+  courseName: string;
+  shortForm?: string | null;
+};
+
 type IndividualCandidateFormState = {
-  centerName: string;
+  centerId: string;
+  courseId: string;
   countryCode: string;
   city: string;
   dob: string;
@@ -399,7 +424,8 @@ const initialCandidateFilters: CandidateFilters = {
 };
 
 const emptyIndividualCandidateForm: IndividualCandidateFormState = {
-  centerName: "",
+  centerId: "",
+  courseId: "",
   countryCode: "91",
   city: "",
   dob: "",
@@ -419,7 +445,37 @@ const initialSyncFilters: SyncFilters = {
   status: "",
 };
 
-function buildIndividualCandidatePayload(form: IndividualCandidateFormState) {
+function formatCourseOptionLabel(course: CourseOption) {
+  const shortForm = course.shortForm?.trim();
+  return shortForm ? `${course.courseName} (${shortForm})` : course.courseName;
+}
+
+function getUniqueCourseOptions(courses: CourseOption[]) {
+  const seen = new Map<string, CourseOption>();
+
+  for (const course of courses) {
+    const key = course.courseName.trim().toLowerCase();
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.set(key, course);
+  }
+
+  return Array.from(seen.values()).sort((left, right) => left.courseName.localeCompare(right.courseName));
+}
+
+function findSelectedCourse(form: IndividualCandidateFormState, courseOptions: CourseOption[]) {
+  return courseOptions.find((course) => course.courseId === form.courseId) ?? null;
+}
+
+function buildIndividualCandidatePayload(
+  form: IndividualCandidateFormState,
+  centers: CenterOption[],
+  courseOptions: CourseOption[],
+) {
+  const selectedCenter = centers.find((center) => center.centerId === form.centerId);
+  const selectedCourse = findSelectedCourse(form, courseOptions);
+
   return {
     personalDetails: {
       namePrefix: form.namePrefix,
@@ -437,23 +493,117 @@ function buildIndividualCandidatePayload(form: IndividualCandidateFormState) {
     locationDetails: {
       state: form.state,
       city: form.city,
-      centerName: form.centerName,
+      centerName: selectedCenter?.centerName ?? "",
+      centerId: form.centerId,
     },
+    ...(form.courseId && selectedCourse
+      ? {
+          referenceDetails: {
+            courseId: selectedCourse.courseId,
+            courseName: selectedCourse.courseName,
+          },
+        }
+      : {}),
   };
 }
 
-async function downloadStaticWorkbook(fileName: string, sourcePath: string) {
-  const response = await fetch(sourcePath);
+function buildIndividualCandidateUpdatePayload(
+  form: IndividualCandidateFormState,
+  centers: CenterOption[],
+  courseOptions: CourseOption[],
+  existingReference?: { courseId: string | null; courseName: string | null } | null,
+) {
+  const selectedCenter = centers.find((center) => center.centerId === form.centerId);
+  const selectedCourse = findSelectedCourse(form, courseOptions);
+
+  return {
+    centerId: form.centerId,
+    personalDetails: {
+      salutation: form.namePrefix,
+      fullName: form.firstName,
+      gender: form.gender,
+      dateOfBirth: form.dob,
+      fathersName: form.fatherName,
+      guardiansName: form.guardianName,
+    },
+    contactDetails: {
+      email: form.email,
+      mobileNumber: form.phone,
+      countryCode: form.countryCode,
+    },
+    locationDetails: {
+      state: form.state,
+      city: form.city,
+      centerName: selectedCenter?.centerName ?? "",
+    },
+    permanentAddress: {
+      state: form.state,
+      city: form.city,
+    },
+    referenceDetails: form.courseId
+      ? {
+          courseId: form.courseId,
+          courseName: selectedCourse?.courseName ?? existingReference?.courseName ?? "",
+        }
+      : null,
+  };
+}
+
+function candidateToIndividualForm(candidate: CandidateRecord): IndividualCandidateFormState {
+  return {
+    centerId: candidate.centerId,
+    courseId: candidate.referenceDetails?.courseId ?? "",
+    countryCode: "91",
+    city: candidate.locationDetails?.city ?? candidate.permanentAddress?.city ?? "",
+    dob: candidate.personalDetails.dateOfBirth ?? "",
+    email: candidate.contactDetails.email ?? "",
+    fatherName: candidate.personalDetails.fathersName ?? "",
+    firstName: candidate.personalDetails.fullName ?? "",
+    gender: candidate.personalDetails.gender ?? "",
+    guardianName: candidate.personalDetails.guardiansName ?? "",
+    namePrefix: candidate.personalDetails.salutation ?? "",
+    phone: candidate.contactDetails.mobileNumber,
+    state: candidate.locationDetails?.state ?? candidate.permanentAddress?.state ?? "",
+  };
+}
+
+function canModifyLearnerBeforeSidh(candidate: CandidateRecord) {
+  if (candidate.registrationMode === "existing_sidh_link") {
+    return false;
+  }
+
+  if (candidate.sidhCandidateId) {
+    return false;
+  }
+
+  const status = candidate.syncState?.status ?? "not_queued";
+  return status === "not_queued" || status === "failed" || status === "manual_review";
+}
+
+async function downloadCandidateImportTemplate() {
+  const response = await fetch("/api/v1/candidates/imports/template", {
+    credentials: "include",
+  });
 
   if (!response.ok) {
-    throw createApiError("Unable to load the sample import workbook", response.status);
+    let message = "Unable to load the sample import workbook";
+    try {
+      const payload = (await response.json()) as { message?: string };
+      if (payload.message) {
+        message = payload.message;
+      }
+    } catch {
+      // Keep default message when the response is not JSON.
+    }
+
+    throw createApiError(message, response.status);
   }
 
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = fileName;
+  link.download = "candidate_details.xlsx";
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -691,6 +841,11 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   const [isCommittingImport, setIsCommittingImport] = useState(false);
   const [isProcessingSyncJobs, setIsProcessingSyncJobs] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [editingCandidateId, setEditingCandidateId] = useState<string | null>(null);
+  const [editingCandidateReference, setEditingCandidateReference] = useState<{
+    courseId: string | null;
+    courseName: string | null;
+  } | null>(null);
   const [showSyncDetailModal, setShowSyncDetailModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [showLinkModal, setShowLinkModal] = useState(false);
@@ -700,7 +855,9 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   const [isLinkingCandidate, setIsLinkingCandidate] = useState(false);
   const [linkForm, setLinkForm] = useState(emptyLinkForm);
   const [centers, setCenters] = useState<CenterOption[]>([]);
+  const [courses, setCourses] = useState<CourseOption[]>([]);
   const [programs, setPrograms] = useState<ProgramOption[]>([]);
+  const uniqueCourses = useMemo(() => getUniqueCourseOptions(courses), [courses]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -715,7 +872,9 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   const flaggedJobs = syncJobs.filter((job) => job.status === "failed" || job.status === "manual_review" || job.status === "dead_letter").length;
   const isImportReady = Boolean(importForm.file);
   const isIndividualCandidateReady = Boolean(
-    individualCandidateForm.firstName &&
+    individualCandidateForm.centerId &&
+      individualCandidateForm.namePrefix &&
+      individualCandidateForm.firstName &&
       individualCandidateForm.gender &&
       individualCandidateForm.dob &&
       individualCandidateForm.phone &&
@@ -963,25 +1122,82 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
     }
   }
 
-  async function handleCreateCandidate(event: React.FormEvent<HTMLFormElement>) {
+  function closeLearnerFormModal() {
+    setShowCreateModal(false);
+    setEditingCandidateId(null);
+    setEditingCandidateReference(null);
+    setIndividualCandidateForm(emptyIndividualCandidateForm);
+  }
+
+  function openEditLearner(candidate: CandidateRecord) {
+    setIndividualCandidateForm(candidateToIndividualForm(candidate));
+    setEditingCandidateReference(candidate.referenceDetails ?? null);
+    setEditingCandidateId(candidate.candidateId);
+    setShowCreateModal(true);
+    setShowDetailModal(false);
+    setDetailCandidate(null);
+  }
+
+  async function handleSaveLearner(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsCreatingCandidate(true);
     setErrorMessage(null);
     setSuccessMessage(null);
 
     try {
-      await apiFetch<CandidateRecord>("/api/v1/candidates", {
-        method: "POST",
-        body: JSON.stringify(buildIndividualCandidatePayload(individualCandidateForm)),
-      });
-      setIndividualCandidateForm(emptyIndividualCandidateForm);
-      setShowCreateModal(false);
-      setSuccessMessage("Learner registered successfully");
+      if (editingCandidateId) {
+        await apiFetch<CandidateRecord>(`/api/v1/candidates/${editingCandidateId}`, {
+          method: "PATCH",
+          body: JSON.stringify(
+            buildIndividualCandidateUpdatePayload(
+              individualCandidateForm,
+              centers,
+              uniqueCourses,
+              editingCandidateReference,
+            ),
+          ),
+        });
+        setSuccessMessage("Learner updated successfully");
+      } else {
+        await apiFetch<CandidateRecord>("/api/v1/candidates", {
+          method: "POST",
+          body: JSON.stringify(
+            buildIndividualCandidatePayload(individualCandidateForm, centers, uniqueCourses),
+          ),
+        });
+        setSuccessMessage("Learner registered successfully");
+      }
+
+      closeLearnerFormModal();
       await refreshVisibleData();
     } catch (error) {
-      setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to save candidate");
+      setErrorMessage(
+        error instanceof ClientApiError ? error.message : editingCandidateId ? "Unable to update learner" : "Unable to save candidate",
+      );
     } finally {
       setIsCreatingCandidate(false);
+    }
+  }
+
+  async function handleDeleteLearner(candidate: CandidateRecord) {
+    const fullName = candidate.personalDetails.fullName;
+    if (!window.confirm(`Delete ${fullName}? This cannot be undone.`)) {
+      return;
+    }
+
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    try {
+      await apiFetch(`/api/v1/candidates/${candidate.candidateId}`, { method: "DELETE" });
+      if (detailCandidate?.candidateId === candidate.candidateId) {
+        setShowDetailModal(false);
+        setDetailCandidate(null);
+      }
+      setSuccessMessage(`${fullName} deleted`);
+      await refreshVisibleData();
+    } catch (error) {
+      setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to delete learner");
     }
   }
 
@@ -990,7 +1206,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
     setSuccessMessage(null);
 
     try {
-      await downloadStaticWorkbook("candidate_details.xlsx", "/candidate_details.xlsx");
+      await downloadCandidateImportTemplate();
 
       setSuccessMessage("Sample upload sheet downloaded successfully");
     } catch (error) {
@@ -1039,11 +1255,13 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
 
   async function loadReferenceOptions() {
     try {
-      const [centerData, programData] = await Promise.all([
+      const [centerData, courseData, programData] = await Promise.all([
         apiFetch<{ items: CenterOption[] }>("/api/v1/masters/training-centers?page=1&pageSize=100"),
+        apiFetch<{ items: CourseOption[] }>("/api/v1/masters/courses?page=1&pageSize=100&status=active&approvalStatus=approved"),
         apiFetch<{ items: ProgramOption[] }>("/api/v1/masters/programs?page=1&pageSize=100"),
       ]);
       setCenters(centerData.items);
+      setCourses(courseData.items);
       setPrograms(programData.items);
     } catch {
       // Reference data is optional for the main list; link modal will show empty selects.
@@ -1225,7 +1443,13 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
           </button>
           <button
             type="button"
-            onClick={() => setShowCreateModal(true)}
+            onClick={() => {
+              setIndividualCandidateForm({
+                ...emptyIndividualCandidateForm,
+                centerId: centers.length === 1 ? (centers[0]?.centerId ?? "") : "",
+              });
+              setShowCreateModal(true);
+            }}
             className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
           >
             <IconUserPlus className="h-4 w-4" />
@@ -1492,6 +1716,21 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                                     label="View"
                                     onClick={() => void loadLearnerDetail(candidate.candidateId)}
                                   />
+                                  {canModifyLearnerBeforeSidh(candidate) ? (
+                                    <LearnerActionButton
+                                      icon={<IconPencil className="h-3.5 w-3.5" />}
+                                      label="Edit"
+                                      onClick={() => openEditLearner(candidate)}
+                                    />
+                                  ) : null}
+                                  {canModifyLearnerBeforeSidh(candidate) ? (
+                                    <LearnerActionButton
+                                      icon={<IconTrash className="h-3.5 w-3.5" />}
+                                      label="Delete"
+                                      onClick={() => void handleDeleteLearner(candidate)}
+                                      tone="danger"
+                                    />
+                                  ) : null}
                                   {actionState.canQueue ? (
                                     <LearnerActionButton
                                       icon={<IconSend className="h-3.5 w-3.5" />}
@@ -1565,6 +1804,26 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                                 <p className="mt-2 text-xs text-rose-600">{candidate.syncState.lastFailureMessage}</p>
                               ) : null}
                               <div className="mt-2 flex flex-wrap gap-1.5">
+                                <LearnerActionButton
+                                  icon={<IconEye className="h-3.5 w-3.5" />}
+                                  label="View"
+                                  onClick={() => void loadLearnerDetail(candidate.candidateId)}
+                                />
+                                {canModifyLearnerBeforeSidh(candidate) ? (
+                                  <LearnerActionButton
+                                    icon={<IconPencil className="h-3.5 w-3.5" />}
+                                    label="Edit"
+                                    onClick={() => openEditLearner(candidate)}
+                                  />
+                                ) : null}
+                                {canModifyLearnerBeforeSidh(candidate) ? (
+                                  <LearnerActionButton
+                                    icon={<IconTrash className="h-3.5 w-3.5" />}
+                                    label="Delete"
+                                    onClick={() => void handleDeleteLearner(candidate)}
+                                    tone="danger"
+                                  />
+                                ) : null}
                                 {actionState.canQueue ? (
                                   <LearnerActionButton
                                     icon={<IconSend className="h-3.5 w-3.5" />}
@@ -1580,11 +1839,6 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                                     onClick={() => switchTab("skill_india_queue")}
                                   />
                                 ) : null}
-                                <LearnerActionButton
-                                  icon={<IconEye className="h-3.5 w-3.5" />}
-                                  label="View"
-                                  onClick={() => void loadLearnerDetail(candidate.candidateId)}
-                                />
                               </div>
                             </div>
                           </div>
@@ -1610,6 +1864,10 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                 <p className="text-sm font-semibold text-slate-900">How bulk import works</p>
                 <ol className="mt-2 list-inside list-decimal space-y-1 text-xs text-slate-600">
                   <li>Download the template and fill in learner details</li>
+                  <li>
+                    Use the dropdowns for <strong>Name prefix</strong>, <strong>Gender</strong>, <strong>Training
+                    center</strong>, and optional <strong>Course (reference only)</strong>
+                  </li>
                   <li>Upload the file — we check every row and show errors in plain language</li>
                   <li>Save valid rows, then send learners to the government portal from All learners</li>
                 </ol>
@@ -1927,47 +2185,64 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
 
       {showCreateModal ? (
         <Modal
-          icon={<IconUserPlus className="h-5 w-5 text-sky-600" />}
+          icon={editingCandidateId ? <IconPencil className="h-5 w-5 text-sky-600" /> : <IconUserPlus className="h-5 w-5 text-sky-600" />}
           iconBg="bg-sky-50"
-          title="Register learner"
-          subtitle="Add one learner with the same fields used for government portal registration."
-          onClose={() => setShowCreateModal(false)}
+          title={editingCandidateId ? "Edit learner" : "Register learner"}
+          subtitle={
+            editingCandidateId
+              ? "Update learner details before sending to the government portal."
+              : "Add one learner with the same fields used for government portal registration."
+          }
+          onClose={closeLearnerFormModal}
         >
-          <form className="space-y-5" onSubmit={handleCreateCandidate}>
+          <form className="space-y-5" onSubmit={handleSaveLearner}>
             <div>
               <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Personal details</p>
               <div className="grid gap-3 sm:grid-cols-2">
-                <FormField label="Name prefix">
-                  <input
+                <FormField label="Name prefix *">
+                  <select
                     value={individualCandidateForm.namePrefix}
                     onChange={(event) =>
                       setIndividualCandidateForm((current) => ({ ...current, namePrefix: event.target.value }))
                     }
                     className={inputClassName}
-                    placeholder="Mr"
-                  />
+                    required
+                  >
+                    <option value="">Select prefix</option>
+                    {CANDIDATE_NAME_PREFIX_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
                 </FormField>
-                <FormField label="First name *">
+                <FormField label="Full name *">
                   <input
                     value={individualCandidateForm.firstName}
                     onChange={(event) =>
                       setIndividualCandidateForm((current) => ({ ...current, firstName: event.target.value }))
                     }
                     className={inputClassName}
-                    placeholder="First name"
+                    placeholder="Full name"
                     required
                   />
                 </FormField>
                 <FormField label="Gender *">
-                  <input
+                  <select
                     value={individualCandidateForm.gender}
                     onChange={(event) =>
                       setIndividualCandidateForm((current) => ({ ...current, gender: event.target.value }))
                     }
                     className={inputClassName}
-                    placeholder="Male / Female / Other"
                     required
-                  />
+                  >
+                    <option value="">Select gender</option>
+                    {CANDIDATE_GENDER_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
                 </FormField>
                 <FormField label="Date of birth *">
                   <input
@@ -2063,15 +2338,40 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                     placeholder="City"
                   />
                 </FormField>
-                <FormField label="Training center" className="sm:col-span-2">
-                  <input
-                    value={individualCandidateForm.centerName}
+                <FormField label="Training center *" className="sm:col-span-2">
+                  <select
+                    value={individualCandidateForm.centerId}
                     onChange={(event) =>
-                      setIndividualCandidateForm((current) => ({ ...current, centerName: event.target.value }))
+                      setIndividualCandidateForm((current) => ({ ...current, centerId: event.target.value }))
                     }
                     className={inputClassName}
-                    placeholder="Center name"
-                  />
+                    required
+                  >
+                    <option value="">{centers.length > 0 ? "Select training center" : "No training centers available"}</option>
+                    {centers.map((center) => (
+                      <option key={center.centerId} value={center.centerId}>
+                        {center.centerName}
+                      </option>
+                    ))}
+                  </select>
+                </FormField>
+                <FormField label="Course (reference only)" className="sm:col-span-2">
+                  <select
+                    value={individualCandidateForm.courseId}
+                    onChange={(event) =>
+                      setIndividualCandidateForm((current) => ({ ...current, courseId: event.target.value }))
+                    }
+                    className={inputClassName}
+                  >
+                    <option value="">
+                      {uniqueCourses.length > 0 ? "Select course (optional)" : "No courses available"}
+                    </option>
+                    {uniqueCourses.map((course) => (
+                      <option key={course.courseId} value={course.courseId}>
+                        {formatCourseOptionLabel(course)}
+                      </option>
+                    ))}
+                  </select>
                 </FormField>
               </div>
             </div>
@@ -2079,7 +2379,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
             <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
               <button
                 type="button"
-                onClick={() => setShowCreateModal(false)}
+                onClick={closeLearnerFormModal}
                 className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
                 Cancel
@@ -2091,10 +2391,12 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
               >
                 {isCreatingCandidate ? (
                   <IconLoader2 className="h-4 w-4 animate-spin" />
+                ) : editingCandidateId ? (
+                  <IconPencil className="h-4 w-4" />
                 ) : (
                   <IconPlus className="h-4 w-4" />
                 )}
-                Save learner
+                {editingCandidateId ? "Update learner" : "Save learner"}
               </button>
             </div>
           </form>
@@ -2119,6 +2421,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
           ) : (
             (() => {
               const actionState = getLearnerActionState(detailCandidate);
+              const canModify = canModifyLearnerBeforeSidh(detailCandidate);
               return (
                 <div className="space-y-5">
                   <div className="flex flex-wrap items-center gap-2">
@@ -2141,6 +2444,22 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                       value={detailCandidate.personalDetails.dateOfBirth ?? "Not provided"}
                     />
                     <DetailMeta label="Gender" value={detailCandidate.personalDetails.gender ?? "—"} />
+                    <DetailMeta
+                      label="Course"
+                      value={detailCandidate.referenceDetails?.courseName ?? "Not selected"}
+                    />
+                    <DetailMeta
+                      label="State"
+                      value={
+                        detailCandidate.locationDetails?.state ??
+                        detailCandidate.permanentAddress?.state ??
+                        "Not provided"
+                      }
+                    />
+                    <DetailMeta
+                      label="Training center"
+                      value={detailCandidate.locationDetails?.centerName ?? "Not provided"}
+                    />
                     <DetailMeta
                       label="Registration"
                       value={
@@ -2166,6 +2485,21 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                   ) : null}
 
                   <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-4">
+                    {canModify ? (
+                      <>
+                        <LearnerActionButton
+                          icon={<IconPencil className="h-3.5 w-3.5" />}
+                          label="Edit"
+                          onClick={() => openEditLearner(detailCandidate)}
+                        />
+                        <LearnerActionButton
+                          icon={<IconTrash className="h-3.5 w-3.5" />}
+                          label="Delete"
+                          onClick={() => void handleDeleteLearner(detailCandidate)}
+                          tone="danger"
+                        />
+                      </>
+                    ) : null}
                     {actionState.canQueue ? (
                       <LearnerActionButton
                         icon={<IconSend className="h-3.5 w-3.5" />}
@@ -2453,12 +2787,14 @@ function LearnerActionButton({
   icon: React.ReactNode;
   label: string;
   onClick: () => void;
-  tone?: "neutral" | "primary";
+  tone?: "danger" | "neutral" | "primary";
 }) {
   const toneClass =
     tone === "primary"
       ? "border-sky-200 bg-sky-600 text-white hover:bg-sky-700 disabled:bg-sky-300"
-      : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50";
+      : tone === "danger"
+        ? "border-rose-200 bg-white text-rose-700 hover:border-rose-300 hover:bg-rose-50"
+        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50";
 
   return (
     <button
@@ -2676,7 +3012,6 @@ function ImportRowViewModal({ onClose, row }: { onClose: () => void; row: Import
 
         <ImportDetailSection title="Personal details">
           <ImportDetailField label="Name prefix" value={details.namePrefix} />
-          <ImportDetailField label="First name" value={details.firstName} />
           <ImportDetailField label="Full name" value={details.fullName} />
           <ImportDetailField label="Gender" value={details.gender} />
           <ImportDetailField label="Date of birth" value={details.dob} />
@@ -2690,10 +3025,11 @@ function ImportRowViewModal({ onClose, row }: { onClose: () => void; row: Import
           <ImportDetailField label="Email" value={details.email} className="sm:col-span-2" />
         </ImportDetailSection>
 
-        <ImportDetailSection title="Location">
+        <ImportDetailSection title="Location & reference">
           <ImportDetailField label="State" value={details.state} />
           <ImportDetailField label="City" value={details.city} />
-          <ImportDetailField label="Training center" value={details.centerName} className="sm:col-span-2" />
+          <ImportDetailField label="Training center" value={details.centerName} />
+          <ImportDetailField label="Course (reference only)" value={details.courseName} />
         </ImportDetailSection>
 
         {row.errors.length > 0 ? (

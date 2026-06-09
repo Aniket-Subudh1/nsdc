@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { getPortalRedirectPath } from "@/lib/auth-redirect";
+import type { RoleKey } from "@/lib/server/rbac";
 import { LoginPageProps } from "@/types/auth";
 import { Mail, Lock, Eye, EyeOff, ArrowRight, Building2 } from "lucide-react";
 
@@ -25,12 +27,48 @@ export default function LoginPage({
   const [password, setPassword] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isPending, setIsPending] = useState(false);
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
 
   useEffect(() => {
     if (errorMessage) {
       toast.error(errorMessage);
     }
   }, [errorMessage]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function redirectIfAuthenticated() {
+      try {
+        const response = await fetch("/api/v1/auth/me", { credentials: "include" });
+        const payload = (await response.json()) as {
+          data?: {
+            user?: {
+              roles?: RoleKey[];
+            };
+          };
+          success: boolean;
+        };
+
+        if (!cancelled && response.ok && payload.success && payload.data?.user?.roles) {
+          router.replace(getPortalRedirectPath(portal, payload.data.user.roles));
+          router.refresh();
+        }
+      } catch {
+        // Ignore and show the login form.
+      } finally {
+        if (!cancelled) {
+          setIsCheckingSession(false);
+        }
+      }
+    }
+
+    void redirectIfAuthenticated();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [portal, router]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -71,6 +109,14 @@ export default function LoginPage({
     } finally {
       setIsPending(false);
     }
+  }
+
+  if (isCheckingSession) {
+    return (
+      <div className="rounded-3xl p-8 md:p-10 w-full">
+        <p className="text-center text-sm text-gray-500">Checking your session…</p>
+      </div>
+    );
   }
 
   return (

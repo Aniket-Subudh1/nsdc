@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import { jwtVerify, SignJWT } from "jose";
 import type { NextResponse } from "next/server";
 
+import { getAccessTokenTtlMinutes, getAuthCookieMaxAgeSeconds } from "@/lib/server/auth-session";
 import { getEnv } from "@/lib/server/env";
 import type { RoleKey } from "@/lib/server/rbac";
 
@@ -29,8 +30,7 @@ export async function verifyPassword(value: string, hash: string) {
 }
 
 export async function signAccessToken(payload: SessionTokenPayload) {
-  const env = getEnv();
-  const expiresInMinutes = env.ACCESS_TOKEN_TTL_MINUTES;
+  const expiresInMinutes = getAccessTokenTtlMinutes();
   const roles = Array.from(payload.roles);
   const centerIds = Array.from(payload.centerIds);
 
@@ -70,7 +70,7 @@ export function setAuthCookie(response: NextResponse, token: string) {
     sameSite: "lax",
     secure: env.NODE_ENV === "production",
     path: "/",
-    maxAge: env.ACCESS_TOKEN_TTL_MINUTES * 60,
+    maxAge: getAuthCookieMaxAgeSeconds(),
   });
 }
 

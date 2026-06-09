@@ -1,18 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { writeWorkbookToArrayBuffer } from "@/lib/spreadsheet/node";
+import { readFile } from "node:fs/promises";
+
+import { readWorkbookSheetsFromArrayBuffer, writeWorkbookToArrayBuffer } from "@/lib/spreadsheet/node";
 
 const mocks = vi.hoisted(() => ({
   connectToDatabase: vi.fn(),
   writeAuditLog: vi.fn(),
   candidateFindOne: vi.fn(),
   candidateCreate: vi.fn(),
+  candidateDeleteOne: vi.fn(),
   candidateUpdateOne: vi.fn(),
   importJobCreate: vi.fn(),
   importJobFindOne: vi.fn(),
   importRowInsertMany: vi.fn(),
   syncJobFindOne: vi.fn(),
   syncJobCreate: vi.fn(),
+  syncJobDeleteMany: vi.fn(),
+  courseFindOne: vi.fn(),
   outboxEventCreate: vi.fn(),
   programFindOne: vi.fn(),
   trainingCenterFindOne: vi.fn(),
@@ -32,6 +37,12 @@ vi.mock("@/lib/server/models/candidate", () => ({
     findOne: mocks.candidateFindOne,
     create: mocks.candidateCreate,
     updateOne: mocks.candidateUpdateOne,
+  },
+}));
+
+vi.mock("@/lib/server/models/course", () => ({
+  CourseModel: {
+    findOne: mocks.courseFindOne,
   },
 }));
 
@@ -56,6 +67,7 @@ vi.mock("@/lib/server/models/sync-job", () => ({
   SyncJobModel: {
     findOne: mocks.syncJobFindOne,
     create: mocks.syncJobCreate,
+    deleteMany: mocks.syncJobDeleteMany,
   },
 }));
 
@@ -87,6 +99,7 @@ import {
   commitCandidateImportJob,
   createCandidate,
   createCandidateImportJob,
+  deleteCandidate,
   linkExistingSidhCandidate,
   queueCandidateSyncBulk,
   queueCandidateSync,
@@ -197,6 +210,236 @@ describe("candidate services", () => {
     });
   });
 
+  it("rejects duplicate mobile numbers when registering a learner", async () => {
+    mocks.candidateFindOne.mockReturnValue(
+      createSelectQuery({ candidateId: "cand_existing", fullName: "Existing Learner" }),
+    );
+
+    await expect(
+      createCandidate(actor as never, {
+        personalDetails: {
+          namePrefix: "Mr",
+          firstName: "New Learner",
+          gender: "Male",
+          dob: "2005-06-10",
+          fatherName: "Parent Name",
+          guardianName: "",
+        },
+        contactDetails: {
+          email: "different@example.com",
+          phone: "9876543210",
+          countryCode: "91",
+        },
+        locationDetails: {
+          state: "Odisha",
+          city: "Bhubaneswar",
+          centerName: "Center One",
+          centerId: "tc_001",
+        },
+      }),
+    ).rejects.toMatchObject({
+      errorCode: "DUPLICATE_MOBILE_NUMBER",
+    });
+
+    expect(mocks.candidateFindOne).toHaveBeenCalledWith({
+      mobileNumber: "9876543210",
+    });
+    expect(mocks.candidateCreate).not.toHaveBeenCalled();
+  });
+
+  it("allows the same email for different mobile numbers", async () => {
+    mocks.candidateFindOne.mockReturnValue(createSelectQuery(null));
+    mocks.candidateCreate.mockImplementation(async (value: Record<string, unknown>) => value);
+
+    const sharedEmail = "shared@example.com";
+    const first = await createCandidate(actor as never, {
+      personalDetails: {
+        namePrefix: "Mr",
+        firstName: "Learner One",
+        gender: "Male",
+        dob: "2005-06-10",
+        fatherName: "Parent One",
+        guardianName: "",
+      },
+      contactDetails: {
+        email: sharedEmail,
+        phone: "9876543211",
+        countryCode: "91",
+      },
+      locationDetails: {
+        state: "Odisha",
+        city: "Bhubaneswar",
+        centerName: "Center One",
+        centerId: "tc_001",
+      },
+    });
+
+    const second = await createCandidate(actor as never, {
+      personalDetails: {
+        namePrefix: "Mrs",
+        firstName: "Learner Two",
+        gender: "Female",
+        dob: "2006-07-11",
+        fatherName: "Parent Two",
+        guardianName: "",
+      },
+      contactDetails: {
+        email: sharedEmail,
+        phone: "9876543212",
+        countryCode: "91",
+      },
+      locationDetails: {
+        state: "Odisha",
+        city: "Bhubaneswar",
+        centerName: "Center One",
+        centerId: "tc_001",
+      },
+    });
+
+    expect(first.contactDetails.email).toBe(sharedEmail);
+    expect(second.contactDetails.email).toBe(sharedEmail);
+    expect(mocks.candidateCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses the selected training center id when registering a learner", async () => {
+    mocks.trainingCenterFindOne.mockReturnValue(
+      createSelectQuery({ centerId: "tc_001", centerName: "Center One", status: "active" }),
+    );
+    mocks.candidateFindOne.mockReturnValue(createSelectQuery(null));
+    mocks.candidateCreate.mockImplementation(async (value: Record<string, unknown>) => value);
+
+    const result = await createCandidate(actor as never, {
+      personalDetails: {
+        namePrefix: "Mr",
+        firstName: "Amit Kumar",
+        gender: "Male",
+        dob: "2005-06-10",
+        fatherName: "Suresh Kumar",
+        guardianName: "",
+      },
+      contactDetails: {
+        email: "amit@example.com",
+        phone: "9876543211",
+        countryCode: "91",
+      },
+      locationDetails: {
+        state: "Odisha",
+        city: "Bhubaneswar",
+        centerName: "Center One",
+        centerId: "tc_001",
+      },
+    });
+
+    expect(result.centerId).toBe("tc_001");
+    expect(result.locationDetails.centerName).toBe("Center One");
+    expect(mocks.trainingCenterFindOne).toHaveBeenCalledWith({ centerId: "tc_001" });
+  });
+
+  it("stores reference course details when registering a learner", async () => {
+    mocks.candidateFindOne.mockReturnValue(createSelectQuery(null));
+    mocks.candidateCreate.mockImplementation(async (value: Record<string, unknown>) => ({
+      ...value,
+      candidateId: "cand_001",
+      syncState: { status: "not_queued" },
+    }));
+
+    const result = await createCandidate(actor as never, {
+      personalDetails: {
+        namePrefix: "Mr",
+        firstName: "Amit Kumar",
+        gender: "Male",
+        dob: "2005-06-10",
+        fatherName: "Suresh Kumar",
+        guardianName: "",
+      },
+      contactDetails: {
+        email: "amit@example.com",
+        phone: "9876543211",
+        countryCode: "91",
+      },
+      locationDetails: {
+        state: "Odisha",
+        city: "Bhubaneswar",
+        centerName: "Center One",
+        centerId: "tc_001",
+      },
+      referenceDetails: {
+        courseId: "cor_001",
+        courseName: "Retail Sales Associate",
+      },
+    });
+
+    expect(mocks.candidateCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceCourseId: "cor_001",
+        referenceCourseName: "Retail Sales Associate",
+      }),
+    );
+    expect(result.referenceDetails).toEqual({
+      courseId: "cor_001",
+      courseName: "Retail Sales Associate",
+    });
+  });
+
+  it("resolves reference course name from master data when only course id is provided", async () => {
+    mocks.candidateFindOne.mockReturnValue(createSelectQuery(null));
+    mocks.courseFindOne.mockReturnValue(createSelectQuery({ courseName: "Retail Sales Associate" }));
+    mocks.candidateCreate.mockImplementation(async (value: Record<string, unknown>) => ({
+      ...value,
+      candidateId: "cand_002",
+      syncState: { status: "not_queued" },
+    }));
+
+    await createCandidate(actor as never, {
+      personalDetails: {
+        namePrefix: "Mr",
+        firstName: "Amit Kumar",
+        gender: "Male",
+        dob: "2005-06-10",
+        fatherName: "Suresh Kumar",
+        guardianName: "",
+      },
+      contactDetails: {
+        email: "amit@example.com",
+        phone: "9876543211",
+        countryCode: "91",
+      },
+      locationDetails: {
+        state: "Odisha",
+        city: "Bhubaneswar",
+        centerName: "Center One",
+        centerId: "tc_001",
+      },
+      referenceDetails: {
+        courseId: "cor_001",
+        courseName: "Retail Sales Associate",
+      },
+    });
+
+    expect(mocks.courseFindOne).not.toHaveBeenCalled();
+  });
+
+  it("deletes learners that have not been sent to SIDH yet", async () => {
+    const deleteOne = vi.fn().mockResolvedValue(undefined);
+    mocks.candidateFindOne.mockResolvedValue({
+      candidateId: "cand_001",
+      centerId: "tc_001",
+      programId: "prg_001",
+      fullName: "Amit Kumar",
+      registrationMode: "internal_registration",
+      sidhCandidateId: null,
+      syncState: { status: "not_queued" },
+      deleteOne,
+    });
+    mocks.syncJobDeleteMany.mockResolvedValue({ deletedCount: 0 });
+
+    const result = await deleteCandidate(actor as never, "cand_001");
+
+    expect(result).toEqual({ candidateId: "cand_001", deleted: true });
+    expect(mocks.syncJobDeleteMany).toHaveBeenCalledWith({ candidateId: "cand_001" });
+    expect(deleteOne).toHaveBeenCalledTimes(1);
+  });
+
   it("creates a candidate from the registration payload without requiring active master data", async () => {
     mocks.programFindOne.mockReturnValue(createSelectQuery(null));
     mocks.trainingCenterFindOne.mockReturnValue(createSelectQuery(null));
@@ -233,7 +476,93 @@ describe("candidate services", () => {
     expect(result.programId).toBe("candidate_registration");
     expect(result.centerId).toBe("tc_001");
     expect(mocks.programFindOne).not.toHaveBeenCalled();
-    expect(mocks.trainingCenterFindOne).not.toHaveBeenCalled();
+    expect(mocks.trainingCenterFindOne).toHaveBeenCalledWith({
+      centerName: { $regex: /^Center One$/i },
+      status: "active",
+    });
+  });
+
+  it("reads the published candidate import template workbook", async () => {
+    const workbookBuffer = await readFile("public/candidate_details.xlsx");
+    const sheets = await readWorkbookSheetsFromArrayBuffer(workbookBuffer);
+
+    expect(sheets[0]?.rows.length).toBeGreaterThan(0);
+    expect(sheets[0]?.rows[0]).toMatchObject({
+      "Name Prefix": "Mr",
+      "Full Name": "Rohit Kumar",
+      Gender: "Male",
+      "Center Name": "Center One",
+    });
+  });
+
+  it("stages import rows with reference course names from the workbook", async () => {
+    mocks.candidateFindOne.mockReturnValue(createSelectQuery(null));
+    mocks.courseFindOne.mockReturnValue(
+      createSelectQuery({ courseId: "cor_001", courseName: "Retail Sales Associate" }),
+    );
+    mocks.importJobCreate.mockImplementation(async (value: Record<string, unknown>) => value);
+    mocks.importRowInsertMany.mockResolvedValue([]);
+
+    const workbook = await buildWorkbook([
+      {
+        "Name Prefix": "Mr",
+        "Full Name": "Rohit Kumar",
+        Gender: "Male",
+        DOB: "10/06/2005",
+        "Father's Name": "Suresh Kumar",
+        Email: "rohit@example.com",
+        "Country Code": "91",
+        Phone: "9876543210",
+        State: "Odisha",
+        City: "Bhubaneswar",
+        "Center Name": "Center One",
+        "Course (reference only)": "Retail Sales Associate",
+      },
+    ]);
+
+    const result = await createCandidateImportJob(actor as never, {
+      programId: "prg_001",
+      centerId: "tc_001",
+      registrationMode: "internal_registration",
+    }, "candidates.xlsx", workbook as ArrayBuffer);
+
+    expect(result.totalRows).toBe(1);
+    expect(result.validRows).toBe(1);
+    expect(mocks.courseFindOne).toHaveBeenCalled();
+  });
+
+  it("marks import rows duplicate when the phone number already exists", async () => {
+    mocks.candidateFindOne.mockReturnValue(
+      createSelectQuery({ candidateId: "cand_existing", fullName: "Existing Learner" }),
+    );
+    mocks.importJobCreate.mockImplementation(async (value: Record<string, unknown>) => value);
+    mocks.importRowInsertMany.mockResolvedValue([]);
+
+    const workbook = await buildWorkbook([
+      {
+        "Name Prefix": "Mr",
+        "Full Name": "Rohit Kumar",
+        Gender: "Male",
+        DOB: "10/06/2005",
+        "Father's Name": "Suresh Kumar",
+        Email: "rohit@example.com",
+        "Country Code": "91",
+        Phone: "9876543210",
+        State: "Odisha",
+        City: "Bhubaneswar",
+        "Center Name": "Center One",
+      },
+    ]);
+
+    const result = await createCandidateImportJob(actor as never, {
+      programId: "prg_001",
+      centerId: "tc_001",
+      registrationMode: "internal_registration",
+    }, "candidates.xlsx", workbook as ArrayBuffer);
+
+    expect(result.totalRows).toBe(1);
+    expect(result.validRows).toBe(0);
+    expect(result.duplicateRows).toBe(1);
   });
 
   it("stages import rows with valid and invalid counts", async () => {
@@ -244,7 +573,7 @@ describe("candidate services", () => {
     const workbook = await buildWorkbook([
       {
         "Name Prefix": "Mr",
-        "First Name": "Rohit Kumar",
+        "Full Name": "Rohit Kumar",
         Gender: "Male",
         DOB: "10/06/2005",
         "Father's Name": "Suresh Kumar",
@@ -257,7 +586,7 @@ describe("candidate services", () => {
       },
       {
         "Name Prefix": "Mr",
-        "First Name": "Missing Mobile",
+        "Full Name": "Missing Mobile",
         Gender: "Male",
         DOB: "10/06/2005",
         "Father's Name": "Parent",
@@ -302,6 +631,70 @@ describe("candidate services", () => {
       ]),
       { ordered: false },
     );
+  });
+
+  it("marks import rows invalid when name prefix is missing", async () => {
+    mocks.candidateFindOne.mockReturnValue(createSelectQuery(null));
+    mocks.importJobCreate.mockImplementation(async (value: Record<string, unknown>) => value);
+    mocks.importRowInsertMany.mockResolvedValue([]);
+
+    const workbook = await buildWorkbook([
+      {
+        "Name Prefix": "",
+        "Full Name": "Rohit Kumar",
+        Gender: "Male",
+        DOB: "10/06/2005",
+        "Father's Name": "Suresh Kumar",
+        Email: "rohit@example.com",
+        "Country Code": "91",
+        Phone: "9876543210",
+        State: "Odisha",
+        City: "Bhubaneswar",
+        "Center Name": "Center One",
+      },
+    ]);
+
+    const result = await createCandidateImportJob(actor as never, {
+      programId: "prg_001",
+      centerId: "tc_001",
+      registrationMode: "internal_registration",
+    }, "candidates.xlsx", workbook as ArrayBuffer);
+
+    expect(result.totalRows).toBe(1);
+    expect(result.validRows).toBe(0);
+    expect(result.invalidRows).toBe(1);
+  });
+
+  it("marks import rows invalid when gender is not allowed", async () => {
+    mocks.candidateFindOne.mockReturnValue(createSelectQuery(null));
+    mocks.importJobCreate.mockImplementation(async (value: Record<string, unknown>) => value);
+    mocks.importRowInsertMany.mockResolvedValue([]);
+
+    const workbook = await buildWorkbook([
+      {
+        "Name Prefix": "Mr",
+        "Full Name": "Rohit Kumar",
+        Gender: "Other",
+        DOB: "10/06/2005",
+        "Father's Name": "Suresh Kumar",
+        Email: "rohit@example.com",
+        "Country Code": "91",
+        Phone: "9876543210",
+        State: "Odisha",
+        City: "Bhubaneswar",
+        "Center Name": "Center One",
+      },
+    ]);
+
+    const result = await createCandidateImportJob(actor as never, {
+      programId: "prg_001",
+      centerId: "tc_001",
+      registrationMode: "internal_registration",
+    }, "candidates.xlsx", workbook as ArrayBuffer);
+
+    expect(result.totalRows).toBe(1);
+    expect(result.validRows).toBe(0);
+    expect(result.invalidRows).toBe(1);
   });
 
   it("links an existing SIDH candidate without queueing sync", async () => {

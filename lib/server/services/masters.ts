@@ -1,3 +1,9 @@
+import {
+  deriveSidhBatchReferenceCode,
+  SIDH_BATCH_ENUM_CATEGORIES,
+  type SidhBatchFieldKey,
+  type SidhBatchFieldOptionsResponse,
+} from "@/lib/sidh-batch-field-options";
 import { ApiError } from "@/lib/server/http";
 import { getSidhBatchContext } from "@/lib/server/env";
 import { createPrefixedId } from "@/lib/server/ids";
@@ -1507,6 +1513,163 @@ export async function getCandidateReferenceData(actor: AuthSession) {
     courses: usableCourses.map((item) => serializeCourse(item)),
     enums: groupedReferenceValues,
   };
+}
+
+const SIDH_BATCH_FIELD_KEYS = Object.keys(SIDH_BATCH_ENUM_CATEGORIES) as SidhBatchFieldKey[];
+
+function serializeSidhBatchReferenceOption(item: {
+  code: string;
+  label: string;
+  referenceValueId: string;
+  sortOrder?: number | null;
+}) {
+  return {
+    referenceValueId: item.referenceValueId,
+    code: item.code,
+    label: item.label,
+    sortOrder: item.sortOrder ?? 0,
+  };
+}
+
+export async function listSidhBatchFieldOptions(actor: AuthSession): Promise<SidhBatchFieldOptionsResponse> {
+  await connectToDatabase();
+  ensureCanReadMasters(actor);
+
+  const categories = Object.values(SIDH_BATCH_ENUM_CATEGORIES);
+  const referenceValues = await ReferenceValueModel.find({
+    category: { $in: categories },
+    status: "active",
+  }).sort({ category: 1, sortOrder: 1, label: 1 });
+
+  const groupedByCategory = referenceValues.reduce<
+    Record<string, ReturnType<typeof serializeSidhBatchReferenceOption>[]>
+  >((accumulator, item) => {
+    accumulator[item.category] ??= [];
+    accumulator[item.category].push(serializeSidhBatchReferenceOption(item));
+    return accumulator;
+  }, {});
+
+  return SIDH_BATCH_FIELD_KEYS.reduce<SidhBatchFieldOptionsResponse>((accumulator, field) => {
+    const category = SIDH_BATCH_ENUM_CATEGORIES[field];
+    accumulator[field] = {
+      category,
+      options: groupedByCategory[category] ?? [],
+    };
+    return accumulator;
+  }, {} as SidhBatchFieldOptionsResponse);
+}
+
+async function resolveUniqueSidhBatchReferenceCode(category: string, label: string) {
+  const baseCode = deriveSidhBatchReferenceCode(label);
+  let code = baseCode;
+  let suffix = 2;
+
+  while (await ReferenceValueModel.exists({ category, code })) {
+    code = `${baseCode}_${suffix}`;
+    suffix += 1;
+  }
+
+  return code;
+}
+
+export async function createSidhBatchFieldOption(
+  actor: AuthSession,
+  input: { field: SidhBatchFieldKey; label: string },
+  requestId?: string,
+) {
+  await connectToDatabase();
+  ensureCanWriteMasters(actor);
+
+  const category = SIDH_BATCH_ENUM_CATEGORIES[input.field];
+  const label = normalizeString(input.label);
+  const existingOption = await ReferenceValueModel.findOne({ category, label, status: "active" });
+
+  if (existingOption) {
+    throw new ApiError(409, "SIDH_BATCH_OPTION_EXISTS", "This option already exists for the selected field");
+  }
+
+  const latestOption = await ReferenceValueModel.findOne({ category }).sort({ sortOrder: -1 }).limit(1);
+  const code = await resolveUniqueSidhBatchReferenceCode(category, label);
+  const referenceValue = await ReferenceValueModel.create({
+    referenceValueId: createPrefixedId("ref"),
+    category,
+    code,
+    label,
+    sortOrder: (latestOption?.sortOrder ?? 0) + 1,
+    status: "active",
+  });
+
+  await writeAuditLog({
+    action: "masters.sidh_batch_field_option.created",
+    actorUserId: actor.user.id,
+    entityId: referenceValue.referenceValueId,
+    entityType: "reference_value",
+    metadata: { category, code, field: input.field, label },
+    requestId,
+  });
+
+  return serializeSidhBatchReferenceOption(referenceValue);
+}
+
+export async function updateSidhBatchFieldOption(
+  actor: AuthSession,
+  referenceValueId: string,
+  input: { label?: string; sortOrder?: number; status?: "active" | "inactive" },
+  requestId?: string,
+) {
+  await connectToDatabase();
+  ensureCanWriteMasters(actor);
+
+  const referenceValue = await ReferenceValueModel.findOne({ referenceValueId });
+
+  const sidhBatchCategories = Object.values(SIDH_BATCH_ENUM_CATEGORIES);
+
+  if (!referenceValue || !sidhBatchCategories.includes(referenceValue.category as (typeof sidhBatchCategories)[number])) {
+    throw new ApiError(404, "SIDH_BATCH_OPTION_NOT_FOUND", "SIDH batch field option not found");
+  }
+
+  if (input.label !== undefined) {
+    const label = normalizeString(input.label);
+    const duplicate = await ReferenceValueModel.findOne({
+      category: referenceValue.category,
+      label,
+      referenceValueId: { $ne: referenceValue.referenceValueId },
+      status: "active",
+    });
+
+    if (duplicate) {
+      throw new ApiError(409, "SIDH_BATCH_OPTION_EXISTS", "This option already exists for the selected field");
+    }
+
+    referenceValue.label = label;
+  }
+
+  if (input.sortOrder !== undefined) {
+    referenceValue.sortOrder = input.sortOrder;
+  }
+
+  if (input.status !== undefined) {
+    referenceValue.status = input.status;
+  }
+
+  await referenceValue.save();
+
+  await writeAuditLog({
+    action: "masters.sidh_batch_field_option.updated",
+    actorUserId: actor.user.id,
+    entityId: referenceValue.referenceValueId,
+    entityType: "reference_value",
+    metadata: {
+      category: referenceValue.category,
+      code: referenceValue.code,
+      label: referenceValue.label,
+      sortOrder: referenceValue.sortOrder,
+      status: referenceValue.status,
+    },
+    requestId,
+  });
+
+  return serializeSidhBatchReferenceOption(referenceValue);
 }
 
 function addDays(date: Date, days: number) {

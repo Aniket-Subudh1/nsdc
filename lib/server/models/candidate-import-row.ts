@@ -32,7 +32,7 @@ const candidateImportRowSchema = new mongoose.Schema(
       default: "invalid",
       index: true,
     },
-    errors: {
+    validationErrors: {
       type: [
         new mongoose.Schema(
           {

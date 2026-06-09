@@ -76,6 +76,35 @@ type RoleKey =
 
 type StatusFilter = "all" | "active" | "inactive";
 
+type AdminUserType = "admin" | "training_partner";
+
+const ADMIN_USER_TYPE_OPTIONS: Array<{
+  description: string;
+  label: string;
+  role: RoleKey;
+  value: AdminUserType;
+}> = [
+  {
+    label: "Admin",
+    value: "admin",
+    role: "platform_admin",
+    description: "Full access to all training centers and platform management",
+  },
+  {
+    label: "Training Partner",
+    value: "training_partner",
+    role: "center_manager",
+    description: "Creates and monitors candidates and batches for an assigned training center",
+  },
+];
+
+const TRAINING_PARTNER_ROLES: RoleKey[] = [
+  "training_partner_admin",
+  "center_manager",
+  "trainer_data_entry",
+  "auditor_viewer",
+];
+
 const ROLE_OPTIONS: Array<{ description: string; label: string; value: RoleKey }> = [
   { label: "Platform Admin", value: "platform_admin", description: "Full platform-wide access" },
   { label: "Training Partner Admin", value: "training_partner_admin", description: "Scoped management access" },
@@ -83,6 +112,27 @@ const ROLE_OPTIONS: Array<{ description: string; label: string; value: RoleKey }
   { label: "Trainer Data Entry", value: "trainer_data_entry", description: "Operational data entry only" },
   { label: "Auditor Viewer", value: "auditor_viewer", description: "Read-only audit visibility" },
 ];
+
+function getAdminUserType(roles: RoleKey[]): AdminUserType {
+  return roles.includes("platform_admin") ? "admin" : "training_partner";
+}
+
+function adminUserTypeToRoles(userType: AdminUserType): RoleKey[] {
+  const option = ADMIN_USER_TYPE_OPTIONS.find((entry) => entry.value === userType);
+  return option ? [option.role] : ["center_manager"];
+}
+
+function isAdminRole(roles: RoleKey[]) {
+  return roles.includes("platform_admin");
+}
+
+function isTrainingPartnerUser(roles: RoleKey[]) {
+  return !isAdminRole(roles) && roles.some((role) => TRAINING_PARTNER_ROLES.includes(role));
+}
+
+function requiresTrainingCenter(roles: RoleKey[]) {
+  return !isAdminRole(roles);
+}
 
 const ROLE_COLORS: Record<RoleKey, string> = {
   platform_admin: "bg-violet-100 text-violet-700",
@@ -102,7 +152,7 @@ const ROLE_CHART_COLORS: Record<RoleKey, string> = {
 
 const portalContent = {
   admin: {
-    description: "Create accounts, assign roles, and control which training centers each person can access.",
+    description: "Create admins with platform-wide access or training partners scoped to a single training center.",
     heading: "Team & Users",
   },
   training_partner: {
@@ -117,7 +167,8 @@ const makeCreateForm = (portal: "admin" | "training_partner") => ({
   mobileNumber: "",
   name: "",
   temporaryPassword: "",
-  roles: [portal === "admin" ? ("platform_admin" as RoleKey) : ("center_manager" as RoleKey)],
+  roles: adminUserTypeToRoles(portal === "admin" ? "admin" : "training_partner"),
+  userType: (portal === "admin" ? "admin" : "training_partner") as AdminUserType,
 });
 
 const EMPTY_EDIT_FORM = {
@@ -147,8 +198,10 @@ export default function UsersManager({ portal }: UsersManagerProps) {
   const [roleFilter, setRoleFilter] = useState<RoleKey | "all">("all");
   const [createForm, setCreateForm] = useState(makeCreateForm(portal));
   const [editForm, setEditForm] = useState(EMPTY_EDIT_FORM);
+  const [editUserType, setEditUserType] = useState<AdminUserType>("admin");
 
   const content = portalContent[portal];
+  const isAdminPortal = portal === "admin";
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const selectedUser = users.find((u) => u.id === selectedUserId) ?? null;
 
@@ -158,32 +211,45 @@ export default function UsersManager({ portal }: UsersManagerProps) {
       const matchesSearch =
         !q || user.name.toLowerCase().includes(q) || user.email.toLowerCase().includes(q);
       const matchesStatus = statusFilter === "all" || user.status === statusFilter;
-      const matchesRole = roleFilter === "all" || user.roles.includes(roleFilter);
+      const matchesRole =
+        roleFilter === "all" ||
+        (isAdminPortal && roleFilter === "center_manager"
+          ? isTrainingPartnerUser(user.roles)
+          : user.roles.includes(roleFilter));
       return matchesSearch && matchesStatus && matchesRole;
     });
-  }, [users, searchQuery, statusFilter, roleFilter]);
+  }, [users, searchQuery, statusFilter, roleFilter, isAdminPortal]);
 
   const stats = useMemo(
     () => ({
       total,
       active: users.filter((u) => u.status === "active").length,
       inactive: users.filter((u) => u.status === "inactive").length,
-      admins: users.filter(
-        (u) => u.roles.includes("platform_admin") || u.roles.includes("training_partner_admin"),
-      ).length,
+      admins: users.filter((u) => u.roles.includes("platform_admin")).length,
+      trainingPartners: users.filter((u) => isTrainingPartnerUser(u.roles)).length,
     }),
     [users, total],
   );
 
   function applyUserToEditForm(user: UserRecord | null) {
-    if (!user) { setEditForm(EMPTY_EDIT_FORM); return; }
+    if (!user) {
+      setEditForm(EMPTY_EDIT_FORM);
+      setEditUserType("admin");
+      return;
+    }
+    const userType = getAdminUserType(user.roles);
+    setEditUserType(userType);
+    const centerIds =
+      isAdminPortal && userType === "training_partner"
+        ? user.centerIds.slice(0, 1)
+        : user.centerIds;
     setEditForm({
-      centerIds: user.centerIds,
+      centerIds,
       email: user.email,
       mobileNumber: user.mobileNumber ?? "",
       mustChangePassword: user.mustChangePassword,
       name: user.name,
-      roles: user.roles,
+      roles: isAdminPortal ? adminUserTypeToRoles(userType) : user.roles,
       status: user.status,
     });
   }
@@ -231,6 +297,20 @@ export default function UsersManager({ portal }: UsersManagerProps) {
 
   async function handleCreateUser(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    const roles = isAdminPortal ? adminUserTypeToRoles(createForm.userType) : createForm.roles;
+    const centerIds = isAdminRole(roles) ? [] : createForm.centerIds;
+
+    if (requiresTrainingCenter(roles) && centerIds.length === 0) {
+      toast.error("Training partners must be assigned to a training center");
+      return;
+    }
+
+    if (isAdminPortal && roles.length === 1 && roles[0] === "center_manager" && centerIds.length !== 1) {
+      toast.error("Training partners must be assigned to exactly one training center");
+      return;
+    }
+
     setIsSaving(true);
     try {
       await apiFetch<UserRecord>("/api/v1/admin/users", {
@@ -239,8 +319,8 @@ export default function UsersManager({ portal }: UsersManagerProps) {
           name: createForm.name,
           email: createForm.email,
           mobileNumber: createForm.mobileNumber || undefined,
-          roles: createForm.roles,
-          centerIds: createForm.centerIds,
+          roles,
+          centerIds,
           temporaryPassword: createForm.temporaryPassword,
         }),
       });
@@ -257,6 +337,20 @@ export default function UsersManager({ portal }: UsersManagerProps) {
 
   async function handleSaveDetails() {
     if (!selectedUser) return;
+
+    const roles = isAdminPortal ? adminUserTypeToRoles(editUserType) : editForm.roles;
+    const centerIds = isAdminRole(roles) ? [] : editForm.centerIds;
+
+    if (requiresTrainingCenter(roles) && centerIds.length === 0) {
+      toast.error("Training partners must be assigned to a training center");
+      return;
+    }
+
+    if (isAdminPortal && roles.length === 1 && roles[0] === "center_manager" && centerIds.length !== 1) {
+      toast.error("Training partners must be assigned to exactly one training center");
+      return;
+    }
+
     setIsSaving(true);
     try {
       await apiFetch<UserRecord>(`/api/v1/admin/users/${selectedUser.id}`, {
@@ -269,13 +363,15 @@ export default function UsersManager({ portal }: UsersManagerProps) {
           mustChangePassword: editForm.mustChangePassword,
         }),
       });
+      if (!isAdminRole(roles)) {
+        await apiFetch<UserRecord>(`/api/v1/admin/users/${selectedUser.id}/centers`, {
+          method: "POST",
+          body: JSON.stringify({ centerIds }),
+        });
+      }
       await apiFetch<UserRecord>(`/api/v1/admin/users/${selectedUser.id}/roles`, {
         method: "POST",
-        body: JSON.stringify({ roles: editForm.roles }),
-      });
-      await apiFetch<UserRecord>(`/api/v1/admin/users/${selectedUser.id}/centers`, {
-        method: "POST",
-        body: JSON.stringify({ centerIds: editForm.centerIds }),
+        body: JSON.stringify({ roles }),
       });
       setShowEditModal(false);
       toast.success("User updated successfully");
@@ -296,11 +392,24 @@ export default function UsersManager({ portal }: UsersManagerProps) {
   const countByStatus = (s: StatusFilter) =>
     s === "all" ? users.length : users.filter((u) => u.status === s).length;
 
-  const roleChartItems = ROLE_OPTIONS.map((role) => ({
-    label: role.label,
-    value: users.filter((user) => user.roles.includes(role.value)).length,
-    colorClass: ROLE_CHART_COLORS[role.value],
-  }));
+  const roleChartItems = isAdminPortal
+    ? ADMIN_USER_TYPE_OPTIONS.map((role) => ({
+        label: role.label,
+        value:
+          role.value === "admin"
+            ? users.filter((user) => user.roles.includes("platform_admin")).length
+            : users.filter((user) => isTrainingPartnerUser(user.roles)).length,
+        colorClass: role.value === "admin" ? "bg-violet-500" : "bg-sky-500",
+      }))
+    : ROLE_OPTIONS.map((role) => ({
+        label: role.label,
+        value: users.filter((user) => user.roles.includes(role.value)).length,
+        colorClass: ROLE_CHART_COLORS[role.value],
+      }));
+
+  const roleFilterOptions = isAdminPortal
+    ? ADMIN_USER_TYPE_OPTIONS.map((role) => ({ label: role.label, value: role.role }))
+    : ROLE_OPTIONS.map((role) => ({ label: role.label, value: role.value }));
 
   return (
     <div className="flex flex-1 flex-col gap-6 bg-slate-100 px-4 py-4 md:px-8 md:py-8">
@@ -353,18 +462,15 @@ export default function UsersManager({ portal }: UsersManagerProps) {
           active={statusFilter === "inactive"}
         />
         <StatCard
-          label="Administrators"
-          value={isLoading ? null : stats.admins}
+          label={isAdminPortal ? "Admins" : "Administrators"}
+          value={isLoading ? null : isAdminPortal ? stats.admins : stats.admins + stats.trainingPartners}
           icon={<IconShield className="h-5 w-5" />}
           onClick={() =>
             setRoleFilter((current) =>
-              current === "platform_admin" || current === "training_partner_admin" ? "all" : "platform_admin",
+              current === "platform_admin" ? "all" : "platform_admin",
             )
           }
-          active={
-            roleFilter === "platform_admin" ||
-            roleFilter === "training_partner_admin"
-          }
+          active={roleFilter === "platform_admin"}
         />
       </div>
 
@@ -379,10 +485,21 @@ export default function UsersManager({ portal }: UsersManagerProps) {
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
           <h3 className="text-sm font-semibold text-neutral-800">Quick tips</h3>
           <ul className="mt-4 space-y-3 text-sm leading-6 text-neutral-600">
-            <li>Tap a stat card above to filter the list instantly.</li>
-            <li>Assign training centers so each person only sees their scope.</li>
-            <li>Use inactive status instead of deleting accounts you may need again.</li>
-            <li>Force a password change when handing out temporary credentials.</li>
+            {isAdminPortal ? (
+              <>
+                <li>Admins get full platform access across all training centers.</li>
+                <li>Training partners must be linked to a training center for candidates and batches.</li>
+                <li>Training partners sign in via the Training Partner login page.</li>
+                <li>Use inactive status instead of deleting accounts you may need again.</li>
+              </>
+            ) : (
+              <>
+                <li>Tap a stat card above to filter the list instantly.</li>
+                <li>Assign training centers so each person only sees their scope.</li>
+                <li>Use inactive status instead of deleting accounts you may need again.</li>
+                <li>Force a password change when handing out temporary credentials.</li>
+              </>
+            )}
           </ul>
         </div>
       </div>
@@ -443,7 +560,7 @@ export default function UsersManager({ portal }: UsersManagerProps) {
                 className="h-10 w-full appearance-none rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-8 text-sm text-slate-700 outline-none transition focus:border-sky-300 focus:bg-white sm:w-44"
               >
                 <option value="all">All roles</option>
-                {ROLE_OPTIONS.map((r) => (
+                {roleFilterOptions.map((r) => (
                   <option key={r.value} value={r.value}>
                     {r.label}
                   </option>
@@ -489,7 +606,12 @@ export default function UsersManager({ portal }: UsersManagerProps) {
                 </tr>
               ) : (
                 filteredUsers.map((user) => (
-                  <UserTableRow key={user.id} user={user} onEdit={() => openEditModal(user)} />
+                  <UserTableRow
+                    key={user.id}
+                    user={user}
+                    portal={portal}
+                    onEdit={() => openEditModal(user)}
+                  />
                 ))
               )}
             </tbody>
@@ -509,7 +631,12 @@ export default function UsersManager({ portal }: UsersManagerProps) {
             </div>
           ) : (
             filteredUsers.map((user) => (
-              <UserMobileCard key={user.id} user={user} onEdit={() => openEditModal(user)} />
+              <UserMobileCard
+                key={user.id}
+                user={user}
+                portal={portal}
+                onEdit={() => openEditModal(user)}
+              />
             ))
           )}
         </div>
@@ -628,30 +755,61 @@ export default function UsersManager({ portal }: UsersManagerProps) {
               </FormField>
             </div>
 
-            <ModalRoleSelector
-              roles={createForm.roles}
-              onToggle={(role) =>
-                setCreateForm((f) => ({
-                  ...f,
-                  roles: f.roles.includes(role)
-                    ? f.roles.filter((r) => r !== role)
-                    : [...f.roles, role],
-                }))
-              }
-            />
-
-            <ModalCenterSelector
-              centers={centers}
-              selectedIds={createForm.centerIds}
-              onToggle={(id) =>
-                setCreateForm((f) => ({
-                  ...f,
-                  centerIds: f.centerIds.includes(id)
-                    ? f.centerIds.filter((c) => c !== id)
-                    : [...f.centerIds, id],
-                }))
-              }
-            />
+            {isAdminPortal ? (
+              <>
+                <ModalAdminUserTypeSelector
+                  userType={createForm.userType}
+                  onChange={(userType) =>
+                    setCreateForm((f) => ({
+                      ...f,
+                      userType,
+                      roles: adminUserTypeToRoles(userType),
+                      centerIds: userType === "admin" ? [] : f.centerIds,
+                    }))
+                  }
+                />
+                {createForm.userType === "training_partner" ? (
+                  <ModalCenterSelector
+                    centers={centers}
+                    selectedIds={createForm.centerIds}
+                    multiple={false}
+                    required
+                    onToggle={(id) =>
+                      setCreateForm((f) => ({
+                        ...f,
+                        centerIds: f.centerIds.includes(id) ? [] : [id],
+                      }))
+                    }
+                  />
+                ) : null}
+              </>
+            ) : (
+              <>
+                <ModalRoleSelector
+                  roles={createForm.roles}
+                  onToggle={(role) =>
+                    setCreateForm((f) => ({
+                      ...f,
+                      roles: f.roles.includes(role)
+                        ? f.roles.filter((r) => r !== role)
+                        : [...f.roles, role],
+                    }))
+                  }
+                />
+                <ModalCenterSelector
+                  centers={centers}
+                  selectedIds={createForm.centerIds}
+                  onToggle={(id) =>
+                    setCreateForm((f) => ({
+                      ...f,
+                      centerIds: f.centerIds.includes(id)
+                        ? f.centerIds.filter((c) => c !== id)
+                        : [...f.centerIds, id],
+                    }))
+                  }
+                />
+              </>
+            )}
 
             <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
               <button
@@ -750,30 +908,61 @@ export default function UsersManager({ portal }: UsersManagerProps) {
               </div>
             </label>
 
-            <ModalRoleSelector
-              roles={editForm.roles}
-              onToggle={(role) =>
-                setEditForm((f) => ({
-                  ...f,
-                  roles: f.roles.includes(role)
-                    ? f.roles.filter((r) => r !== role)
-                    : [...f.roles, role],
-                }))
-              }
-            />
-
-            <ModalCenterSelector
-              centers={centers}
-              selectedIds={editForm.centerIds}
-              onToggle={(id) =>
-                setEditForm((f) => ({
-                  ...f,
-                  centerIds: f.centerIds.includes(id)
-                    ? f.centerIds.filter((c) => c !== id)
-                    : [...f.centerIds, id],
-                }))
-              }
-            />
+            {isAdminPortal ? (
+              <>
+                <ModalAdminUserTypeSelector
+                  userType={editUserType}
+                  onChange={(userType) => {
+                    setEditUserType(userType);
+                    setEditForm((f) => ({
+                      ...f,
+                      roles: adminUserTypeToRoles(userType),
+                      centerIds: userType === "admin" ? [] : f.centerIds,
+                    }));
+                  }}
+                />
+                {editUserType === "training_partner" ? (
+                  <ModalCenterSelector
+                    centers={centers}
+                    selectedIds={editForm.centerIds}
+                    multiple={false}
+                    required
+                    onToggle={(id) =>
+                      setEditForm((f) => ({
+                        ...f,
+                        centerIds: f.centerIds.includes(id) ? [] : [id],
+                      }))
+                    }
+                  />
+                ) : null}
+              </>
+            ) : (
+              <>
+                <ModalRoleSelector
+                  roles={editForm.roles}
+                  onToggle={(role) =>
+                    setEditForm((f) => ({
+                      ...f,
+                      roles: f.roles.includes(role)
+                        ? f.roles.filter((r) => r !== role)
+                        : [...f.roles, role],
+                    }))
+                  }
+                />
+                <ModalCenterSelector
+                  centers={centers}
+                  selectedIds={editForm.centerIds}
+                  onToggle={(id) =>
+                    setEditForm((f) => ({
+                      ...f,
+                      centerIds: f.centerIds.includes(id)
+                        ? f.centerIds.filter((c) => c !== id)
+                        : [...f.centerIds, id],
+                    }))
+                  }
+                />
+              </>
+            )}
 
             <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-xs text-slate-500">
               Last login:{" "}
@@ -911,7 +1100,15 @@ function BarChart({
   );
 }
 
-function UserTableRow({ onEdit, user }: { onEdit: () => void; user: UserRecord }) {
+function UserTableRow({
+  onEdit,
+  portal,
+  user,
+}: {
+  onEdit: () => void;
+  portal: "admin" | "training_partner";
+  user: UserRecord;
+}) {
   return (
     <tr
       className="group cursor-pointer transition-colors hover:bg-slate-50/80"
@@ -924,12 +1121,16 @@ function UserTableRow({ onEdit, user }: { onEdit: () => void; user: UserRecord }
         {user.mobileNumber ?? <span className="text-slate-300">—</span>}
       </td>
       <td className="px-4 py-4">
-        <RoleBadges roles={user.roles} />
+        <RoleBadges roles={user.roles} portal={portal} />
       </td>
       <td className="px-4 py-4">
         <div className="flex items-center gap-1.5 text-slate-600">
           <IconBuildingCommunity className="h-4 w-4 text-slate-400" />
-          {user.centerIds.length}
+          {isAdminRole(user.roles) ? (
+            <span className="text-xs text-slate-500">All centers</span>
+          ) : (
+            user.centerIds.length
+          )}
         </div>
       </td>
       <td className="px-4 py-4">
@@ -963,7 +1164,15 @@ function UserTableRow({ onEdit, user }: { onEdit: () => void; user: UserRecord }
   );
 }
 
-function UserMobileCard({ onEdit, user }: { onEdit: () => void; user: UserRecord }) {
+function UserMobileCard({
+  onEdit,
+  portal,
+  user,
+}: {
+  onEdit: () => void;
+  portal: "admin" | "training_partner";
+  user: UserRecord;
+}) {
   return (
     <button
       type="button"
@@ -975,12 +1184,14 @@ function UserMobileCard({ onEdit, user }: { onEdit: () => void; user: UserRecord
         <StatusBadge status={user.status} />
       </div>
       <div className="mt-3 flex flex-wrap gap-1">
-        <RoleBadges roles={user.roles} />
+        <RoleBadges roles={user.roles} portal={portal} />
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-500">
         <span className="inline-flex items-center gap-1">
           <IconBuildingCommunity className="h-3.5 w-3.5" />
-          {user.centerIds.length} center{user.centerIds.length === 1 ? "" : "s"}
+          {isAdminRole(user.roles)
+            ? "All centers"
+            : `${user.centerIds.length} center${user.centerIds.length === 1 ? "" : "s"}`}
         </span>
         <span>
           {user.lastLoginAt
@@ -1006,15 +1217,26 @@ function UserIdentity({ user }: { user: UserRecord }) {
   );
 }
 
-function RoleBadges({ roles }: { roles: RoleKey[] }) {
+function RoleBadges({
+  portal,
+  roles,
+}: {
+  portal: "admin" | "training_partner";
+  roles: RoleKey[];
+}) {
+  const displayRoles =
+    portal === "admin"
+      ? [getAdminUserType(roles) === "admin" ? "platform_admin" : "center_manager"]
+      : roles;
+
   return (
     <div className="flex flex-wrap gap-1">
-      {roles.map((role) => (
+      {displayRoles.map((role) => (
         <span
           key={role}
           className={cn("inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold", ROLE_COLORS[role])}
         >
-          {formatRole(role)}
+          {formatRole(role, portal)}
         </span>
       ))}
     </div>
@@ -1089,6 +1311,47 @@ function FormField({ children, label }: { children: React.ReactNode; label: stri
   );
 }
 
+function ModalAdminUserTypeSelector({
+  onChange,
+  userType,
+}: {
+  onChange: (userType: AdminUserType) => void;
+  userType: AdminUserType;
+}) {
+  return (
+    <div className="space-y-2">
+      <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">User type</p>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {ADMIN_USER_TYPE_OPTIONS.map((option) => {
+          const isSelected = userType === option.value;
+          return (
+            <label
+              key={option.value}
+              className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition ${
+                isSelected
+                  ? "border-sky-200 bg-sky-50"
+                  : "border-slate-200 bg-white hover:border-slate-300"
+              }`}
+            >
+              <input
+                type="radio"
+                name="admin-user-type"
+                checked={isSelected}
+                onChange={() => onChange(option.value)}
+                className="mt-0.5 h-4 w-4 border-slate-300 accent-slate-900"
+              />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-800">{option.label}</p>
+                <p className="text-xs text-slate-500">{option.description}</p>
+              </div>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function ModalRoleSelector({
   onToggle,
   roles,
@@ -1131,11 +1394,15 @@ function ModalRoleSelector({
 
 function ModalCenterSelector({
   centers,
+  multiple = true,
   onToggle,
+  required = false,
   selectedIds,
 }: {
   centers: CenterRecord[];
+  multiple?: boolean;
   onToggle: (id: string) => void;
+  required?: boolean;
   selectedIds: string[];
 }) {
   const [open, setOpen] = useState(false);
@@ -1147,8 +1414,9 @@ function ModalCenterSelector({
   return (
     <div className="space-y-2">
       <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-        Center Scope{" "}
-        {selectedIds.length > 0 && (
+        {multiple ? "Center Scope" : "Training Center"}
+        {required ? <span className="ml-1 text-rose-500">*</span> : null}
+        {multiple && selectedIds.length > 0 && (
           <span className="ml-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-600">
             {selectedIds.length} selected
           </span>
@@ -1163,7 +1431,9 @@ function ModalCenterSelector({
       >
         <span className={selectedCenters.length === 0 ? "text-slate-400" : "text-slate-800"}>
           {selectedCenters.length === 0
-            ? "Select training centers…"
+            ? multiple
+              ? "Select training centers…"
+              : "Select a training center…"
             : selectedCenters.map((c) => c.centerName).join(", ")}
         </span>
         <IconChevronRight
@@ -1172,7 +1442,7 @@ function ModalCenterSelector({
       </button>
 
       {/* Selected pills */}
-      {selectedCenters.length > 0 && (
+      {multiple && selectedCenters.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {selectedCenters.map((center) => (
             <span
@@ -1205,7 +1475,8 @@ function ModalCenterSelector({
                 }`}
               >
                 <input
-                  type="checkbox"
+                  type={multiple ? "checkbox" : "radio"}
+                  name={multiple ? undefined : "training-center"}
                   checked={isChecked}
                   onChange={() => onToggle(center.centerId)}
                   className="h-4 w-4 rounded border-slate-300 accent-slate-900"
@@ -1223,7 +1494,12 @@ function ModalCenterSelector({
   );
 }
 
-function formatRole(role: RoleKey) {
+function formatRole(role: RoleKey, portal: "admin" | "training_partner" = "training_partner") {
+  if (portal === "admin") {
+    if (role === "platform_admin") return "Admin";
+    if (TRAINING_PARTNER_ROLES.includes(role) || role === "center_manager") return "Training Partner";
+  }
+
   return role
     .split("_")
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))

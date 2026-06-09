@@ -19,13 +19,13 @@ describe("batch validation", () => {
         schemeId: "scheme_001",
         startDate: "2026-01-01",
         endDate: "2026-02-01",
-        assessmentDate: "2026-02-03",
+        assessmentDate: "2026-02-08",
         candidateIds: Array.from({ length: 81 }, (_, index) => `cand_${index + 1}`),
       }),
     ).toThrow("Batch size must never exceed 80 candidates");
   });
 
-  it("rejects assessment dates before the batch end date by default", () => {
+  it("rejects assessment dates fewer than 7 days after the batch end date", () => {
     expect(() =>
       createBatchSchema.parse({
         batchCode: "B-002",
@@ -35,12 +35,12 @@ describe("batch validation", () => {
         schemeId: "scheme_001",
         startDate: "2026-01-01",
         endDate: "2026-02-01",
-        assessmentDate: "2026-01-20",
+        assessmentDate: "2026-02-03",
       }),
-    ).toThrow("Assessment date cannot be before batch end date unless explicitly configured");
+    ).toThrow("Assessment date must be at least 7 days after the batch end date");
   });
 
-  it("allows earlier assessment dates only when explicitly configured", () => {
+  it("accepts assessment dates at least 7 days after the batch end date", () => {
     expect(
       createBatchSchema.parse({
         batchCode: "B-003",
@@ -50,11 +50,11 @@ describe("batch validation", () => {
         schemeId: "scheme_001",
         startDate: "2026-01-01",
         endDate: "2026-02-01",
-        assessmentDate: "2026-01-20",
-        allowAssessmentBeforeBatchEnd: true,
+        assessmentDate: "2026-02-15",
       }),
     ).toMatchObject({
       batchCode: "B-003",
+      assessmentDate: "2026-02-15",
     });
   });
 

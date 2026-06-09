@@ -1,3 +1,12 @@
+import {
+  CANDIDATE_GENDER_ERROR,
+  CANDIDATE_GENDER_OPTIONS,
+  CANDIDATE_NAME_PREFIX_ERROR,
+  CANDIDATE_NAME_PREFIX_OPTIONS,
+  normalizeCandidateGender,
+  normalizeCandidateNamePrefix,
+} from "@/lib/candidate-field-options";
+import { calculateMinimumAssessmentDate } from "@/lib/sidh-batch-payload";
 import { z } from "zod";
 
 import { ROLE_KEYS } from "@/lib/server/rbac";
@@ -137,6 +146,25 @@ export const sectorListQuerySchema = listQueryBaseSchema;
 
 export const schemeListQuerySchema = listQueryBaseSchema.extend({
   syncEnabled: optionalQueryBooleanSchema,
+});
+
+export const sidhBatchFieldKeySchema = z.enum([
+  "assessmentMode",
+  "batchType",
+  "categoryType",
+  "createdSource",
+  "feePaidBy",
+]);
+
+export const createSidhBatchFieldOptionSchema = z.object({
+  field: sidhBatchFieldKeySchema,
+  label: z.string().trim().min(1).max(120),
+});
+
+export const updateSidhBatchFieldOptionSchema = z.object({
+  label: z.string().trim().min(1).max(120).optional(),
+  sortOrder: z.coerce.number().int().min(0).optional(),
+  status: z.enum(["active", "inactive"]).optional(),
 });
 
 export const createProgramSchema = z.object({
@@ -453,10 +481,20 @@ const candidateContactDetailsSchema = z.object({
   mobileNumber: z.string().trim().regex(/^\d{10}$/, "Mobile number must be a 10 digit value"),
 });
 
+const candidateNamePrefixSchema = z.preprocess(
+  normalizeCandidateNamePrefix,
+  z.enum(CANDIDATE_NAME_PREFIX_OPTIONS, { message: CANDIDATE_NAME_PREFIX_ERROR }),
+);
+
+const candidateGenderSchema = z.preprocess(
+  normalizeCandidateGender,
+  z.enum(CANDIDATE_GENDER_OPTIONS, { message: CANDIDATE_GENDER_ERROR }),
+);
+
 const candidateRegistrationPersonalDetailsSchema = z.object({
-  namePrefix: nullableTrimmedStringSchema,
+  namePrefix: candidateNamePrefixSchema,
   firstName: z.string().trim().min(2).max(160),
-  gender: z.string().trim().min(1).max(80),
+  gender: candidateGenderSchema,
   dob: userDateSchema,
   fatherName: nullableTrimmedStringSchema,
   guardianName: nullableTrimmedStringSchema,
@@ -472,7 +510,19 @@ const candidateRegistrationLocationDetailsSchema = z.object({
   state: nullableTrimmedStringSchema.default(""),
   city: nullableTrimmedStringSchema.default(""),
   centerName: nullableTrimmedStringSchema.default(""),
+  centerId: z.string().trim().min(1).optional(),
 });
+
+const candidateRegistrationReferenceDetailsSchema = z
+  .object({
+    courseId: z.string().trim().min(1).optional(),
+    courseName: z.string().trim().min(1),
+  })
+  .refine((value) => Boolean(value.courseId || value.courseName), {
+    message: "Course reference requires a course name",
+    path: ["courseName"],
+  });
+
 const emptyCandidateRegistrationLocationDetails = {
   state: "",
   city: "",
@@ -484,6 +534,7 @@ export const createCandidateRegistrationSchema = z
     personalDetails: candidateRegistrationPersonalDetailsSchema,
     contactDetails: candidateRegistrationContactDetailsSchema,
     locationDetails: candidateRegistrationLocationDetailsSchema.optional().default(emptyCandidateRegistrationLocationDetails),
+    referenceDetails: candidateRegistrationReferenceDetailsSchema.optional(),
   })
   .superRefine((value, ctx) => {
     if (!value.personalDetails.fatherName?.trim() && !value.personalDetails.guardianName?.trim()) {
@@ -596,6 +647,7 @@ export const updateCandidateSchema = z
     permanentAddress: candidateAddressSchema.partial().optional(),
     communicationAddress: candidateCommunicationAddressBaseSchema.partial().optional(),
     experience: candidateExperienceBaseSchema.partial().optional(),
+    referenceDetails: z.union([candidateRegistrationReferenceDetailsSchema, z.null()]).optional(),
   })
   .refine((value) => Object.values(value).some((entry) => entry !== undefined), {
     message: "At least one field is required",
@@ -705,10 +757,10 @@ export const createBatchSchema = z
       });
     }
 
-    if (value.assessmentDate && !value.allowAssessmentBeforeBatchEnd && value.assessmentDate < value.endDate) {
+    if (value.assessmentDate && value.endDate && value.assessmentDate < calculateMinimumAssessmentDate(value.endDate)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Assessment date cannot be before batch end date unless explicitly configured",
+        message: "Assessment date must be at least 7 days after the batch end date",
         path: ["assessmentDate"],
       });
     }
@@ -761,15 +813,10 @@ export const updateBatchSchema = z
       });
     }
 
-    if (
-      value.assessmentDate &&
-      value.endDate &&
-      value.allowAssessmentBeforeBatchEnd !== true &&
-      value.assessmentDate < value.endDate
-    ) {
+    if (value.assessmentDate && value.endDate && value.assessmentDate < calculateMinimumAssessmentDate(value.endDate)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Assessment date cannot be before batch end date unless explicitly configured",
+        message: "Assessment date must be at least 7 days after the batch end date",
         path: ["assessmentDate"],
       });
     }

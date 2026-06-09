@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { buildSidhBatchPayload, calculateBatchEndDate, resolveBatchSchemeId } from "@/lib/sidh-batch-payload";
+import {
+  buildSidhBatchPayload,
+  calculateBatchEndDate,
+  calculateMinimumAssessmentDate,
+  resolveAssessmentDate,
+  resolveBatchSchemeId,
+} from "@/lib/sidh-batch-payload";
 
 describe("SIDH batch payload builder", () => {
   it("builds the ISO datetime batch payload from course and schedule data", () => {
@@ -67,6 +73,13 @@ describe("SIDH batch payload builder", () => {
 
   it("calculates end date from course duration", () => {
     expect(calculateBatchEndDate("2026-06-11", 240, 8)).toBe("2026-07-10");
+  });
+
+  it("defaults assessment date to 7 days after batch end date", () => {
+    expect(calculateMinimumAssessmentDate("2026-02-01")).toBe("2026-02-08");
+    expect(resolveAssessmentDate("2026-02-01")).toBe("2026-02-08");
+    expect(resolveAssessmentDate("2026-02-01", "2026-02-03")).toBe("2026-02-08");
+    expect(resolveAssessmentDate("2026-02-01", "2026-02-15")).toBe("2026-02-15");
   });
 
   it("prefers a course-linked SIDH-ready scheme", () => {

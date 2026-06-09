@@ -22,7 +22,14 @@ import { Save } from "lucide-react";
 import { toast } from "sonner";
 
 import { apiFetch, ClientApiError } from "@/lib/client/api";
-import { SIDH_BATCH_FIELD_OPTIONS } from "@/lib/sidh-batch-field-options";
+import {
+  getSidhBatchFieldDefault,
+  resolveSidhBatchFieldOptions,
+  SIDH_BATCH_FIELD_OPTIONS,
+  type SidhBatchFieldKey,
+  type SidhBatchFieldOptionsMap,
+  type SidhBatchFieldOptionsResponse,
+} from "@/lib/sidh-batch-field-options";
 import { cn } from "@/lib/utils";
 
 type MasterDataManagerProps = {
@@ -174,21 +181,25 @@ function resolveSidhWorkflowState(verifiedForSidh: boolean, readyForSidh: boolea
   return "draft";
 }
 
-const emptyProgramForm = {
-  assessmentMode: SIDH_BATCH_FIELD_OPTIONS.assessmentMode[0],
-  batchCategoryType: SIDH_BATCH_FIELD_OPTIONS.categoryType[0],
-  batchType: SIDH_BATCH_FIELD_OPTIONS.batchType[0],
-  code: "",
-  createdSource: SIDH_BATCH_FIELD_OPTIONS.createdSource[0],
-  description: "",
-  feePaidBy: SIDH_BATCH_FIELD_OPTIONS.feePaidBy[0],
-  name: "",
-  skillingCategoryId: "1",
-  skillingCategoryName: "",
-  skillingCategoryScheme: "Fee Based",
-  status: "active" as "active" | "inactive",
-  syncToSidh: false,
-};
+function createEmptyProgramForm(enums?: Record<string, Array<{ code: string; label: string }>>) {
+  return {
+    assessmentMode: getSidhBatchFieldDefault("assessmentMode", enums),
+    batchCategoryType: getSidhBatchFieldDefault("categoryType", enums),
+    batchType: getSidhBatchFieldDefault("batchType", enums),
+    code: "",
+    createdSource: getSidhBatchFieldDefault("createdSource", enums),
+    description: "",
+    feePaidBy: getSidhBatchFieldDefault("feePaidBy", enums),
+    name: "",
+    skillingCategoryId: "1",
+    skillingCategoryName: "",
+    skillingCategoryScheme: "Fee Based",
+    status: "active" as "active" | "inactive",
+    syncToSidh: false,
+  };
+}
+
+const emptyProgramForm = createEmptyProgramForm();
 
 const emptySectorForm = {
   code: "",
@@ -247,6 +258,8 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
   const [schemeForm, setSchemeForm] = useState(emptySchemeForm);
   const [courseForm, setCourseForm] = useState(emptyCourseForm);
 
+  const [referenceEnums, setReferenceEnums] = useState<Record<string, Array<{ code: string; label: string }>>>({});
+  const [sidhFieldOptions, setSidhFieldOptions] = useState<SidhBatchFieldOptionsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isSeeding, setIsSeeding] = useState(false);
@@ -312,6 +325,11 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
   const sectorNameById = useMemo(
     () => new Map(sectors.map((sector) => [sector.sectorId, sector.name])),
     [sectors],
+  );
+
+  const sidhBatchFieldOptionLabels = useMemo(
+    () => resolveSidhBatchFieldOptions(referenceEnums),
+    [referenceEnums],
   );
 
   async function handleDelete(tab: Tab, id: string, label: string) {
@@ -386,6 +404,19 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
     }
   }
 
+  async function loadSidhFieldOptions() {
+    try {
+      const [referenceData, sidhOptions] = await Promise.all([
+        apiFetch<{ enums?: Record<string, Array<{ code: string; label: string }>> }>("/api/v1/reference-data/candidate"),
+        apiFetch<SidhBatchFieldOptionsResponse>("/api/v1/masters/sidh-batch-field-options"),
+      ]);
+      setReferenceEnums(referenceData.enums ?? {});
+      setSidhFieldOptions(sidhOptions);
+    } catch (error) {
+      toast.error(error instanceof ClientApiError ? error.message : "Unable to load SIDH batch field options");
+    }
+  }
+
   async function loadData() {
     setIsLoading(true);
     try {
@@ -394,6 +425,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
         apiFetch<PagedResponse<SectorRecord>>("/api/v1/masters/sectors?page=1&pageSize=100"),
         apiFetch<PagedResponse<SchemeRecord>>("/api/v1/masters/schemes?page=1&pageSize=100"),
         apiFetch<PagedResponse<CourseRecord>>(`/api/v1/masters/courses?page=${coursePage}&pageSize=${coursePageSize}`),
+        loadSidhFieldOptions(),
       ]);
       setPrograms(programData.items);
       setSectors(sectorData.items);
@@ -407,12 +439,40 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
     }
   }
 
+  async function handleAddSidhBatchFieldOption(field: SidhBatchFieldKey, label: string) {
+    try {
+      await apiFetch("/api/v1/masters/sidh-batch-field-options", {
+        method: "POST",
+        body: JSON.stringify({ field, label }),
+      });
+      toast.success("Option added");
+      await loadSidhFieldOptions();
+    } catch (error) {
+      toast.error(error instanceof ClientApiError ? error.message : "Unable to add option");
+      throw error;
+    }
+  }
+
+  async function handleRemoveSidhBatchFieldOption(referenceValueId: string) {
+    try {
+      await apiFetch(`/api/v1/masters/sidh-batch-field-options/${referenceValueId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "inactive" }),
+      });
+      toast.success("Option removed");
+      await loadSidhFieldOptions();
+    } catch (error) {
+      toast.error(error instanceof ClientApiError ? error.message : "Unable to remove option");
+      throw error;
+    }
+  }
+
   useEffect(() => {
     void loadData();
   }, [coursePage]);
 
   function openCreateModal() {
-    if (activeTab === "programs") setProgramForm(emptyProgramForm);
+    if (activeTab === "programs") setProgramForm(createEmptyProgramForm(referenceEnums));
     else if (activeTab === "sectors") setSectorForm(emptySectorForm);
     else if (activeTab === "schemes") setSchemeForm(emptySchemeForm);
     else setCourseForm({ ...emptyCourseForm, sectorId: sectors[0]?.sectorId ?? "" });
@@ -425,13 +485,13 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
       if (!prog) return;
       setSelectedProgramId(prog.programId);
       setProgramForm({
-        assessmentMode: prog.assessmentMode ?? SIDH_BATCH_FIELD_OPTIONS.assessmentMode[0],
-        batchCategoryType: prog.batchCategoryType ?? SIDH_BATCH_FIELD_OPTIONS.categoryType[0],
-        batchType: prog.batchType ?? SIDH_BATCH_FIELD_OPTIONS.batchType[0],
+        assessmentMode: getSidhBatchFieldDefault("assessmentMode", referenceEnums, prog.assessmentMode),
+        batchCategoryType: getSidhBatchFieldDefault("categoryType", referenceEnums, prog.batchCategoryType),
+        batchType: getSidhBatchFieldDefault("batchType", referenceEnums, prog.batchType),
         code: prog.code,
-        createdSource: prog.createdSource ?? SIDH_BATCH_FIELD_OPTIONS.createdSource[0],
+        createdSource: getSidhBatchFieldDefault("createdSource", referenceEnums, prog.createdSource),
         description: prog.description ?? "",
-        feePaidBy: prog.feePaidBy ?? SIDH_BATCH_FIELD_OPTIONS.feePaidBy[0],
+        feePaidBy: getSidhBatchFieldDefault("feePaidBy", referenceEnums, prog.feePaidBy),
         name: prog.name,
         skillingCategoryId: String(prog.skillingCategoryId ?? 1),
         skillingCategoryName: prog.skillingCategoryName ?? "",
@@ -888,10 +948,11 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           form={programForm}
           isEdit={false}
           isSaving={isSaving}
+          sidhFieldOptionLabels={sidhBatchFieldOptionLabels}
           setForm={setProgramForm}
           onClose={() => {
             setShowCreateModal(false);
-            setProgramForm(emptyProgramForm);
+            setProgramForm(createEmptyProgramForm(referenceEnums));
           }}
           onSubmit={handleProgramSave}
         />
@@ -901,11 +962,15 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           form={programForm}
           isEdit={true}
           isSaving={isSaving}
+          sidhFieldOptionLabels={sidhBatchFieldOptionLabels}
+          sidhFieldOptions={sidhFieldOptions}
+          onAddSidhFieldOption={handleAddSidhBatchFieldOption}
+          onRemoveSidhFieldOption={handleRemoveSidhBatchFieldOption}
           setForm={setProgramForm}
           onClose={() => {
             setShowEditModal(false);
             setSelectedProgramId(null);
-            setProgramForm(emptyProgramForm);
+            setProgramForm(createEmptyProgramForm(referenceEnums));
           }}
           onSubmit={handleProgramSave}
         />
@@ -1745,20 +1810,132 @@ type SectorForm = typeof emptySectorForm;
 type SchemeForm = typeof emptySchemeForm;
 type CourseForm = typeof emptyCourseForm;
 
+const SIDH_BATCH_FIELD_LABELS: Record<SidhBatchFieldKey, string> = {
+  assessmentMode: "Assessment Mode",
+  batchType: "Batch Type",
+  categoryType: "Batch Category (type)",
+  feePaidBy: "Fee Paid By",
+  createdSource: "Created Source",
+};
+
+function SidhBatchFieldOptionEditor({
+  field,
+  formValue,
+  isSaving,
+  onAddOption,
+  onRemoveOption,
+  options,
+  setFormValue,
+}: {
+  field: SidhBatchFieldKey;
+  formValue: string;
+  isSaving: boolean;
+  onAddOption: (field: SidhBatchFieldKey, label: string) => Promise<void>;
+  onRemoveOption: (referenceValueId: string) => Promise<void>;
+  options: SidhBatchFieldOptionsResponse[SidhBatchFieldKey]["options"];
+  setFormValue: (value: string) => void;
+}) {
+  const [draftLabel, setDraftLabel] = useState("");
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  async function handleAddOption() {
+    const label = draftLabel.trim();
+    if (!label) {
+      return;
+    }
+
+    setIsUpdating(true);
+    try {
+      await onAddOption(field, label);
+      setDraftLabel("");
+      setFormValue(label);
+    } finally {
+      setIsUpdating(false);
+    }
+  }
+
+  async function handleRemoveOption(referenceValueId: string, label: string) {
+    if (!window.confirm(`Remove "${label}" from ${SIDH_BATCH_FIELD_LABELS[field]} options?`)) {
+      return;
+    }
+
+    setIsUpdating(true);
+    try {
+      await onRemoveOption(referenceValueId);
+      if (formValue === label) {
+        const remaining = options.filter((option) => option.referenceValueId !== referenceValueId);
+        setFormValue(remaining[0]?.label ?? SIDH_BATCH_FIELD_OPTIONS[field][0]);
+      }
+    } finally {
+      setIsUpdating(false);
+    }
+  }
+
+  return (
+    <div className="mt-2 space-y-2 rounded-xl border border-violet-100 bg-white/80 p-3">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-violet-700">Manage options</p>
+      <div className="flex flex-wrap gap-2">
+        {options.map((option) => (
+          <span
+            key={option.referenceValueId}
+            className="inline-flex items-center gap-1 rounded-full border border-violet-100 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-900"
+          >
+            {option.label}
+            <button
+              type="button"
+              disabled={isSaving || isUpdating || options.length <= 1}
+              onClick={() => void handleRemoveOption(option.referenceValueId, option.label)}
+              className="rounded-full p-0.5 text-violet-500 transition hover:bg-violet-100 hover:text-violet-800 disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label={`Remove ${option.label}`}
+            >
+              <IconX className="h-3 w-3" />
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <input
+          value={draftLabel}
+          onChange={(event) => setDraftLabel(event.target.value)}
+          className={inputCls}
+          placeholder={`Add ${SIDH_BATCH_FIELD_LABELS[field].toLowerCase()} option`}
+          disabled={isSaving || isUpdating}
+        />
+        <button
+          type="button"
+          disabled={isSaving || isUpdating || !draftLabel.trim()}
+          onClick={() => void handleAddOption()}
+          className="shrink-0 rounded-xl border border-violet-200 bg-white px-3 py-2 text-xs font-semibold text-violet-700 transition hover:border-violet-300 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ProgramModal({
   form,
   isEdit,
   isSaving,
+  onAddSidhFieldOption,
   onClose,
+  onRemoveSidhFieldOption,
   onSubmit,
   setForm,
+  sidhFieldOptionLabels,
+  sidhFieldOptions,
 }: {
   form: ProgramForm;
   isEdit: boolean;
   isSaving: boolean;
+  onAddSidhFieldOption?: (field: SidhBatchFieldKey, label: string) => Promise<void>;
   onClose: () => void;
+  onRemoveSidhFieldOption?: (referenceValueId: string) => Promise<void>;
   onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
   setForm: React.Dispatch<React.SetStateAction<ProgramForm>>;
+  sidhFieldOptionLabels: SidhBatchFieldOptionsMap;
+  sidhFieldOptions?: SidhBatchFieldOptionsResponse | null;
 }) {
   return (
     <Modal
@@ -1828,79 +2005,137 @@ function ProgramModal({
             />
           </FormField>
         </div>
-        <div className="rounded-2xl border border-violet-100 bg-violet-50/40 p-4">
-          <p className="mb-3 text-sm font-semibold text-slate-900">SIDH Batch Payload Defaults</p>
-          <p className="mb-4 text-xs text-slate-500">
-            These values are used automatically when creating batches for courses linked to this program.
-          </p>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <FormField label="Assessment Mode">
-              <select
-                value={form.assessmentMode}
-                onChange={(e) => setForm((f) => ({ ...f, assessmentMode: e.target.value }))}
-                className={inputCls}
-              >
-                {SIDH_BATCH_FIELD_OPTIONS.assessmentMode.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </FormField>
-            <FormField label="Batch Type">
-              <select
-                value={form.batchType}
-                onChange={(e) => setForm((f) => ({ ...f, batchType: e.target.value }))}
-                className={inputCls}
-              >
-                {SIDH_BATCH_FIELD_OPTIONS.batchType.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </FormField>
-            <FormField label="Batch Category (type)">
-              <select
-                value={form.batchCategoryType}
-                onChange={(e) => setForm((f) => ({ ...f, batchCategoryType: e.target.value }))}
-                className={inputCls}
-              >
-                {SIDH_BATCH_FIELD_OPTIONS.categoryType.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </FormField>
-            <FormField label="Fee Paid By">
-              <select
-                value={form.feePaidBy}
-                onChange={(e) => setForm((f) => ({ ...f, feePaidBy: e.target.value }))}
-                className={inputCls}
-              >
-                {SIDH_BATCH_FIELD_OPTIONS.feePaidBy.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </FormField>
-            <FormField label="Created Source">
-              <select
-                value={form.createdSource}
-                onChange={(e) => setForm((f) => ({ ...f, createdSource: e.target.value }))}
-                className={inputCls}
-              >
-                {SIDH_BATCH_FIELD_OPTIONS.createdSource.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </FormField>
+        {isEdit ? (
+          <div className="rounded-2xl border border-violet-100 bg-violet-50/40 p-4">
+            <p className="mb-3 text-sm font-semibold text-slate-900">SIDH Batch Payload Defaults</p>
+            <p className="mb-4 text-xs text-slate-500">
+              These values are used automatically when creating batches for courses linked to this program. You can also
+              add or remove dropdown options here.
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FormField label="Assessment Mode">
+                <select
+                  value={form.assessmentMode}
+                  onChange={(e) => setForm((f) => ({ ...f, assessmentMode: e.target.value }))}
+                  className={inputCls}
+                >
+                  {sidhFieldOptionLabels.assessmentMode.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+                {sidhFieldOptions && onAddSidhFieldOption && onRemoveSidhFieldOption ? (
+                  <SidhBatchFieldOptionEditor
+                    field="assessmentMode"
+                    formValue={form.assessmentMode}
+                    isSaving={isSaving}
+                    options={sidhFieldOptions.assessmentMode.options}
+                    onAddOption={onAddSidhFieldOption}
+                    onRemoveOption={onRemoveSidhFieldOption}
+                    setFormValue={(value) => setForm((f) => ({ ...f, assessmentMode: value }))}
+                  />
+                ) : null}
+              </FormField>
+              <FormField label="Batch Type">
+                <select
+                  value={form.batchType}
+                  onChange={(e) => setForm((f) => ({ ...f, batchType: e.target.value }))}
+                  className={inputCls}
+                >
+                  {sidhFieldOptionLabels.batchType.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+                {sidhFieldOptions && onAddSidhFieldOption && onRemoveSidhFieldOption ? (
+                  <SidhBatchFieldOptionEditor
+                    field="batchType"
+                    formValue={form.batchType}
+                    isSaving={isSaving}
+                    options={sidhFieldOptions.batchType.options}
+                    onAddOption={onAddSidhFieldOption}
+                    onRemoveOption={onRemoveSidhFieldOption}
+                    setFormValue={(value) => setForm((f) => ({ ...f, batchType: value }))}
+                  />
+                ) : null}
+              </FormField>
+              <FormField label="Batch Category (type)">
+                <select
+                  value={form.batchCategoryType}
+                  onChange={(e) => setForm((f) => ({ ...f, batchCategoryType: e.target.value }))}
+                  className={inputCls}
+                >
+                  {sidhFieldOptionLabels.categoryType.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+                {sidhFieldOptions && onAddSidhFieldOption && onRemoveSidhFieldOption ? (
+                  <SidhBatchFieldOptionEditor
+                    field="categoryType"
+                    formValue={form.batchCategoryType}
+                    isSaving={isSaving}
+                    options={sidhFieldOptions.categoryType.options}
+                    onAddOption={onAddSidhFieldOption}
+                    onRemoveOption={onRemoveSidhFieldOption}
+                    setFormValue={(value) => setForm((f) => ({ ...f, batchCategoryType: value }))}
+                  />
+                ) : null}
+              </FormField>
+              <FormField label="Fee Paid By">
+                <select
+                  value={form.feePaidBy}
+                  onChange={(e) => setForm((f) => ({ ...f, feePaidBy: e.target.value }))}
+                  className={inputCls}
+                >
+                  {sidhFieldOptionLabels.feePaidBy.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+                {sidhFieldOptions && onAddSidhFieldOption && onRemoveSidhFieldOption ? (
+                  <SidhBatchFieldOptionEditor
+                    field="feePaidBy"
+                    formValue={form.feePaidBy}
+                    isSaving={isSaving}
+                    options={sidhFieldOptions.feePaidBy.options}
+                    onAddOption={onAddSidhFieldOption}
+                    onRemoveOption={onRemoveSidhFieldOption}
+                    setFormValue={(value) => setForm((f) => ({ ...f, feePaidBy: value }))}
+                  />
+                ) : null}
+              </FormField>
+              <FormField label="Created Source">
+                <select
+                  value={form.createdSource}
+                  onChange={(e) => setForm((f) => ({ ...f, createdSource: e.target.value }))}
+                  className={inputCls}
+                >
+                  {sidhFieldOptionLabels.createdSource.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+                {sidhFieldOptions && onAddSidhFieldOption && onRemoveSidhFieldOption ? (
+                  <SidhBatchFieldOptionEditor
+                    field="createdSource"
+                    formValue={form.createdSource}
+                    isSaving={isSaving}
+                    options={sidhFieldOptions.createdSource.options}
+                    onAddOption={onAddSidhFieldOption}
+                    onRemoveOption={onRemoveSidhFieldOption}
+                    setFormValue={(value) => setForm((f) => ({ ...f, createdSource: value }))}
+                  />
+                ) : null}
+              </FormField>
+            </div>
           </div>
-        </div>
+        ) : null}
         <FormField label="Description">
           <textarea
             value={form.description}

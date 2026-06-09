@@ -750,9 +750,9 @@ export function getOpenApiDocument() {
         },
         CandidateRegistrationPersonalDetails: {
           type: "object",
-          required: ["firstName", "gender", "dob"],
+          required: ["namePrefix", "firstName", "gender", "dob"],
           properties: {
-            namePrefix: { type: "string", nullable: true },
+            namePrefix: { type: "string" },
             firstName: { type: "string" },
             gender: { type: "string" },
             dob: { type: "string", format: "date" },
@@ -917,7 +917,7 @@ export function getOpenApiDocument() {
         CandidateImportRequest: {
           type: "object",
           required: ["file"],
-          description: "Upload the Skill India candidate workbook. The current UI downloads public/candidate_details.xlsx; the accepted headers are Name Prefix, First Name, Gender, DOB, Father's Name, Guardian's Name, Email, Phone, Country Code, State, City, and Center Name. Program and center metadata are optional and default internally when omitted.",
+          description: "Upload the Skill India candidate workbook. The current UI downloads public/candidate_details.xlsx; the accepted headers are Name Prefix, Full Name, Gender, DOB, Father's Name, Guardian's Name, Email, Phone, Country Code, State, City, and Center Name. Full Name maps to personalDetails.firstName (legacy First Name headers are still accepted). Name Prefix must be Mr, Mrs, Ms, or Mx. Gender must be Male, Female, or Transgender. The template workbook includes Excel dropdowns for both columns. Program and center metadata are optional and default internally when omitted.",
           properties: {
             file: { type: "string", format: "binary" },
             programId: { type: "string", description: "Optional internal program scope. Defaults to candidate_registration when omitted." },

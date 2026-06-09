@@ -280,6 +280,16 @@ const candidateSchema = new mongoose.Schema(
       trim: true,
       default: null,
     },
+    referenceCourseId: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    referenceCourseName: {
+      type: String,
+      trim: true,
+      default: null,
+    },
     duplicateHash: {
       type: String,
       required: true,

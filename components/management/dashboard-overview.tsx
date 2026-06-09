@@ -18,6 +18,7 @@ import {
 
 import { apiFetch, ClientApiError } from "@/lib/client/api";
 import { cn } from "@/lib/utils";
+import AdminDashboardPanel from "@/components/management/admin-dashboard-panel";
 import TrainingPartnerDashboardPanel from "@/components/management/training-partner-dashboard-panel";
 
 type DashboardOverviewProps = {
@@ -61,6 +62,7 @@ type DashboardCenterOverview = {
       batchId: string;
       batchCode: string;
       batchName: string | null;
+      centerName?: string;
       courseName: string;
       sectorName: string;
       status: string;
@@ -69,6 +71,57 @@ type DashboardCenterOverview = {
       batchSize: number;
       enrolledCount: number;
       syncedEnrollmentCount: number;
+    }>;
+  };
+};
+
+type DashboardPlatformOverview = {
+  totals: {
+    trainingCenters: number;
+    sectors: number;
+    courses: number;
+    batches: number;
+  };
+  preview: {
+    centers: Array<{
+      centerId: string;
+      centerName: string;
+      centerCode: string;
+      district: string;
+      state: string;
+      status: string;
+      programCount: number;
+      verifiedForSidh: boolean;
+      learnerCount: number;
+      ongoingLearners: number;
+      completedLearners: number;
+      pendingSyncLearners: number;
+      batchCount: number;
+      activeBatchCount: number;
+      enrolledInBatches: number;
+    }>;
+    sectors: DashboardCenterOverview["preview"]["sectors"];
+    courses: DashboardCenterOverview["preview"]["courses"];
+    batches: Array<{
+      batchId: string;
+      batchCode: string;
+      batchName: string | null;
+      centerName: string;
+      courseName: string;
+      sectorName: string;
+      status: string;
+      startDate: string;
+      endDate: string;
+      batchSize: number;
+      enrolledCount: number;
+      syncedEnrollmentCount: number;
+    }>;
+    activity: Array<{
+      id: string;
+      action: string;
+      entityType: string;
+      entityId: string | null;
+      createdAt: string;
     }>;
   };
 };
@@ -92,6 +145,7 @@ type DashboardSummary = {
   enrollmentStatus: Record<string, number>;
   topCenters: Array<{ centerId: string; centerName: string; learnerCount: number }>;
   centerOverview: DashboardCenterOverview | null;
+  platformOverview: DashboardPlatformOverview | null;
   recentActivity: Array<{
     id: string;
     action: string;
@@ -102,7 +156,7 @@ type DashboardSummary = {
 
 const portalContent = {
   admin: {
-    subtitle: "Your overview of learners, batches, and training centers across the platform.",
+    subtitle: "Monitor every training center, batch, catalog item, and platform activity from one place.",
     prefix: "/admin",
   },
   training_partner: {
@@ -252,15 +306,17 @@ export default function DashboardOverview({ portal }: DashboardOverviewProps) {
     }))
     .filter((item) => item.value > 0 || loading);
 
-  const topCenterItems = (stats?.topCenters ?? []).map((center) => ({
-    label: center.centerName,
-    value: center.learnerCount,
-    colorClass: "bg-sky-500",
-  }));
-
   const centerOverview = stats?.centerOverview ?? null;
+  const platformOverview = stats?.platformOverview ?? null;
   const primaryCenter = centerOverview?.centers[0] ?? null;
   const isTrainingPartner = portal === "training_partner";
+  const isAdmin = portal === "admin";
+
+  const topCenterChartItems = (stats?.topCenters ?? []).map((center) => ({
+    centerId: center.centerId,
+    centerName: center.centerName,
+    learnerCount: center.learnerCount,
+  }));
 
   return (
     <div className="flex flex-1 flex-col gap-6 bg-slate-100 px-4 py-4 md:px-8 md:py-8">
@@ -326,6 +382,10 @@ export default function DashboardOverview({ portal }: DashboardOverviewProps) {
         <TrainingPartnerDashboardPanel basePath={base} centerOverview={centerOverview} loading={loading} />
       ) : null}
 
+      {isAdmin ? (
+        <AdminDashboardPanel basePath={base} platformOverview={platformOverview} loading={loading} />
+      ) : null}
+
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatusCard
           label="Currently training"
@@ -372,14 +432,13 @@ export default function DashboardOverview({ portal }: DashboardOverviewProps) {
           />
         </ChartPanel>
         {!isTrainingPartner ? (
-          <ChartPanel title="Top centers by learners">
-            {loading ? (
-              <BarSkeleton rows={4} />
-            ) : topCenterItems.length > 0 ? (
-              <BarChart items={topCenterItems} loading={false} emptyMessage="" />
-            ) : (
-              <EmptyState message="Learner counts will appear once centers have registrations." />
-            )}
+          <ChartPanel title={isAdmin ? "Leading centers by learners" : "Top centers by learners"}>
+            <CenterLeaderboardChart
+              centers={topCenterChartItems}
+              loading={loading}
+              maxItems={6}
+              barColorClass={isAdmin ? "bg-violet-500" : "bg-sky-500"}
+            />
           </ChartPanel>
         ) : (
           <ChartPanel title="Top sectors by enrollments">
@@ -442,36 +501,38 @@ export default function DashboardOverview({ portal }: DashboardOverviewProps) {
         </div>
       </section>
 
-      <section>
-        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-neutral-500">Recent activity</h2>
-        <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-          {loading ? (
-            <div className="p-4 text-sm text-neutral-500">Loading recent updates...</div>
-          ) : (stats?.recentActivity.length ?? 0) === 0 ? (
-            <div className="p-4 text-sm text-neutral-500">
-              Activity from registrations, batches, and attendance will show up here.
-            </div>
-          ) : (
-            (isTrainingPartner ? stats?.recentActivity.slice(0, 4) : stats?.recentActivity)?.map((activity) => (
-              <div
-                key={activity.id}
-                className="flex flex-col gap-1 border-b border-neutral-100 px-4 py-3 text-sm last:border-0 md:flex-row md:items-center md:justify-between"
-              >
-                <div>
-                  <p className="font-medium text-neutral-900">{formatActivityLabel(activity.action)}</p>
-                  <p className="text-xs text-neutral-500">{formatEntityType(activity.entityType)}</p>
-                </div>
-                <span className="text-xs text-neutral-500">
-                  {new Date(activity.createdAt).toLocaleString(undefined, {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  })}
-                </span>
+      {!isAdmin ? (
+        <section>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-neutral-500">Recent activity</h2>
+          <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+            {loading ? (
+              <div className="p-4 text-sm text-neutral-500">Loading recent updates...</div>
+            ) : (stats?.recentActivity.length ?? 0) === 0 ? (
+              <div className="p-4 text-sm text-neutral-500">
+                Activity from registrations, batches, and attendance will show up here.
               </div>
-            ))
-          )}
-        </div>
-      </section>
+            ) : (
+              (isTrainingPartner ? stats?.recentActivity.slice(0, 4) : stats?.recentActivity)?.map((activity) => (
+                <div
+                  key={activity.id}
+                  className="flex flex-col gap-1 border-b border-neutral-100 px-4 py-3 text-sm last:border-0 md:flex-row md:items-center md:justify-between"
+                >
+                  <div>
+                    <p className="font-medium text-neutral-900">{formatActivityLabel(activity.action)}</p>
+                    <p className="text-xs text-neutral-500">{formatEntityType(activity.entityType)}</p>
+                  </div>
+                  <span className="text-xs text-neutral-500">
+                    {new Date(activity.createdAt).toLocaleString(undefined, {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -583,6 +644,61 @@ function ChartPanel({ title, children }: { title: string; children: React.ReactN
     <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
       <h3 className="mb-4 text-sm font-semibold text-neutral-800">{title}</h3>
       {children}
+    </div>
+  );
+}
+
+function formatCenterDisplayName(name: string) {
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.startsWith("candidate_center_") || trimmed === "candidate_registration") {
+    return "Direct registration";
+  }
+
+  return trimmed;
+}
+
+function CenterLeaderboardChart({
+  centers,
+  loading,
+  maxItems = 6,
+  barColorClass = "bg-sky-500",
+}: {
+  centers: Array<{ centerId: string; centerName: string; learnerCount: number }>;
+  loading: boolean;
+  maxItems?: number;
+  barColorClass?: string;
+}) {
+  if (loading) {
+    return <BarSkeleton rows={4} />;
+  }
+
+  const visibleCenters = centers.filter((center) => center.learnerCount > 0).slice(0, maxItems);
+  if (visibleCenters.length === 0) {
+    return <EmptyState message="Learner counts will appear once centers have registrations." />;
+  }
+
+  const max = Math.max(...visibleCenters.map((center) => center.learnerCount), 1);
+
+  return (
+    <div className="space-y-4">
+      {visibleCenters.map((center) => (
+        <div key={center.centerId}>
+          <div className="mb-1.5 flex items-start justify-between gap-3">
+            <p className="min-w-0 flex-1 text-sm font-medium leading-snug text-neutral-900">
+              {formatCenterDisplayName(center.centerName)}
+            </p>
+            <p className="shrink-0 text-sm tabular-nums text-neutral-600">{center.learnerCount.toLocaleString()}</p>
+          </div>
+          <div className="h-2 overflow-hidden rounded-full bg-neutral-100">
+            <div
+              className={cn("h-full rounded-full transition-all duration-500", barColorClass)}
+              style={{
+                width: `${Math.max(Math.round((center.learnerCount / max) * 100), 8)}%`,
+              }}
+            />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

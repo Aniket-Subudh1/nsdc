@@ -76,6 +76,50 @@ export type DashboardCenterOverview = {
 
 export type DashboardCenterSection = "sectors" | "courses" | "batches";
 
+export type DashboardTrainingCenterDetail = {
+  centerId: string;
+  centerName: string;
+  centerCode: string;
+  district: string;
+  state: string;
+  status: string;
+  programCount: number;
+  verifiedForSidh: boolean;
+  learnerCount: number;
+  ongoingLearners: number;
+  completedLearners: number;
+  pendingSyncLearners: number;
+  batchCount: number;
+  activeBatchCount: number;
+  enrolledInBatches: number;
+};
+
+export type DashboardActivityItem = {
+  id: string;
+  action: string;
+  entityType: string;
+  entityId: string | null;
+  createdAt: string;
+};
+
+export type DashboardPlatformOverview = {
+  totals: {
+    trainingCenters: number;
+    sectors: number;
+    courses: number;
+    batches: number;
+  };
+  preview: {
+    centers: DashboardTrainingCenterDetail[];
+    sectors: DashboardSectorSummary[];
+    courses: DashboardCourseSummary[];
+    batches: DashboardBatchSummary[];
+    activity: DashboardActivityItem[];
+  };
+};
+
+export type DashboardPlatformSection = "centers" | "sectors" | "courses" | "batches" | "activity";
+
 export type DashboardSummary = {
   userName: string;
   totals: {
@@ -95,6 +139,7 @@ export type DashboardSummary = {
   enrollmentStatus: CountMap;
   topCenters: Array<{ centerId: string; centerName: string; learnerCount: number }>;
   centerOverview: DashboardCenterOverview | null;
+  platformOverview: DashboardPlatformOverview | null;
   recentActivity: Array<{
     id: string;
     action: string;
@@ -145,6 +190,70 @@ function createSearchRegex(search?: string) {
 
   const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(escaped, "i");
+}
+
+function isSyntheticCenterId(centerId: string) {
+  return centerId === "candidate_registration" || centerId.startsWith("candidate_center_");
+}
+
+function fallbackCenterLabel(centerId: string) {
+  if (isSyntheticCenterId(centerId)) {
+    return "Direct registration";
+  }
+
+  return "Unknown training center";
+}
+
+async function resolveCenterDisplayNames(centerIds: string[]) {
+  const uniqueIds = [...new Set(centerIds.filter(Boolean))];
+  const nameById = new Map<string, string>();
+
+  if (uniqueIds.length === 0) {
+    return nameById;
+  }
+
+  const centers = await TrainingCenterModel.find({ centerId: { $in: uniqueIds } }).select({
+    centerId: 1,
+    centerName: 1,
+    centerCode: 1,
+  });
+
+  for (const center of centers) {
+    const label = center.centerName.trim() || center.centerCode.trim();
+    if (label) {
+      nameById.set(center.centerId, label);
+    }
+  }
+
+  const unresolvedIds = uniqueIds.filter((centerId) => !nameById.has(centerId));
+
+  if (unresolvedIds.length > 0) {
+    const candidateNameRows = await CandidateModel.aggregate<{ _id: string; centerName: string }>([
+      {
+        $match: {
+          centerId: { $in: unresolvedIds },
+          centerName: { $exists: true, $nin: [null, ""] },
+        },
+      },
+      { $sort: { updatedAt: -1 } },
+      { $group: { _id: "$centerId", centerName: { $first: "$centerName" } } },
+    ]);
+
+    for (const row of candidateNameRows) {
+      const label = row.centerName?.trim();
+      if (label) {
+        nameById.set(row._id, label);
+      }
+    }
+  }
+
+  for (const centerId of uniqueIds) {
+    if (!nameById.has(centerId)) {
+      nameById.set(centerId, fallbackCenterLabel(centerId));
+    }
+  }
+
+  return nameById;
 }
 
 function paginateList<T>(items: T[], page: number, pageSize: number) {
@@ -508,7 +617,7 @@ async function buildCenterOverview(centerFilter: Record<string, unknown>): Promi
       batchCode: batch.batchCode,
       batchName: batch.batchName ?? null,
       centerId: batch.centerId,
-      centerName: context.centerNameById.get(batch.centerId) ?? "Training center",
+      centerName: context.centerNameById.get(batch.centerId) ?? fallbackCenterLabel(batch.centerId),
       courseId: batch.courseId,
       courseName: course?.courseName ?? "Course",
       sectorName: course ? (context.sectorNameById.get(course.sectorId) ?? "Sector") : "Sector",
@@ -627,7 +736,7 @@ async function listBatchSummaries(
       batchCode: batch.batchCode,
       batchName: batch.batchName ?? null,
       centerId: batch.centerId,
-      centerName: context.centerNameById.get(batch.centerId) ?? "Training center",
+      centerName: context.centerNameById.get(batch.centerId) ?? fallbackCenterLabel(batch.centerId),
       courseId: batch.courseId,
       courseName: course?.courseName ?? "Course",
       sectorName: course ? (context.sectorNameById.get(course.sectorId) ?? "Sector") : "Sector",
@@ -708,6 +817,707 @@ export async function listDashboardCenterSection(
   };
 }
 
+function assertPlatformAdmin(actor: AuthSession) {
+  if (!actor.user.roles.includes("platform_admin")) {
+    throw new ApiError(403, "FORBIDDEN", "Platform overview is only available for platform admins");
+  }
+}
+
+async function loadBatchLookupContext(batchRows: Array<{ batchId: string; courseId: string; centerId: string }>) {
+  const courseIds = [...new Set(batchRows.map((batch) => batch.courseId))];
+  const centerIds = [...new Set(batchRows.map((batch) => batch.centerId))];
+
+  const [courses, centerNameById, enrollmentRows] = await Promise.all([
+    courseIds.length
+      ? CourseModel.find({ courseId: { $in: courseIds } }).select({ courseId: 1, courseName: 1, sectorId: 1 })
+      : Promise.resolve([]),
+    centerIds.length ? resolveCenterDisplayNames(centerIds) : Promise.resolve(new Map<string, string>()),
+    batchRows.length
+      ? BatchCandidateModel.aggregate<{
+          _id: string;
+          enrolledCount: number;
+          syncedEnrollmentCount: number;
+        }>([
+          {
+            $match: {
+              batchId: { $in: batchRows.map((batch) => batch.batchId) },
+              enrollmentStatus: { $ne: "cancelled" },
+            },
+          },
+          {
+            $group: {
+              _id: "$batchId",
+              enrolledCount: { $sum: 1 },
+              syncedEnrollmentCount: {
+                $sum: { $cond: [{ $eq: ["$enrollmentStatus", "synced"] }, 1, 0] },
+              },
+            },
+          },
+        ])
+      : Promise.resolve([]),
+  ]);
+
+  const sectorIds = [...new Set(courses.map((course) => course.sectorId))];
+  const sectors = sectorIds.length
+    ? await SectorModel.find({ sectorId: { $in: sectorIds } }).select({ sectorId: 1, name: 1 })
+    : [];
+
+  return {
+    centerNameById,
+    courseById: new Map(
+      courses.map((course) => [course.courseId, { courseId: course.courseId, courseName: course.courseName, sectorId: course.sectorId }]),
+    ),
+    sectorNameById: new Map(sectors.map((sector) => [sector.sectorId, sector.name])),
+    enrollmentByBatchId: new Map(
+      enrollmentRows.map((row) => [
+        row._id,
+        { enrolledCount: row.enrolledCount, syncedEnrollmentCount: row.syncedEnrollmentCount },
+      ]),
+    ),
+  };
+}
+
+function serializeBatchSummary(
+  batch: {
+    batchId: string;
+    batchCode: string;
+    batchName?: string | null;
+    centerId: string;
+    courseId: string;
+    status: string;
+    startDate: Date;
+    endDate: Date;
+    batchSize: number;
+  },
+  lookup: Awaited<ReturnType<typeof loadBatchLookupContext>>,
+) {
+  const course = lookup.courseById.get(batch.courseId);
+  const enrollment = lookup.enrollmentByBatchId.get(batch.batchId) ?? {
+    enrolledCount: 0,
+    syncedEnrollmentCount: 0,
+  };
+
+  return {
+    batchId: batch.batchId,
+    batchCode: batch.batchCode,
+    batchName: batch.batchName ?? null,
+    centerId: batch.centerId,
+    centerName: lookup.centerNameById.get(batch.centerId) ?? fallbackCenterLabel(batch.centerId),
+    courseId: batch.courseId,
+    courseName: course?.courseName ?? "Course",
+    sectorName: course ? (lookup.sectorNameById.get(course.sectorId) ?? "Sector") : "Sector",
+    status: batch.status,
+    startDate: batch.startDate.toISOString(),
+    endDate: batch.endDate.toISOString(),
+    batchSize: batch.batchSize,
+    enrolledCount: enrollment.enrolledCount,
+    syncedEnrollmentCount: enrollment.syncedEnrollmentCount,
+  };
+}
+
+async function aggregateCenterMetrics(centerIds: string[]) {
+  if (centerIds.length === 0) {
+    return {
+      learnerByCenter: new Map<string, { learnerCount: number; ongoingLearners: number; completedLearners: number; pendingSyncLearners: number }>(),
+      batchByCenter: new Map<string, { batchCount: number; activeBatchCount: number }>(),
+      enrollmentByCenter: new Map<string, number>(),
+    };
+  }
+
+  const [learnerRows, batchRows, enrollmentRows] = await Promise.all([
+    CandidateModel.aggregate<{
+      _id: string;
+      learnerCount: number;
+      ongoingLearners: number;
+      completedLearners: number;
+      pendingSyncLearners: number;
+    }>([
+      { $match: { centerId: { $in: centerIds } } },
+      {
+        $group: {
+          _id: "$centerId",
+          learnerCount: { $sum: 1 },
+          ongoingLearners: { $sum: { $cond: [{ $eq: ["$trainingStatus", "ongoing"] }, 1, 0] } },
+          completedLearners: { $sum: { $cond: [{ $eq: ["$trainingStatus", "completed"] }, 1, 0] } },
+          pendingSyncLearners: {
+            $sum: {
+              $cond: [
+                {
+                  $in: [
+                    "$syncState.status",
+                    ["queued", "processing", "failed", "manual_review"],
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+        },
+      },
+    ]),
+    BatchModel.aggregate<{ _id: string; batchCount: number; activeBatchCount: number }>([
+      { $match: { centerId: { $in: centerIds } } },
+      {
+        $group: {
+          _id: "$centerId",
+          batchCount: { $sum: 1 },
+          activeBatchCount: { $sum: { $cond: [{ $eq: ["$status", "active"] }, 1, 0] } },
+        },
+      },
+    ]),
+    BatchCandidateModel.aggregate<{ _id: string; enrolledInBatches: number }>([
+      { $match: { enrollmentStatus: { $ne: "cancelled" } } },
+      {
+        $lookup: {
+          from: BatchModel.collection.name,
+          localField: "batchId",
+          foreignField: "batchId",
+          as: "batch",
+        },
+      },
+      { $unwind: "$batch" },
+      { $match: { "batch.centerId": { $in: centerIds } } },
+      { $group: { _id: "$batch.centerId", enrolledInBatches: { $sum: 1 } } },
+    ]),
+  ]);
+
+  return {
+    learnerByCenter: new Map(
+      learnerRows.map((row) => [
+        row._id,
+        {
+          learnerCount: row.learnerCount,
+          ongoingLearners: row.ongoingLearners,
+          completedLearners: row.completedLearners,
+          pendingSyncLearners: row.pendingSyncLearners,
+        },
+      ]),
+    ),
+    batchByCenter: new Map(
+      batchRows.map((row) => [row._id, { batchCount: row.batchCount, activeBatchCount: row.activeBatchCount }]),
+    ),
+    enrollmentByCenter: new Map(enrollmentRows.map((row) => [row._id, row.enrolledInBatches])),
+  };
+}
+
+function mapCenterDetail(
+  center: {
+    centerId: string;
+    centerName: string;
+    centerCode: string;
+    district: string;
+    state: string;
+    status: string;
+    programIds?: string[];
+    verifiedForSidh?: boolean;
+  },
+  metrics: Awaited<ReturnType<typeof aggregateCenterMetrics>>,
+): DashboardTrainingCenterDetail {
+  const learners = metrics.learnerByCenter.get(center.centerId);
+  const batches = metrics.batchByCenter.get(center.centerId);
+
+  return {
+    centerId: center.centerId,
+    centerName: center.centerName,
+    centerCode: center.centerCode,
+    district: center.district,
+    state: center.state,
+    status: center.status,
+    programCount: center.programIds?.length ?? 0,
+    verifiedForSidh: center.verifiedForSidh ?? false,
+    learnerCount: learners?.learnerCount ?? 0,
+    ongoingLearners: learners?.ongoingLearners ?? 0,
+    completedLearners: learners?.completedLearners ?? 0,
+    pendingSyncLearners: learners?.pendingSyncLearners ?? 0,
+    batchCount: batches?.batchCount ?? 0,
+    activeBatchCount: batches?.activeBatchCount ?? 0,
+    enrolledInBatches: metrics.enrollmentByCenter.get(center.centerId) ?? 0,
+  };
+}
+
+function mapOrphanCenterDetail(
+  centerId: string,
+  centerName: string,
+  metrics: Awaited<ReturnType<typeof aggregateCenterMetrics>>,
+  fallbackLearnerCount = 0,
+): DashboardTrainingCenterDetail {
+  const learners = metrics.learnerByCenter.get(centerId);
+  const batches = metrics.batchByCenter.get(centerId);
+
+  return {
+    centerId,
+    centerName,
+    centerCode: "—",
+    district: "—",
+    state: "—",
+    status: "direct",
+    programCount: 0,
+    verifiedForSidh: false,
+    learnerCount: learners?.learnerCount ?? fallbackLearnerCount,
+    ongoingLearners: learners?.ongoingLearners ?? 0,
+    completedLearners: learners?.completedLearners ?? 0,
+    pendingSyncLearners: learners?.pendingSyncLearners ?? 0,
+    batchCount: batches?.batchCount ?? 0,
+    activeBatchCount: batches?.activeBatchCount ?? 0,
+    enrolledInBatches: metrics.enrollmentByCenter.get(centerId) ?? 0,
+  };
+}
+
+async function listPlatformCenters(input: {
+  page: number;
+  pageSize: number;
+  search?: string;
+  status?: string;
+}) {
+  const filter: Record<string, unknown> = {};
+  if (input.status && input.status !== "all") {
+    filter.status = input.status;
+  }
+
+  const searchRegex = createSearchRegex(input.search);
+  if (searchRegex) {
+    filter.$or = [
+      { centerName: searchRegex },
+      { centerCode: searchRegex },
+      { district: searchRegex },
+      { state: searchRegex },
+    ];
+  }
+
+  const pageSize = normalizePageSize(input.pageSize);
+  const page = Math.max(input.page, 1);
+
+  const [centers, total] = await Promise.all([
+    TrainingCenterModel.find(filter)
+      .sort({ centerName: 1 })
+      .skip((page - 1) * pageSize)
+      .limit(pageSize)
+      .select({
+        centerId: 1,
+        centerName: 1,
+        centerCode: 1,
+        district: 1,
+        state: 1,
+        status: 1,
+        programIds: 1,
+        verifiedForSidh: 1,
+      }),
+    TrainingCenterModel.countDocuments(filter),
+  ]);
+
+  const metrics = await aggregateCenterMetrics(centers.map((center) => center.centerId));
+
+  return {
+    items: centers.map((center) => mapCenterDetail(center, metrics)),
+    total,
+    page,
+    pageSize,
+  };
+}
+
+async function listPlatformSectors(input: { page: number; pageSize: number; search?: string }) {
+  const filter: Record<string, unknown> = {};
+  const searchRegex = createSearchRegex(input.search);
+  if (searchRegex) {
+    filter.$or = [{ name: searchRegex }, { code: searchRegex }];
+  }
+
+  const pageSize = normalizePageSize(input.pageSize);
+  const page = Math.max(input.page, 1);
+
+  const [sectors, total] = await Promise.all([
+    SectorModel.find(filter)
+      .sort({ name: 1 })
+      .skip((page - 1) * pageSize)
+      .limit(pageSize)
+      .select({ sectorId: 1, name: 1, code: 1 }),
+    SectorModel.countDocuments(filter),
+  ]);
+
+  const sectorIds = sectors.map((sector) => sector.sectorId);
+  if (sectorIds.length === 0) {
+    return { items: [], total, page, pageSize };
+  }
+
+  const [courseCounts, batchStats, enrollmentStats] = await Promise.all([
+    CourseModel.aggregate<{ _id: string; count: number }>([
+      { $match: { sectorId: { $in: sectorIds } } },
+      { $group: { _id: "$sectorId", count: { $sum: 1 } } },
+    ]),
+    BatchModel.aggregate<{ _id: string; batchCount: number }>([
+      {
+        $lookup: {
+          from: CourseModel.collection.name,
+          localField: "courseId",
+          foreignField: "courseId",
+          as: "course",
+        },
+      },
+      { $unwind: "$course" },
+      { $match: { "course.sectorId": { $in: sectorIds } } },
+      { $group: { _id: "$course.sectorId", batchCount: { $sum: 1 } } },
+    ]),
+    BatchCandidateModel.aggregate<{ _id: string; enrolledLearners: number }>([
+      { $match: { enrollmentStatus: { $ne: "cancelled" } } },
+      {
+        $lookup: {
+          from: BatchModel.collection.name,
+          localField: "batchId",
+          foreignField: "batchId",
+          as: "batch",
+        },
+      },
+      { $unwind: "$batch" },
+      {
+        $lookup: {
+          from: CourseModel.collection.name,
+          localField: "batch.courseId",
+          foreignField: "courseId",
+          as: "course",
+        },
+      },
+      { $unwind: "$course" },
+      { $match: { "course.sectorId": { $in: sectorIds } } },
+      { $group: { _id: "$course.sectorId", enrolledLearners: { $sum: 1 } } },
+    ]),
+  ]);
+
+  const courseCountBySector = new Map(courseCounts.map((row) => [row._id, row.count]));
+  const batchCountBySector = new Map(batchStats.map((row) => [row._id, row.batchCount]));
+  const enrollmentBySector = new Map(enrollmentStats.map((row) => [row._id, row.enrolledLearners]));
+
+  return {
+    items: sectors.map((sector) => ({
+      sectorId: sector.sectorId,
+      sectorName: sector.name,
+      sectorCode: sector.code,
+      courseCount: courseCountBySector.get(sector.sectorId) ?? 0,
+      batchCount: batchCountBySector.get(sector.sectorId) ?? 0,
+      enrolledLearners: enrollmentBySector.get(sector.sectorId) ?? 0,
+    })),
+    total,
+    page,
+    pageSize,
+  };
+}
+
+async function listPlatformCourses(input: { page: number; pageSize: number; search?: string }) {
+  const filter: Record<string, unknown> = {};
+  const searchRegex = createSearchRegex(input.search);
+  if (searchRegex) {
+    filter.$or = [{ courseName: searchRegex }, { internalCourseCode: searchRegex }, { sidhCourseId: searchRegex }];
+  }
+
+  const pageSize = normalizePageSize(input.pageSize);
+  const page = Math.max(input.page, 1);
+
+  const [courses, total] = await Promise.all([
+    CourseModel.find(filter)
+      .sort({ courseName: 1 })
+      .skip((page - 1) * pageSize)
+      .limit(pageSize)
+      .select({ courseId: 1, courseName: 1, sectorId: 1 }),
+    CourseModel.countDocuments(filter),
+  ]);
+
+  const courseIds = courses.map((course) => course.courseId);
+  if (courseIds.length === 0) {
+    return { items: [], total, page, pageSize };
+  }
+
+  const sectorIds = [...new Set(courses.map((course) => course.sectorId))];
+  const [sectors, batchStats, enrollmentStats] = await Promise.all([
+    SectorModel.find({ sectorId: { $in: sectorIds } }).select({ sectorId: 1, name: 1 }),
+    BatchModel.aggregate<{ _id: string; batchCount: number; activeBatchCount: number }>([
+      { $match: { courseId: { $in: courseIds } } },
+      {
+        $group: {
+          _id: "$courseId",
+          batchCount: { $sum: 1 },
+          activeBatchCount: { $sum: { $cond: [{ $eq: ["$status", "active"] }, 1, 0] } },
+        },
+      },
+    ]),
+    BatchCandidateModel.aggregate<{ _id: string; enrolledLearners: number }>([
+      { $match: { enrollmentStatus: { $ne: "cancelled" } } },
+      {
+        $lookup: {
+          from: BatchModel.collection.name,
+          localField: "batchId",
+          foreignField: "batchId",
+          as: "batch",
+        },
+      },
+      { $unwind: "$batch" },
+      { $match: { "batch.courseId": { $in: courseIds } } },
+      { $group: { _id: "$batch.courseId", enrolledLearners: { $sum: 1 } } },
+    ]),
+  ]);
+
+  const sectorNameById = new Map(sectors.map((sector) => [sector.sectorId, sector.name]));
+  const batchByCourse = new Map(
+    batchStats.map((row) => [row._id, { batchCount: row.batchCount, activeBatchCount: row.activeBatchCount }]),
+  );
+  const enrollmentByCourse = new Map(enrollmentStats.map((row) => [row._id, row.enrolledLearners]));
+
+  return {
+    items: courses.map((course) => {
+      const stats = batchByCourse.get(course.courseId) ?? { batchCount: 0, activeBatchCount: 0 };
+      return {
+        courseId: course.courseId,
+        courseName: course.courseName,
+        sectorId: course.sectorId,
+        sectorName: sectorNameById.get(course.sectorId) ?? "Sector",
+        batchCount: stats.batchCount,
+        activeBatchCount: stats.activeBatchCount,
+        enrolledLearners: enrollmentByCourse.get(course.courseId) ?? 0,
+      };
+    }),
+    total,
+    page,
+    pageSize,
+  };
+}
+
+async function listPlatformBatches(input: {
+  page: number;
+  pageSize: number;
+  search?: string;
+  status?: string;
+  centerId?: string;
+}) {
+  const batchFilter: Record<string, unknown> = {};
+  if (input.status && input.status !== "all") {
+    batchFilter.status = input.status;
+  }
+  if (input.centerId && input.centerId !== "all") {
+    batchFilter.centerId = input.centerId;
+  }
+
+  const searchRegex = createSearchRegex(input.search);
+  if (searchRegex) {
+    batchFilter.$or = [{ batchCode: searchRegex }, { batchName: searchRegex }];
+  }
+
+  const pageSize = normalizePageSize(input.pageSize);
+  const page = Math.max(input.page, 1);
+
+  const [batches, total] = await Promise.all([
+    BatchModel.find(batchFilter)
+      .sort({ startDate: -1 })
+      .skip((page - 1) * pageSize)
+      .limit(pageSize)
+      .select({
+        batchId: 1,
+        batchCode: 1,
+        batchName: 1,
+        centerId: 1,
+        courseId: 1,
+        status: 1,
+        startDate: 1,
+        endDate: 1,
+        batchSize: 1,
+      }),
+    BatchModel.countDocuments(batchFilter),
+  ]);
+
+  const lookup = await loadBatchLookupContext(batches);
+
+  return {
+    items: batches.map((batch) => serializeBatchSummary(batch, lookup)),
+    total,
+    page,
+    pageSize,
+  };
+}
+
+async function listPlatformActivity(input: {
+  page: number;
+  pageSize: number;
+  search?: string;
+  entityType?: string;
+}) {
+  const filter: Record<string, unknown> = {};
+  const searchRegex = createSearchRegex(input.search);
+  if (searchRegex) {
+    filter.$or = [{ action: searchRegex }, { entityType: searchRegex }];
+  }
+  if (input.entityType && input.entityType !== "all") {
+    filter.entityType = input.entityType;
+  }
+
+  const pageSize = normalizePageSize(input.pageSize);
+  const page = Math.max(input.page, 1);
+
+  const [entries, total] = await Promise.all([
+    AuditLogModel.find(filter)
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * pageSize)
+      .limit(pageSize)
+      .select({ auditLogId: 1, action: 1, entityType: 1, entityId: 1, createdAt: 1 }),
+    AuditLogModel.countDocuments(filter),
+  ]);
+
+  return {
+    items: entries.map((entry) => ({
+      id: entry.auditLogId,
+      action: entry.action,
+      entityType: entry.entityType,
+      entityId: entry.entityId ?? null,
+      createdAt: entry.createdAt.toISOString(),
+    })),
+    total,
+    page,
+    pageSize,
+  };
+}
+
+async function buildTopCenterPreviews(limit: number) {
+  const topRows = await CandidateModel.aggregate<{ _id: string; count: number }>([
+    { $group: { _id: "$centerId", count: { $sum: 1 } } },
+    { $sort: { count: -1 } },
+    { $limit: limit },
+  ]);
+
+  if (topRows.length === 0) {
+    return [];
+  }
+
+  const centerIds = topRows.map((row) => row._id);
+  const [centers, displayNames, metrics] = await Promise.all([
+    TrainingCenterModel.find({
+      centerId: { $in: centerIds },
+    }).select({
+      centerId: 1,
+      centerName: 1,
+      centerCode: 1,
+      district: 1,
+      state: 1,
+      status: 1,
+      programIds: 1,
+      verifiedForSidh: 1,
+    }),
+    resolveCenterDisplayNames(centerIds),
+    aggregateCenterMetrics(centerIds),
+  ]);
+
+  const centerById = new Map(centers.map((center) => [center.centerId, center]));
+
+  return topRows.map((row) => {
+    const center = centerById.get(row._id);
+    if (center) {
+      return mapCenterDetail(center, metrics);
+    }
+
+    return mapOrphanCenterDetail(
+      row._id,
+      displayNames.get(row._id) ?? fallbackCenterLabel(row._id),
+      metrics,
+      row.count,
+    );
+  });
+}
+
+async function buildPlatformOverview(): Promise<DashboardPlatformOverview> {
+  const [trainingCenters, sectors, courses, batches, previewCenters, sectorPage, coursePage, previewBatches, previewActivity] =
+    await Promise.all([
+      TrainingCenterModel.countDocuments({ status: "active" }),
+      SectorModel.countDocuments({ status: "active" }),
+      CourseModel.countDocuments({ status: "active" }),
+      BatchModel.countDocuments({}),
+      buildTopCenterPreviews(PREVIEW_LIMIT),
+      listPlatformSectors({ page: 1, pageSize: 100 }),
+      listPlatformCourses({ page: 1, pageSize: 50 }),
+      listPlatformBatches({ page: 1, pageSize: PREVIEW_LIMIT }),
+      listPlatformActivity({ page: 1, pageSize: PREVIEW_LIMIT }),
+    ]);
+
+  return {
+    totals: {
+      trainingCenters,
+      sectors,
+      courses,
+      batches,
+    },
+    preview: {
+      centers: previewCenters,
+      sectors: [...sectorPage.items].sort((left, right) => right.enrolledLearners - left.enrolledLearners).slice(0, PREVIEW_LIMIT),
+      courses: [...coursePage.items].sort((left, right) => right.enrolledLearners - left.enrolledLearners).slice(0, PREVIEW_LIMIT),
+      batches: previewBatches.items,
+      activity: previewActivity.items,
+    },
+  };
+}
+
+export async function listDashboardPlatformSection(
+  actor: AuthSession,
+  input: {
+    section: DashboardPlatformSection;
+    page: number;
+    pageSize: number;
+    search?: string;
+    status?: string;
+    entityType?: string;
+    centerId?: string;
+  },
+) {
+  await connectToDatabase();
+  assertPlatformAdmin(actor);
+
+  const page = Math.max(input.page, 1);
+  const pageSize = normalizePageSize(input.pageSize);
+
+  if (input.section === "centers") {
+    return {
+      section: input.section,
+      ...(await listPlatformCenters({
+        page,
+        pageSize,
+        search: input.search,
+        status: input.status,
+      })),
+    };
+  }
+
+  if (input.section === "sectors") {
+    return {
+      section: input.section,
+      ...(await listPlatformSectors({ page, pageSize, search: input.search })),
+    };
+  }
+
+  if (input.section === "courses") {
+    return {
+      section: input.section,
+      ...(await listPlatformCourses({ page, pageSize, search: input.search })),
+    };
+  }
+
+  if (input.section === "activity") {
+    return {
+      section: input.section,
+      ...(await listPlatformActivity({
+        page,
+        pageSize,
+        search: input.search,
+        entityType: input.entityType,
+      })),
+    };
+  }
+
+  return {
+    section: input.section,
+    ...(await listPlatformBatches({
+      page,
+      pageSize,
+      search: input.search,
+      status: input.status,
+      centerId: input.centerId,
+    })),
+  };
+}
+
 export async function getDashboardSummary(actor: AuthSession): Promise<DashboardSummary> {
   await connectToDatabase();
 
@@ -733,6 +1543,7 @@ export async function getDashboardSummary(actor: AuthSession): Promise<Dashboard
     topCenterRows,
     recentActivity,
     centerOverview,
+    platformOverview,
   ] = await Promise.all([
     CandidateModel.countDocuments(centerFilter),
     BatchModel.countDocuments({ ...centerFilter, status: "active" }),
@@ -773,22 +1584,14 @@ export async function getDashboardSummary(actor: AuthSession): Promise<Dashboard
     ]),
     loadRecentActivity(scopedCenterFilter, centerFilter),
     scopedCenterFilter ? buildCenterOverview(centerFilter) : Promise.resolve(null),
+    scopedCenterFilter ? Promise.resolve(null) : buildPlatformOverview(),
   ]);
 
-  const centerNameById = new Map<string, string>();
-  if (topCenterRows.length > 0) {
-    const centers = await TrainingCenterModel.find({
-      centerId: { $in: topCenterRows.map((row) => row._id) },
-    }).select({ centerId: 1, centerName: 1 });
-
-    for (const center of centers) {
-      centerNameById.set(center.centerId, center.centerName);
-    }
-  }
+  const centerNameById = await resolveCenterDisplayNames(topCenterRows.map((row) => row._id));
 
   const topCenters = topCenterRows.map((row) => ({
     centerId: row._id,
-    centerName: centerNameById.get(row._id) ?? "Training center",
+    centerName: centerNameById.get(row._id) ?? fallbackCenterLabel(row._id),
     learnerCount: row.count,
   }));
 
@@ -811,6 +1614,7 @@ export async function getDashboardSummary(actor: AuthSession): Promise<Dashboard
     enrollmentStatus,
     topCenters,
     centerOverview,
+    platformOverview,
     recentActivity: recentActivity.map((entry) => ({
       id: entry.auditLogId,
       action: entry.action,

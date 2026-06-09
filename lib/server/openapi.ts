@@ -1015,6 +1015,60 @@ export function getOpenApiDocument() {
             total: { type: "integer", minimum: 0 },
           },
         },
+        CourseImportJob: {
+          type: "object",
+          required: [
+            "id",
+            "importJobId",
+            "fileName",
+            "status",
+            "totalRows",
+            "validRows",
+            "invalidRows",
+            "duplicateRows",
+            "committedRows",
+            "committedAt",
+            "createdAt",
+            "updatedAt",
+          ],
+          properties: {
+            id: { type: "string" },
+            importJobId: { type: "string" },
+            fileName: { type: "string" },
+            status: { type: "string", enum: ["staged", "committed", "failed"] },
+            totalRows: { type: "integer", minimum: 0 },
+            validRows: { type: "integer", minimum: 0 },
+            invalidRows: { type: "integer", minimum: 0 },
+            duplicateRows: { type: "integer", minimum: 0 },
+            committedRows: { type: "integer", minimum: 0 },
+            committedAt: { type: "string", nullable: true, format: "date-time" },
+            createdAt: { type: "string", nullable: true, format: "date-time" },
+            updatedAt: { type: "string", nullable: true, format: "date-time" },
+          },
+        },
+        CourseImportRow: {
+          type: "object",
+          required: ["rowId", "rowNumber", "status", "errors", "duplicateOfCourseId", "courseId", "normalized"],
+          properties: {
+            rowId: { type: "string" },
+            rowNumber: { type: "integer", minimum: 1 },
+            status: { type: "string", enum: ["valid", "invalid", "duplicate", "committed", "skipped"] },
+            errors: { type: "array", items: ref("ApiErrorDetail") },
+            duplicateOfCourseId: { type: "string", nullable: true },
+            courseId: { type: "string", nullable: true },
+            normalized: { type: "object", additionalProperties: true },
+          },
+        },
+        CourseImportRowListData: {
+          type: "object",
+          required: ["items", "page", "pageSize", "total"],
+          properties: {
+            items: { type: "array", items: ref("CourseImportRow") },
+            page: { type: "integer", minimum: 1 },
+            pageSize: { type: "integer", minimum: 1 },
+            total: { type: "integer", minimum: 0 },
+          },
+        },
         SyncJob: {
           type: "object",
           required: ["id", "syncJobId", "entityType", "entityId", "candidateId", "status", "retryCount", "latestRemoteCandidateId", "payloadSnapshot", "attempts", "nextRunAt", "createdAt", "updatedAt"],
@@ -2049,6 +2103,99 @@ export function getOpenApiDocument() {
             200: successResponse("Course versions loaded", { type: "array", items: ref("CourseVersion") }),
             401: errorResponse("Authentication required"),
             403: errorResponse("Forbidden"),
+          },
+        },
+      },
+      "/masters/courses/imports/template": {
+        get: {
+          tags: ["Masters"],
+          summary: "Download the latest course bulk import Excel template",
+          security: [{ cookieAuth: [] }],
+          responses: {
+            200: {
+              description: "Excel template file",
+              content: {
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                  schema: { type: "string", format: "binary" },
+                },
+              },
+            },
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+          },
+        },
+      },
+      "/masters/courses/imports": {
+        post: {
+          tags: ["Masters"],
+          summary: "Stage a bulk course workbook for row-level validation",
+          security: [{ cookieAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              "multipart/form-data": {
+                schema: {
+                  type: "object",
+                  required: ["file"],
+                  properties: {
+                    file: { type: "string", format: "binary" },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            201: successResponse("Course import staged successfully", ref("CourseImportJob")),
+            400: errorResponse("Validation failed"),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+          },
+        },
+      },
+      "/masters/courses/imports/{jobId}": {
+        get: {
+          tags: ["Masters"],
+          summary: "Get a staged course import job summary",
+          security: [{ cookieAuth: [] }],
+          parameters: [{ $ref: "#/components/parameters/ImportJobId" }],
+          responses: {
+            200: successResponse("Course import job loaded", ref("CourseImportJob")),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+            404: errorResponse("Import job not found"),
+          },
+        },
+      },
+      "/masters/courses/imports/{jobId}/rows": {
+        get: {
+          tags: ["Masters"],
+          summary: "List row-level validation results for a staged course import",
+          security: [{ cookieAuth: [] }],
+          parameters: [
+            { $ref: "#/components/parameters/ImportJobId" },
+            { $ref: "#/components/parameters/Page" },
+            { $ref: "#/components/parameters/PageSize" },
+          ],
+          responses: {
+            200: successResponse("Course import rows loaded", ref("CourseImportRowListData")),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+            404: errorResponse("Import job not found"),
+          },
+        },
+      },
+      "/masters/courses/imports/{jobId}/commit": {
+        post: {
+          tags: ["Masters"],
+          summary: "Commit valid rows from a staged course import",
+          security: [{ cookieAuth: [] }],
+          parameters: [{ $ref: "#/components/parameters/ImportJobId" }],
+          responses: {
+            200: successResponse("Course import committed successfully", ref("CourseImportJob")),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+            404: errorResponse("Import job not found"),
+            409: errorResponse("Import already committed"),
           },
         },
       },

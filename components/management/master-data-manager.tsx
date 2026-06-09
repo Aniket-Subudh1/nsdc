@@ -20,6 +20,7 @@ import {
 import { Save } from "lucide-react";
 import { toast } from "sonner";
 
+import CourseBulkImportPanel from "@/components/management/course-bulk-import-panel";
 import { apiFetch, ClientApiError } from "@/lib/client/api";
 import {
   getSidhBatchFieldDefault,
@@ -118,6 +119,7 @@ type PagedResponse<T> = {
 };
 
 type Tab = "programs" | "sectors" | "schemes" | "courses";
+type CourseViewMode = "list" | "bulk_import";
 
 const TABS: Array<{ icon: React.ReactNode; id: Tab; label: string }> = [
   { icon: <IconBriefcase className="h-4 w-4" />, id: "programs", label: "Programs" },
@@ -214,6 +216,7 @@ const emptyCourseForm = {
 export default function MasterDataManager({ portal }: MasterDataManagerProps) {
   const canManageCoreMasters = portal === "admin";
   const [activeTab, setActiveTab] = useState<Tab>(canManageCoreMasters ? "programs" : "courses");
+  const [courseViewMode, setCourseViewMode] = useState<CourseViewMode>("list");
   const [programs, setPrograms] = useState<ProgramRecord[]>([]);
   const [sectors, setSectors] = useState<SectorRecord[]>([]);
   const [schemes, setSchemes] = useState<SchemeRecord[]>([]);
@@ -251,6 +254,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
     setSearchQuery("");
     setStatusFilter("all");
     if (tab === "courses") setCoursePage(1);
+    if (tab !== "courses") setCourseViewMode("list");
   }
 
   const activeList = useMemo(
@@ -703,7 +707,31 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
             <IconRefresh className={cn("h-4 w-4", isLoading && "animate-spin")} />
             Refresh
           </button>
-          {(canManageCoreMasters || activeTab === "courses") && (
+          {activeTab === "courses" ? (
+            <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+              <button
+                type="button"
+                onClick={() => setCourseViewMode("list")}
+                className={cn(
+                  "rounded-md px-3 py-1.5 text-sm font-medium transition",
+                  courseViewMode === "list" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50",
+                )}
+              >
+                All courses
+              </button>
+              <button
+                type="button"
+                onClick={() => setCourseViewMode("bulk_import")}
+                className={cn(
+                  "rounded-md px-3 py-1.5 text-sm font-medium transition",
+                  courseViewMode === "bulk_import" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50",
+                )}
+              >
+                Bulk import
+              </button>
+            </div>
+          ) : null}
+          {(canManageCoreMasters || activeTab === "courses") && courseViewMode === "list" ? (
             <button
               type="button"
               onClick={openCreateModal}
@@ -712,7 +740,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
               <IconPlus className="h-4 w-4" />
               {addLabel}
             </button>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -775,54 +803,67 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           ))}
         </div>
 
-        <div className="flex shrink-0 flex-col gap-3 border-b border-slate-100 px-4 py-4 sm:px-5 md:flex-row md:items-center md:justify-between">
-          <div className="flex flex-wrap gap-1">
-            {(["all", "active", "inactive"] as const).map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setStatusFilter(s)}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold capitalize transition",
-                  statusFilter === s
-                    ? "bg-sky-100 text-sky-700"
-                    : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
-                )}
-              >
-                {s === "all" ? "All items" : s}
-                <span
+        {!(activeTab === "courses" && courseViewMode === "bulk_import") ? (
+          <div className="flex shrink-0 flex-col gap-3 border-b border-slate-100 px-4 py-4 sm:px-5 md:flex-row md:items-center md:justify-between">
+            <div className="flex flex-wrap gap-1">
+              {(["all", "active", "inactive"] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setStatusFilter(s)}
                   className={cn(
-                    "rounded-full px-1.5 py-0.5 text-[10px] font-bold",
-                    statusFilter === s ? "bg-sky-200/70 text-sky-800" : "bg-neutral-100 text-neutral-500"
+                    "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold capitalize transition",
+                    statusFilter === s
+                      ? "bg-sky-100 text-sky-700"
+                      : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
                   )}
                 >
-                  {statusCounts[s]}
-                </span>
-              </button>
-            ))}
+                  {s === "all" ? "All items" : s}
+                  <span
+                    className={cn(
+                      "rounded-full px-1.5 py-0.5 text-[10px] font-bold",
+                      statusFilter === s ? "bg-sky-200/70 text-sky-800" : "bg-neutral-100 text-neutral-500"
+                    )}
+                  >
+                    {statusCounts[s]}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="relative min-w-0 flex-1 sm:max-w-xs md:max-w-sm">
+              <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search by name or code"
+                className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-8 text-sm text-slate-800 outline-none transition focus:border-sky-300 focus:bg-white"
+              />
+              {searchQuery ? (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
+                >
+                  <IconX className="h-4 w-4" />
+                </button>
+              ) : null}
+            </div>
           </div>
-          <div className="relative min-w-0 flex-1 sm:max-w-xs md:max-w-sm">
-            <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by name or code"
-              className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-8 text-sm text-slate-800 outline-none transition focus:border-sky-300 focus:bg-white"
-            />
-            {searchQuery ? (
-              <button
-                type="button"
-                onClick={() => setSearchQuery("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
-              >
-                <IconX className="h-4 w-4" />
-              </button>
-            ) : null}
-          </div>
-        </div>
+        ) : null}
 
         <div className="min-h-0 flex-1 overflow-y-auto">
+          {activeTab === "courses" && courseViewMode === "bulk_import" ? (
+            <div className="p-4 sm:p-5">
+              <CourseBulkImportPanel
+                onImportCommitted={() => {
+                  setCoursePage(1);
+                  void loadData();
+                }}
+              />
+            </div>
+          ) : (
+            <>
           <div className="hidden overflow-x-auto lg:block">
           {activeTab === "programs" && (
             <ProgramsTable
@@ -916,6 +957,8 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
             />
           )}
         </div>
+            </>
+          )}
         </div>
       </div>
 

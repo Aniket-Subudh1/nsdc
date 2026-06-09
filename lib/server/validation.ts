@@ -14,7 +14,7 @@ import {
   resolveCandidateDistrict,
   resolveCandidateState,
 } from "@/lib/candidate-location-options";
-import { calculateMinimumAssessmentDate } from "@/lib/sidh-batch-payload";
+import { BATCH_FEE_MIN_ERROR, calculateMinimumAssessmentDate } from "@/lib/sidh-batch-payload";
 import { z } from "zod";
 
 import { ROLE_KEYS } from "@/lib/server/rbac";
@@ -839,7 +839,7 @@ export const createBatchSchema = z
     startTime: timeSchema.default("09:00"),
     endTime: timeSchema.default("17:00"),
     trainingHoursPerDay: z.coerce.number().int().positive().max(24).default(8),
-    fee: z.coerce.number().min(0).default(0),
+    fee: z.coerce.number().positive(BATCH_FEE_MIN_ERROR),
     status: batchStatusSchema.default("draft"),
     syncEnabled: z.boolean().default(true),
     allowAssessmentBeforeBatchEnd: z.boolean().default(false),
@@ -893,7 +893,7 @@ export const updateBatchSchema = z
     startTime: timeSchema.optional(),
     endTime: timeSchema.optional(),
     trainingHoursPerDay: z.coerce.number().int().positive().max(24).optional(),
-    fee: z.coerce.number().min(0).optional(),
+    fee: z.coerce.number().positive(BATCH_FEE_MIN_ERROR).optional(),
     status: batchStatusSchema.optional(),
     syncEnabled: z.boolean().optional(),
     allowAssessmentBeforeBatchEnd: z.boolean().optional(),

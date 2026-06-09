@@ -125,7 +125,7 @@ async function main() {
     },
     endDate,
     endTime: "17:00",
-    fee: 0,
+    fee: 1,
     options: {
       assessmentMode: SIDH_BATCH_DEFAULTS.assessmentMode,
       batchType: SIDH_BATCH_DEFAULTS.batchType,

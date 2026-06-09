@@ -71,6 +71,31 @@ describe("SIDH batch payload builder", () => {
     });
   });
 
+  it("rejects zero batch fee when building the SIDH payload", () => {
+    expect(() =>
+      buildSidhBatchPayload({
+        assessmentDate: "2026-11-25",
+        batchName: "Retail Batch 2026-06-11",
+        batchSize: 25,
+        course: {
+          sidhCourseId: "FeeSchCor_48128",
+          trainingPerDayHours: 8,
+        },
+        endDate: "2026-11-25",
+        endTime: "17:00",
+        fee: 0,
+        scheme: {
+          sidhSchemeId: "44644",
+          sidhSchemeReferenceId: "Scheme_1159",
+          sidhSchemeType: "feeBased",
+        },
+        startDate: "2026-06-11",
+        startTime: "09:00",
+        tcId: "TC164648",
+      }),
+    ).toThrow("Batch fee must be greater than 0");
+  });
+
   it("calculates end date from course duration", () => {
     expect(calculateBatchEndDate("2026-06-11", 240, 8)).toBe("2026-07-10");
   });

@@ -24,9 +24,11 @@ import { toast } from "sonner";
 import { apiFetch, ClientApiError } from "@/lib/client/api";
 import { cn } from "@/lib/utils";
 import {
+  BATCH_FEE_MIN_ERROR,
   buildSidhBatchPayload,
   calculateBatchEndDate,
   calculateMinimumAssessmentDate,
+  isValidBatchFee,
   resolveAssessmentDate,
   resolveBatchSchemeId,
   resolveSidhBatchFieldSelection,
@@ -870,6 +872,11 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
       return null;
     }
 
+    const fee = Number(batchForm.fee || selectedCourse.price || 0);
+    if (!isValidBatchFee(fee)) {
+      return null;
+    }
+
     return buildSidhBatchPayload({
       assessmentDate: resolveAssessmentDate(batchForm.endDate, batchForm.assessmentDate),
       batchName: batchForm.batchName || `${selectedCourse.courseName} ${batchForm.startDate}`,
@@ -881,7 +888,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
       },
       endDate: batchForm.endDate,
       endTime: batchForm.endTime,
-      fee: Number(batchForm.fee || selectedCourse.price || 0),
+      fee,
       options: {
         assessmentMode: batchForm.assessmentMode,
         batchType: batchForm.batchType,
@@ -1280,6 +1287,11 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
 
     if (batchForm.endDate && batchForm.assessmentDate < minimumAssessmentDate) {
       return `Assessment date must be at least 7 days after the batch end date (${minimumAssessmentDate})`;
+    }
+
+    const batchFee = Number(batchForm.fee || selectedCourse?.price || 0);
+    if (!isValidBatchFee(batchFee)) {
+      return BATCH_FEE_MIN_ERROR;
     }
 
     return null;
@@ -1909,7 +1921,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
         </div>
         <div className="space-y-2">
           <Label htmlFor="fee">Batch fee (₹)</Label>
-          <Input id="fee" min={0} type="number" value={batchForm.fee} onChange={(event) => updateBatchForm({ fee: event.target.value })} />
+          <Input id="fee" min={1} type="number" value={batchForm.fee} onChange={(event) => updateBatchForm({ fee: event.target.value })} />
         </div>
         <div className="space-y-2">
           <Label htmlFor="tpId">Training partner ID</Label>

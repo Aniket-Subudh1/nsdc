@@ -21,6 +21,7 @@ describe("batch validation", () => {
         endDate: "2026-02-01",
         assessmentDate: "2026-02-08",
         candidateIds: Array.from({ length: 81 }, (_, index) => `cand_${index + 1}`),
+        fee: 500,
       }),
     ).toThrow("Batch size must never exceed 80 candidates");
   });
@@ -36,6 +37,7 @@ describe("batch validation", () => {
         startDate: "2026-01-01",
         endDate: "2026-02-01",
         assessmentDate: "2026-02-03",
+        fee: 500,
       }),
     ).toThrow("Assessment date must be at least 7 days after the batch end date");
   });
@@ -51,6 +53,7 @@ describe("batch validation", () => {
         startDate: "2026-01-01",
         endDate: "2026-02-01",
         assessmentDate: "2026-02-15",
+        fee: 500,
       }),
     ).toMatchObject({
       batchCode: "B-003",
@@ -65,6 +68,30 @@ describe("batch validation", () => {
         endDate: "2026-03-01",
       }),
     ).toThrow("Batch start date must be before end date");
+  });
+
+  it("rejects zero batch fee on create", () => {
+    expect(() =>
+      createBatchSchema.parse({
+        batchCode: "B-004",
+        batchName: "Retail Batch",
+        centerId: "tc_001",
+        courseId: "course_001",
+        schemeId: "scheme_001",
+        startDate: "2026-01-01",
+        endDate: "2026-02-01",
+        assessmentDate: "2026-02-15",
+        fee: 0,
+      }),
+    ).toThrow("Batch fee must be greater than 0");
+  });
+
+  it("rejects zero batch fee on update", () => {
+    expect(() =>
+      updateBatchSchema.parse({
+        fee: 0,
+      }),
+    ).toThrow("Batch fee must be greater than 0");
   });
 });
 

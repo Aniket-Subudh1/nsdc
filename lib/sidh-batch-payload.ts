@@ -38,6 +38,17 @@ export type SidhBatchPayloadSource = {
 };
 
 export const MIN_ASSESSMENT_DAYS_AFTER_BATCH_END = 7;
+export const BATCH_FEE_MIN_ERROR = "Batch fee must be greater than 0";
+
+export function isValidBatchFee(fee?: number | null): fee is number {
+  return typeof fee === "number" && Number.isFinite(fee) && fee > 0;
+}
+
+export function assertValidBatchFee(fee?: number | null): asserts fee is number {
+  if (!isValidBatchFee(fee)) {
+    throw new Error(BATCH_FEE_MIN_ERROR);
+  }
+}
 
 export function addDaysToDateInput(dateInput: string, days: number) {
   const date = new Date(`${dateInput}T00:00:00.000Z`);
@@ -73,6 +84,8 @@ export function calculateBatchEndDate(startDate: string, totalHours: number, tra
 }
 
 export function buildSidhBatchPayload(source: SidhBatchPayloadSource) {
+  assertValidBatchFee(source.fee);
+
   const assessmentDate = source.assessmentDate ?? source.endDate;
   const batchStartDate = formatSidhMidnight(source.startDate);
   const batchEndDate = formatSidhMidnight(source.endDate);
@@ -111,7 +124,7 @@ export function buildSidhBatchPayload(source: SidhBatchPayloadSource) {
     batchStartTime,
     batchEndTime,
     batchFee: {
-      totalFees: source.fee ?? 0,
+      totalFees: source.fee,
     },
     feePaidBy: fields.feePaidBy,
     assessmentStartDate,

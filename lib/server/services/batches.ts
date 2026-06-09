@@ -27,7 +27,7 @@ import {
   getPermissionsForRoles,
 } from "@/lib/server/rbac";
 import { isTrainingPartnerId, resolveSidhBatchId } from "@/lib/server/sidh-payload";
-import { buildSidhBatchPayload, resolveSidhBatchFieldSelection } from "@/lib/sidh-batch-payload";
+import { assertValidBatchFee, buildSidhBatchPayload, resolveSidhBatchFieldSelection } from "@/lib/sidh-batch-payload";
 import { writeAuditLog } from "@/lib/server/services/audit";
 import { createSidhConnector, SidhConnectorError } from "@/lib/server/services/sidh-connector";
 import { type AuthSession } from "@/lib/server/services/session";
@@ -1072,6 +1072,10 @@ function calculateNextRunAt(retryCount: number, now: Date) {
 async function validateBatchSyncEligibility(batch: ServiceBatch) {
   ensureCenterAssignedForSync(batch.centerId, batch.syncEnabled);
 
+  if (!batch.fee || batch.fee <= 0) {
+    throw new ApiError(400, "BATCH_FEE_INVALID", "Batch fee must be greater than 0");
+  }
+
   return validateBatchMasterData({
     centerId: batch.centerId,
     courseId: batch.courseId,
@@ -1130,6 +1134,13 @@ async function validateEnrollmentEligibility(batch: ServiceBatch, selectedBatchC
 export async function createBatch(actor: AuthSession, input: CreateBatchInput, requestId?: string) {
   await connectToDatabase();
   ensureCanWriteBatches(actor);
+
+  try {
+    assertValidBatchFee(input.fee);
+  } catch (error) {
+    throw new ApiError(400, "BATCH_FEE_INVALID", error instanceof Error ? error.message : "Batch fee must be greater than 0");
+  }
+
   const centerId = normalizeString(input.centerId) || UNASSIGNED_CENTER_ID;
   const hasAssignedCenter = centerId !== UNASSIGNED_CENTER_ID;
   ensureCenterAssignedForSync(centerId, input.syncEnabled);
@@ -1284,6 +1295,14 @@ async function ensureBatchEditable(batch: ServiceBatch) {
 export async function updateBatch(actor: AuthSession, batchId: string, input: UpdateBatchInput, requestId?: string) {
   await connectToDatabase();
   ensureCanWriteBatches(actor);
+
+  if (input.fee !== undefined) {
+    try {
+      assertValidBatchFee(input.fee);
+    } catch (error) {
+      throw new ApiError(400, "BATCH_FEE_INVALID", error instanceof Error ? error.message : "Batch fee must be greater than 0");
+    }
+  }
 
   const batch = await loadBatchWithScope(actor, batchId);
   await ensureBatchEditable(batch);

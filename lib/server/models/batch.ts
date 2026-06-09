@@ -71,7 +71,7 @@ const batchSchema = new mongoose.Schema(
     },
     fee: {
       type: Number,
-      default: 0,
+      min: 1,
     },
     status: {
       type: String,

@@ -60,6 +60,13 @@ export const loginSchema = z.object({
   portal: loginPortalSchema,
 });
 
+export const loginVerifyOtpSchema = z.object({
+  email: z.string().trim().email(),
+  challengeId: z.string().trim().min(1),
+  otp: z.string().trim().regex(/^\d{6}$/, "OTP must be a 6 digit code"),
+  portal: authPortalSchema.default("admin"),
+});
+
 export const forgotPasswordRequestSchema = z.object({
   email: z.string().trim().email(),
   portal: authPortalSchema,

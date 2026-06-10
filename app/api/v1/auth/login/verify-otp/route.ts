@@ -1,7 +1,7 @@
-import { apiError, apiSuccess, getClientIp, getRequestId } from "@/lib/server/http";
 import { setAuthCookie } from "@/lib/server/auth";
-import { loginUser } from "@/lib/server/services/session";
-import { loginSchema } from "@/lib/server/validation";
+import { apiError, apiSuccess, getClientIp, getRequestId } from "@/lib/server/http";
+import { verifyLoginOtp } from "@/lib/server/services/session";
+import { loginVerifyOtpSchema } from "@/lib/server/validation";
 
 export const runtime = "nodejs";
 
@@ -10,29 +10,18 @@ export async function POST(request: Request) {
 
   try {
     const requestBody = await request.json().catch(() => ({}));
-    const body = loginSchema.parse(requestBody && typeof requestBody === "object" && !Array.isArray(requestBody) ? requestBody : {});
-    const result = await loginUser({
+    const body = loginVerifyOtpSchema.parse(
+      requestBody && typeof requestBody === "object" && !Array.isArray(requestBody) ? requestBody : {},
+    );
+    const result = await verifyLoginOtp({
       email: body.email,
-      password: body.password,
+      challengeId: body.challengeId,
+      otp: body.otp,
       portal: body.portal,
       requestId,
       ipAddress: getClientIp(request.headers),
       userAgent: request.headers.get("user-agent"),
     });
-
-    if ("requiresOtp" in result) {
-      return apiSuccess(
-        {
-          requiresOtp: true,
-          challengeId: result.challengeId,
-          maskedEmail: result.maskedEmail,
-        },
-        {
-          message: result.message,
-          requestId,
-        },
-      );
-    }
 
     const response = apiSuccess(
       {

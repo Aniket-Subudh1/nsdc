@@ -12,6 +12,48 @@ const booleanFromEnv = z.preprocess((value) => {
   return false;
 }, z.boolean());
 
+function stripEnvQuotes(value: string) {
+  const trimmed = value.trim();
+
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+
+  return trimmed;
+}
+
+function normalizeLegacyEmailUser(value: string) {
+  const trimmed = value.trim();
+
+  if (!trimmed || trimmed.includes("@")) {
+    return trimmed;
+  }
+
+  return `${trimmed}@gmail.com`;
+}
+
+function resolveSmtpSettings(source: NodeJS.ProcessEnv) {
+  const smtpHost = source.SMTP_HOST?.trim() || "";
+  const smtpUser =
+    source.SMTP_USER?.trim() || normalizeLegacyEmailUser(source.EMAIL_USER?.trim() || "");
+  const smtpPass = source.SMTP_PASS?.trim() || source.EMAIL_APP_PASSWORD?.trim() || "";
+  const smtpFrom =
+    stripEnvQuotes(source.FROM_EMAIL?.trim() || "") ||
+    stripEnvQuotes(source.SMTP_FROM?.trim() || "") ||
+    source.OWNER_EMAIL?.trim() ||
+    "";
+
+  return {
+    SMTP_HOST: smtpHost,
+    SMTP_USER: smtpUser,
+    SMTP_PASS: smtpPass,
+    SMTP_FROM: smtpFrom,
+  };
+}
+
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   APP_ENV: z.string().trim().min(1).default("local"),
@@ -46,6 +88,7 @@ const envSchema = z.object({
   ACCESS_TOKEN_TTL_MINUTES: z.coerce.number().int().positive().optional(),
   SESSION_TTL_HOURS: z.coerce.number().int().positive().optional(),
   PASSWORD_RESET_OTP_TTL_MINUTES: z.coerce.number().int().positive().default(10),
+  LOGIN_OTP_TTL_MINUTES: z.coerce.number().int().positive().default(10),
   SEED_ADMIN_NAME: z.string().trim().default("Platform Admin"),
   SEED_ADMIN_EMAIL: z.string().trim().email().default("admin@example.com"),
   SEED_ADMIN_PASSWORD: z.string().min(8).default("StrongPass@123"),
@@ -56,7 +99,10 @@ export type AppEnv = z.infer<typeof envSchema>;
 let cachedEnv: AppEnv | undefined;
 
 export function createEnv(source: NodeJS.ProcessEnv): AppEnv {
-  return envSchema.parse(source);
+  return envSchema.parse({
+    ...source,
+    ...resolveSmtpSettings(source),
+  });
 }
 
 export function getEnv(): AppEnv {

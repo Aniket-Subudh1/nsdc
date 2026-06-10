@@ -242,6 +242,25 @@ export function getOpenApiDocument() {
             redirectPath: { type: "string", example: "/admin/dashboard" },
           },
         },
+        LoginOtpChallengeData: {
+          type: "object",
+          required: ["requiresOtp", "challengeId", "maskedEmail"],
+          properties: {
+            requiresOtp: { type: "boolean", example: true },
+            challengeId: { type: "string", example: "lch_01h2x3y4z5" },
+            maskedEmail: { type: "string", example: "a****@example.com" },
+          },
+        },
+        LoginVerifyOtpRequest: {
+          type: "object",
+          required: ["email", "challengeId", "otp"],
+          properties: {
+            email: { type: "string", format: "email" },
+            challengeId: { type: "string" },
+            otp: { type: "string", pattern: "^[0-9]{6}$", example: "123456" },
+            portal: ref("AuthPortal"),
+          },
+        },
         AuthMeData: {
           type: "object",
           required: ["user", "permissions"],
@@ -1545,15 +1564,45 @@ export function getOpenApiDocument() {
         post: {
           tags: ["Auth"],
           summary: "Authenticate a portal user and issue a session cookie",
+          description:
+            "Training partner logins complete immediately. Admin logins return an OTP challenge and require `/auth/login/verify-otp` before a session cookie is issued.",
           requestBody: {
             required: true,
             content: jsonContent(ref("LoginRequest")),
           },
           responses: {
-            200: successResponse("Login successful", ref("LoginResponseData")),
+            200: {
+              description: "Login successful or admin OTP challenge issued",
+              content: {
+                "application/json": {
+                  schema: {
+                    oneOf: [
+                      successSchema(ref("LoginResponseData")),
+                      successSchema(ref("LoginOtpChallengeData")),
+                    ],
+                  },
+                },
+              },
+            },
             400: errorResponse("Validation failed"),
             401: errorResponse("Invalid credentials"),
             403: errorResponse("Portal access denied or user inactive"),
+            500: errorResponse("Unexpected server error"),
+          },
+        },
+      },
+      "/auth/login/verify-otp": {
+        post: {
+          tags: ["Auth"],
+          summary: "Complete admin login with a verification code",
+          requestBody: {
+            required: true,
+            content: jsonContent(ref("LoginVerifyOtpRequest")),
+          },
+          responses: {
+            200: successResponse("Login successful", ref("LoginResponseData")),
+            400: errorResponse("Validation failed or OTP is invalid/expired"),
+            403: errorResponse("Portal access denied"),
             500: errorResponse("Unexpected server error"),
           },
         },

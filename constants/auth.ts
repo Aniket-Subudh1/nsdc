@@ -1,7 +1,7 @@
 export const AUTH_CONTENT = {
     admin:{
         heading:"Welcome back, Admin!",
-        subHeading:"Login as admin to manage the platform and its users",
+        subHeading:"Sign in with your email and password, then verify with the code sent to your registered email.",
         SubmitButtonText:"Login as Admin",
         PlaceholderMail:"admin@example.com",
         portal:"admin",

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { cookies } from "next/headers";
+import type { HydratedDocument } from "mongoose";
 
 import {
   ACCESS_TOKEN_COOKIE,
@@ -15,7 +16,7 @@ import { ApiError } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
 import { connectToDatabase } from "@/lib/server/mongodb";
 import { SessionModel } from "@/lib/server/models/session";
-import { UserModel } from "@/lib/server/models/user";
+import { UserModel, type UserDocument } from "@/lib/server/models/user";
 import {
   ADMIN_PORTAL_ROLES,
   getPermissionsForRoles,
@@ -24,6 +25,7 @@ import {
   type PermissionKey,
   type RoleKey,
 } from "@/lib/server/rbac";
+import { initiateAdminLoginOtp, verifyAdminLoginOtp } from "@/lib/server/services/login-otp";
 import { writeAuditLog } from "@/lib/server/services/audit";
 
 export type PublicUser = {
@@ -109,6 +111,51 @@ export function assertPortalAccess(roles: RoleKey[], portal?: "admin" | "trainin
   }
 }
 
+async function createAuthenticatedSession(input: LoginInput & { user: HydratedDocument<UserDocument> }) {
+  const user = input.user;
+
+  const sessionId = createPrefixedId("ses");
+  const accessToken = await signAccessToken({
+    sub: user.userId,
+    sid: sessionId,
+    email: user.email,
+    name: user.name,
+    roles: normalizeStringArray(user.roles),
+    centerIds: normalizeStringArray(user.centerIds),
+  });
+
+  const expiresAt = getSessionExpiresAt();
+
+  await SessionModel.create({
+    sessionId,
+    userId: user.userId,
+    tokenHash: createTokenHash(accessToken),
+    ipAddress: input.ipAddress ?? null,
+    userAgent: input.userAgent ?? null,
+    expiresAt,
+  });
+
+  user.lastLoginAt = new Date();
+  await user.save();
+
+  await writeAuditLog({
+    action: "auth.login.success",
+    actorUserId: user.userId,
+    entityId: user.userId,
+    entityType: "user",
+    ipAddress: input.ipAddress,
+    metadata: { portal: input.portal ?? null, sessionId },
+    requestId: input.requestId,
+  });
+
+  return {
+    accessToken,
+    permissions: getPermissionsForRoles(user.roles),
+    redirectPath: getDefaultRedirectPath(user.roles),
+    user: serializeUser(user),
+  };
+}
+
 export async function loginUser(input: LoginInput) {
   await connectToDatabase();
   await ensureBootstrapData();
@@ -157,46 +204,67 @@ export async function loginUser(input: LoginInput) {
 
   assertPortalAccess(user.roles, input.portal);
 
-  const sessionId = createPrefixedId("ses");
-  const accessToken = await signAccessToken({
-    sub: user.userId,
-    sid: sessionId,
-    email: user.email,
-    name: user.name,
-    roles: normalizeStringArray(user.roles),
-    centerIds: normalizeStringArray(user.centerIds),
-  });
+  if (input.portal === "admin") {
+    const otpChallenge = await initiateAdminLoginOtp({
+      email: normalizedEmail,
+      userId: user.userId,
+      ipAddress: input.ipAddress,
+      requestId: input.requestId,
+    });
 
-  const expiresAt = getSessionExpiresAt();
+    return {
+      requiresOtp: true as const,
+      challengeId: otpChallenge.challengeId,
+      maskedEmail: otpChallenge.maskedEmail,
+      message: otpChallenge.message,
+    };
+  }
 
-  await SessionModel.create({
-    sessionId,
-    userId: user.userId,
-    tokenHash: createTokenHash(accessToken),
-    ipAddress: input.ipAddress ?? null,
-    userAgent: input.userAgent ?? null,
-    expiresAt,
-  });
+  return createAuthenticatedSession({ ...input, user });
+}
 
-  user.lastLoginAt = new Date();
-  await user.save();
+export async function verifyLoginOtp(input: {
+  challengeId: string;
+  email: string;
+  ipAddress?: string | null;
+  otp: string;
+  portal?: "admin" | "training_partner";
+  requestId?: string;
+  userAgent?: string | null;
+}) {
+  await connectToDatabase();
+  await ensureBootstrapData();
 
-  await writeAuditLog({
-    action: "auth.login.success",
-    actorUserId: user.userId,
-    entityId: user.userId,
-    entityType: "user",
+  if (input.portal !== "admin") {
+    throw new ApiError(400, "INVALID_OTP", "Invalid or expired verification code");
+  }
+
+  const normalizedEmail = input.email.trim().toLowerCase();
+  const user = await UserModel.findOne({ email: normalizedEmail });
+
+  if (!user) {
+    throw new ApiError(400, "INVALID_OTP", "Invalid or expired verification code");
+  }
+
+  const verifiedUser = await verifyAdminLoginOtp({
+    challengeId: input.challengeId,
+    email: normalizedEmail,
+    otp: input.otp,
     ipAddress: input.ipAddress,
-    metadata: { portal: input.portal ?? null, sessionId },
     requestId: input.requestId,
   });
 
-  return {
-    accessToken,
-    permissions: getPermissionsForRoles(user.roles),
-    redirectPath: getDefaultRedirectPath(user.roles),
-    user: serializeUser(user),
-  };
+  assertPortalAccess(verifiedUser.roles, input.portal);
+
+  return createAuthenticatedSession({
+    email: normalizedEmail,
+    password: "",
+    portal: input.portal,
+    ipAddress: input.ipAddress,
+    requestId: input.requestId,
+    userAgent: input.userAgent,
+    user: verifiedUser,
+  });
 }
 
 async function resolveSessionToken(token: string): Promise<AuthSession> {

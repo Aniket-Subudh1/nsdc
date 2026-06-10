@@ -79,6 +79,22 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    loginOtpHash: {
+      type: String,
+      default: null,
+    },
+    loginOtpExpiresAt: {
+      type: Date,
+      default: null,
+    },
+    loginOtpChallengeId: {
+      type: String,
+      default: null,
+    },
+    loginOtpSentAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,

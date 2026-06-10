@@ -1,5 +1,5 @@
 // Auto-generated from SIDH Bulk Candidate_upload Template.xlsx (Master Reference Data).
-// Regenerate with: python3 scripts/extract-candidate-location-options.py
+// Regenerate with: npm run extract:candidate-locations -- <workbook-path>
 
 export const CANDIDATE_STATE_OPTIONS = [
   "ANDAMAN AND NICOBAR ISLANDS",

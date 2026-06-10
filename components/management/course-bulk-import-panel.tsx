@@ -14,6 +14,8 @@ import {
 import { toast } from "sonner";
 
 import { apiFetch, ClientApiError, type ApiEnvelope } from "@/lib/client/api";
+import { downloadCourseImportTemplateWorkbook } from "@/lib/course-import-template-excel";
+import type { CourseImportTemplateOptions } from "@/lib/course-import-template-workbook";
 import { cn } from "@/lib/utils";
 
 type CourseBulkImportPanelProps = {
@@ -110,33 +112,8 @@ function extractCourseImportPreview(normalized: Record<string, unknown>) {
 }
 
 async function downloadCourseImportTemplate() {
-  const response = await fetch("/api/v1/masters/courses/imports/template", {
-    credentials: "include",
-  });
-
-  if (!response.ok) {
-    let message = "Unable to load the sample import workbook";
-    try {
-      const payload = (await response.json()) as { message?: string };
-      if (payload.message) {
-        message = payload.message;
-      }
-    } catch {
-      // Keep default message when the response is not JSON.
-    }
-
-    throw new ClientApiError(message, response.status);
-  }
-
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "course_import_template.xlsx";
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+  const options = await apiFetch<CourseImportTemplateOptions>("/api/v1/masters/courses/imports/template/options");
+  await downloadCourseImportTemplateWorkbook("course_import_template.xlsx", options);
 }
 
 async function uploadCourseImport(file: File) {

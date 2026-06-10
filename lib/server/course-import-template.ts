@@ -1,18 +1,11 @@
-import { spawn } from "node:child_process";
-import { readFile, unlink, writeFile } from "node:fs/promises";
-import path from "node:path";
-
+import { buildCourseImportTemplateBuffer } from "@/lib/course-import-template-excel";
+import type { CourseImportTemplateOptions } from "@/lib/course-import-template-workbook";
 import { connectToDatabase } from "@/lib/server/mongodb";
 import { ProgramModel } from "@/lib/server/models/program";
 import { SchemeModel } from "@/lib/server/models/scheme";
 import { SectorModel } from "@/lib/server/models/sector";
 
-export type CourseImportTemplateOptions = {
-  approvalStatusOptions: string[];
-  programNames: string[];
-  schemeNames: string[];
-  sectorNames: string[];
-};
+export type { CourseImportTemplateOptions };
 
 function uniqueSortedNames(values: string[]) {
   const seen = new Set<string>();
@@ -64,45 +57,9 @@ export async function listCourseImportTemplateOptions(): Promise<CourseImportTem
   };
 }
 
-async function runPythonTemplateGenerator(config: CourseImportTemplateOptions) {
-  const stamp = `${process.pid}-${Date.now()}`;
-  const configPath = path.join(process.cwd(), `.course-import-template-${stamp}.json`);
-  const outputPath = path.join(process.cwd(), `.course-import-template-${stamp}.xlsx`);
-  const scriptPath = path.join(process.cwd(), "scripts/generate-course-import-template.py");
-
-  await writeFile(configPath, JSON.stringify(config));
-
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn("python3", [scriptPath, "--config", configPath, "--output", outputPath], {
-        cwd: process.cwd(),
-      });
-
-      let stderr = "";
-      child.stderr.on("data", (chunk) => {
-        stderr += String(chunk);
-      });
-
-      child.on("error", reject);
-      child.on("close", (code) => {
-        if (code === 0) {
-          resolve();
-          return;
-        }
-
-        reject(new Error(stderr.trim() || `Template generator exited with code ${code}`));
-      });
-    });
-
-    return await readFile(outputPath);
-  } finally {
-    await Promise.allSettled([unlink(configPath), unlink(outputPath)]);
-  }
-}
-
 export async function buildCourseImportTemplate() {
   const options = await listCourseImportTemplateOptions();
-  const buffer = await runPythonTemplateGenerator(options);
+  const buffer = await buildCourseImportTemplateBuffer(options);
 
   return {
     buffer,

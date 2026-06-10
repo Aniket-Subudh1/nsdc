@@ -10,8 +10,9 @@ export async function GET(request: Request) {
   try {
     await requireAuth(request);
     const { buffer } = await buildCourseImportTemplate();
+    const body = buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : buffer;
 
-    return new Response(buffer, {
+    return new Response(body, {
       status: 200,
       headers: {
         "Content-Disposition": 'attachment; filename="course_import_template.xlsx"',

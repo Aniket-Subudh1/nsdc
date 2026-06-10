@@ -1,20 +1,7 @@
+import { COURSE_IMPORT_TEMPLATE_HEADERS } from "@/lib/course-import-template-workbook";
 import { writeWorkbookToArrayBuffer } from "@/lib/spreadsheet/node";
 
-export const COURSE_IMPORT_EXPORT_HEADERS = [
-  "Sector Name",
-  "Linked Program",
-  "Linked Scheme",
-  "Course Name",
-  "SIDH Course ID",
-  "Job Role",
-  "NSQF Level",
-  "Training Per Day (Hours)",
-  "Approval Status",
-  "Approval Date",
-  "Total Hours",
-  "Valid Until",
-  "Short Form",
-] as const;
+export const COURSE_IMPORT_EXPORT_HEADERS = COURSE_IMPORT_TEMPLATE_HEADERS;
 
 type CourseExportLookups = {
   programNameById: Map<string, string>;

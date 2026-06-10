@@ -157,9 +157,9 @@ export default function LoginPage({
         },
         credentials: "include",
         body: JSON.stringify({
-          email,
-          challengeId,
-          otp,
+          email: email.trim().toLowerCase(),
+          challengeId: challengeId.trim(),
+          otp: otp.trim(),
           portal,
         }),
       });

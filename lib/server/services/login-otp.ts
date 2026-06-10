@@ -12,8 +12,19 @@ function createOtpCode() {
   return randomInt(0, 1_000_000).toString().padStart(6, "0");
 }
 
-function createOtpHash(otp: string) {
-  return createHash("sha256").update(otp).digest("hex");
+export function createOtpHash(otp: string) {
+  return createHash("sha256").update(otp.trim()).digest("hex");
+}
+
+export function getOtpExpiryTime(value: unknown) {
+  if (!value) {
+    return null;
+  }
+
+  const date = value instanceof Date ? value : new Date(String(value));
+  const time = date.getTime();
+
+  return Number.isNaN(time) ? null : time;
 }
 
 export function maskEmail(email: string) {
@@ -53,21 +64,30 @@ export async function initiateAdminLoginOtp(input: InitiateAdminLoginOtpInput) {
     );
   }
 
-  const user = await UserModel.findOne({ userId: input.userId });
+  const user = await UserModel.findOne({ userId: input.userId, status: "active" });
 
-  if (!user || user.status !== "active") {
+  if (!user) {
     throw new ApiError(401, "INVALID_CREDENTIALS", "Invalid email or password");
   }
 
   const otp = createOtpCode();
   const challengeId = createPrefixedId("lch");
   const expiresAt = new Date(Date.now() + getEnv().LOGIN_OTP_TTL_MINUTES * 60 * 1000);
+  const updateResult = await UserModel.updateOne(
+    { userId: input.userId, status: "active" },
+    {
+      $set: {
+        loginOtpHash: createOtpHash(otp),
+        loginOtpExpiresAt: expiresAt,
+        loginOtpChallengeId: challengeId,
+        loginOtpSentAt: new Date(),
+      },
+    },
+  );
 
-  user.loginOtpHash = createOtpHash(otp);
-  user.loginOtpExpiresAt = expiresAt;
-  user.loginOtpChallengeId = challengeId;
-  user.loginOtpSentAt = new Date();
-  await user.save();
+  if (updateResult.matchedCount === 0) {
+    throw new ApiError(401, "INVALID_CREDENTIALS", "Invalid email or password");
+  }
 
   try {
     await sendLoginOtpEmail({
@@ -76,6 +96,17 @@ export async function initiateAdminLoginOtp(input: InitiateAdminLoginOtpInput) {
       otp,
     });
   } catch {
+    await UserModel.updateOne(
+      { userId: input.userId },
+      {
+        $set: {
+          loginOtpHash: null,
+          loginOtpExpiresAt: null,
+          loginOtpChallengeId: null,
+          loginOtpSentAt: null,
+        },
+      },
+    );
     throw new ApiError(500, "EMAIL_SEND_FAILED", "Unable to send login verification email");
   }
 
@@ -100,20 +131,24 @@ export async function verifyAdminLoginOtp(input: VerifyAdminLoginOtpInput) {
   await connectToDatabase();
 
   const normalizedEmail = input.email.trim().toLowerCase();
-  const user = await UserModel.findOne({ email: normalizedEmail });
+  const normalizedOtp = input.otp.trim();
+  const normalizedChallengeId = input.challengeId.trim();
+  const user = await UserModel.findOne({
+    email: normalizedEmail,
+    loginOtpChallengeId: normalizedChallengeId,
+    status: "active",
+  });
 
-  if (!user || user.status !== "active") {
+  if (!user) {
     throw new ApiError(400, "INVALID_OTP", "Invalid or expired verification code");
   }
 
-  const otpExpiry = user.loginOtpExpiresAt;
+  const expiryTime = getOtpExpiryTime(user.loginOtpExpiresAt);
   const isOtpValid =
     Boolean(user.loginOtpHash) &&
-    Boolean(otpExpiry) &&
-    user.loginOtpChallengeId === input.challengeId &&
-    otpExpiry instanceof Date &&
-    otpExpiry > new Date() &&
-    user.loginOtpHash === createOtpHash(input.otp);
+    expiryTime !== null &&
+    expiryTime > Date.now() &&
+    user.loginOtpHash === createOtpHash(normalizedOtp);
 
   if (!isOtpValid) {
     await writeAuditLog({
@@ -122,17 +157,32 @@ export async function verifyAdminLoginOtp(input: VerifyAdminLoginOtpInput) {
       entityId: user.userId,
       entityType: "user",
       ipAddress: input.ipAddress,
-      metadata: { email: normalizedEmail, challengeId: input.challengeId },
+      metadata: { email: normalizedEmail, challengeId: normalizedChallengeId },
       requestId: input.requestId,
     });
     throw new ApiError(400, "INVALID_OTP", "Invalid or expired verification code");
   }
 
-  user.loginOtpHash = null;
-  user.loginOtpExpiresAt = null;
-  user.loginOtpChallengeId = null;
-  user.loginOtpSentAt = null;
-  await user.save();
+  const clearedUser = await UserModel.findOneAndUpdate(
+    {
+      userId: user.userId,
+      loginOtpChallengeId: normalizedChallengeId,
+      loginOtpHash: createOtpHash(normalizedOtp),
+    },
+    {
+      $set: {
+        loginOtpHash: null,
+        loginOtpExpiresAt: null,
+        loginOtpChallengeId: null,
+        loginOtpSentAt: null,
+      },
+    },
+    { new: true },
+  );
 
-  return user;
+  if (!clearedUser) {
+    throw new ApiError(400, "INVALID_OTP", "Invalid or expired verification code");
+  }
+
+  return clearedUser;
 }

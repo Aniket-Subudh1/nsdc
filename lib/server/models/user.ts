@@ -103,6 +103,10 @@ const userSchema = new mongoose.Schema(
 
 export type UserDocument = InferSchemaType<typeof userSchema>;
 
+if (process.env.NODE_ENV !== "production" && mongoose.models.User) {
+  mongoose.deleteModel("User");
+}
+
 export const UserModel =
   (mongoose.models.User as Model<UserDocument> | undefined) ??
   mongoose.model<UserDocument>("User", userSchema);

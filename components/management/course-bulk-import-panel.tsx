@@ -60,7 +60,7 @@ const IMPORT_FIELD_LABELS: Record<string, string> = {
   approvalDate: "Approval date",
   approvalStatus: "Approval status",
   courseName: "Course name",
-  jobRole: "Job role",
+  jobRole: "Associated QP/Job Role",
   nsqfLevel: "NSQF level",
   programIds: "Linked program",
   schemeIds: "Linked scheme",
@@ -625,7 +625,7 @@ function CourseImportRowModal({ onClose, row }: { onClose: () => void; row: Cour
             <div className="grid gap-3 sm:grid-cols-2">
               <DetailField label="Course name" value={details.courseName} />
               <DetailField label="SIDH course ID" value={details.sidhCourseId} />
-              <DetailField label="Job role" value={details.jobRole} />
+              <DetailField label="Associated QP/Job Role" value={details.jobRole} />
               <DetailField label="NSQF level" value={details.nsqfLevel} />
               <DetailField label="Training per day (hours)" value={details.trainingPerDayHours} />
               <DetailField label="Total hours" value={details.totalHours} />

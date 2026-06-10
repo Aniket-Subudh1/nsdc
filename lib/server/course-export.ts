@@ -1,4 +1,7 @@
-import { COURSE_IMPORT_TEMPLATE_HEADERS } from "@/lib/course-import-template-workbook";
+import {
+  ASSOCIATED_QP_OR_JOB_ROLE_LABEL,
+  COURSE_IMPORT_TEMPLATE_HEADERS,
+} from "@/lib/course-import-template-workbook";
 import { writeWorkbookToArrayBuffer } from "@/lib/spreadsheet/node";
 
 export const COURSE_IMPORT_EXPORT_HEADERS = COURSE_IMPORT_TEMPLATE_HEADERS;
@@ -124,7 +127,7 @@ export function mapCourseToExportRow(course: CourseExportSource, lookups: Course
     "Linked Scheme": lookups.schemeLabelById.get(schemeId) ?? "",
     "Course Name": course.courseName,
     "SIDH Course ID": course.sidhCourseId ?? "",
-    "Job Role": course.associatedQpOrJobRole ?? "",
+    [ASSOCIATED_QP_OR_JOB_ROLE_LABEL]: course.associatedQpOrJobRole ?? "",
     "NSQF Level": course.nsqfLevel ?? "",
     "Training Per Day (Hours)": course.trainingPerDayHours ?? "",
     "Approval Status": formatApprovalStatus(course.approvalStatus),

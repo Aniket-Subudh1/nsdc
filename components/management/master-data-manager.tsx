@@ -425,14 +425,19 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
     });
   }, [programs, searchQuery, statusFilter]);
 
+  const sortedSectors = useMemo(
+    () => [...sectors].sort((left, right) => left.name.localeCompare(right.name)),
+    [sectors],
+  );
+
   const filteredSectors = useMemo(() => {
     const q = searchQuery.toLowerCase();
-    return sectors.filter((s) => {
+    return sortedSectors.filter((s) => {
       const match = !q || s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q);
       const status = statusFilter === "all" || s.status === statusFilter;
       return match && status;
     });
-  }, [sectors, searchQuery, statusFilter]);
+  }, [sortedSectors, searchQuery, statusFilter]);
 
   const filteredSchemes = useMemo(() => {
     const q = searchQuery.toLowerCase();
@@ -668,7 +673,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
     if (activeTab === "programs") setProgramForm(createEmptyProgramForm(referenceEnums));
     else if (activeTab === "sectors") setSectorForm(emptySectorForm);
     else if (activeTab === "schemes") setSchemeForm(emptySchemeForm);
-    else setCourseForm({ ...emptyCourseForm, sectorId: sectors[0]?.sectorId ?? "" });
+    else setCourseForm({ ...emptyCourseForm, sectorId: sortedSectors[0]?.sectorId ?? "" });
     setShowCreateModal(true);
   }
 
@@ -1142,7 +1147,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
                       className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-sky-300"
                     >
                       <option value="">All sectors</option>
-                      {sectors.map((sector) => (
+                      {sortedSectors.map((sector) => (
                         <option key={sector.sectorId} value={sector.sectorId}>
                           {sector.name}
                         </option>
@@ -1406,7 +1411,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           isSaving={isSaving}
           programs={programs}
           schemes={schemes}
-          sectors={sectors}
+          sectors={sortedSectors}
           setForm={setCourseForm}
           onClose={() => {
             setShowCreateModal(false);
@@ -1422,7 +1427,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           isSaving={isSaving}
           programs={programs}
           schemes={schemes}
-          sectors={sectors}
+          sectors={sortedSectors}
           setForm={setCourseForm}
           onClose={() => {
             setShowEditModal(false);
@@ -2176,7 +2181,7 @@ function CoursesTable({
               "Sector Name",
               "Course Name",
               "Course ID",
-              "Job Role",
+              "Associated QP/Job Role",
               "NSQF Level",
               "Training Per Day",
               "Status",
@@ -2916,7 +2921,7 @@ function CourseModal({
               required
             />
           </FormField>
-          <FormField label="Job Role">
+          <FormField label="Associated QP/Job Role">
             <input
               value={form.jobRole}
               onChange={(e) => setForm((current) => ({ ...current, jobRole: e.target.value }))}

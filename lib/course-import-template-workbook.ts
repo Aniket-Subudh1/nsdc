@@ -1,10 +1,12 @@
+export const ASSOCIATED_QP_OR_JOB_ROLE_LABEL = "Associated QP/Job Role" as const;
+
 export const COURSE_IMPORT_TEMPLATE_HEADERS = [
   "Sector Name",
   "Linked Program",
   "Linked Scheme",
   "Course Name",
   "SIDH Course ID",
-  "Job Role",
+  ASSOCIATED_QP_OR_JOB_ROLE_LABEL,
   "NSQF Level",
   "Training Per Day (Hours)",
   "Approval Status",
@@ -60,7 +62,7 @@ function buildSampleImportRow(options: CourseImportTemplateOptions) {
           return [header, "Maize Cultivator"];
         case "SIDH Course ID":
           return [header, "FeeSchCor_48128"];
-        case "Job Role":
+        case ASSOCIATED_QP_OR_JOB_ROLE_LABEL:
           return [header, "Kisan Drone Operator"];
         case "NSQF Level":
           return [header, "4"];

@@ -773,7 +773,7 @@ export async function listSectors(actor: AuthSession, input: ListMastersInput): 
 
   const [items, total] = await Promise.all([
     SectorModel.find(filter)
-      .sort({ createdAt: -1 })
+      .sort({ name: 1 })
       .skip((input.page - 1) * input.pageSize)
       .limit(input.pageSize),
     SectorModel.countDocuments(filter),
@@ -1817,7 +1817,7 @@ function resolveCourseJobRole(input: Pick<CourseInput, "associatedQpOrJobRole" |
   const jobRole = input.jobRole?.trim() || input.associatedQpOrJobRole?.trim();
 
   if (!jobRole) {
-    throw new ApiError(400, "JOB_ROLE_REQUIRED", "Job role is required");
+    throw new ApiError(400, "JOB_ROLE_REQUIRED", "Associated QP/Job Role is required");
   }
 
   return jobRole;

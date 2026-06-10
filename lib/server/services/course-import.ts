@@ -14,6 +14,7 @@ import { type AuthSession } from "@/lib/server/services/session";
 import { parseUserDateInput } from "@/lib/server/sidh-payload";
 import { readWorkbookSheetsFromArrayBuffer } from "@/lib/spreadsheet/node";
 import { excelSerialToDate } from "@/lib/spreadsheet/shared";
+import { ASSOCIATED_QP_OR_JOB_ROLE_LABEL } from "@/lib/course-import-template-workbook";
 import { createCourseSchema } from "@/lib/server/validation";
 import type { z } from "zod";
 
@@ -212,7 +213,9 @@ function mapImportRowToCourseInput(row: Record<string, unknown>, maps: MasterLoo
     schemeIds: [schemeId],
     courseName: normalizeWhitespace(getCellValue(row, ["Course Name", "CourseName", "Course"])),
     sidhCourseId,
-    jobRole: normalizeWhitespace(getCellValue(row, ["Job Role", "JobRole"])),
+    jobRole: normalizeWhitespace(
+      getCellValue(row, [ASSOCIATED_QP_OR_JOB_ROLE_LABEL, "Job Role", "JobRole", "AssociatedQPJobRole"]),
+    ),
     nsqfLevel: normalizeWhitespace(getCellValue(row, ["NSQF Level", "NsqfLevel", "NSQFLevel"])) || "NA",
     trainingPerDayHours: getCellValue(row, ["Training Per Day (Hours)", "Training Per Day Hours", "TrainingPerDayHours"]),
     totalHours: getCellValue(row, ["Total Hours", "TotalHours", "Training Hours", "TrainingHours"]),

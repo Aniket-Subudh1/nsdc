@@ -3,6 +3,9 @@ import {
   CANDIDATE_GENDER_OPTIONS,
   CANDIDATE_NAME_PREFIX_ERROR,
   CANDIDATE_NAME_PREFIX_OPTIONS,
+  CANDIDATE_PROGRAM_ERROR,
+  CANDIDATE_PROGRAM_OPTIONS,
+  normalizeCandidateProgram,
   normalizeCandidateGender,
   normalizeCandidateNamePrefix,
 } from "@/lib/candidate-field-options";
@@ -523,6 +526,11 @@ const candidateGenderSchema = z.preprocess(
   z.enum(CANDIDATE_GENDER_OPTIONS, { message: CANDIDATE_GENDER_ERROR }),
 );
 
+const candidateProgramSchema = z.preprocess(
+  normalizeCandidateProgram,
+  z.enum(CANDIDATE_PROGRAM_OPTIONS, { message: CANDIDATE_PROGRAM_ERROR }),
+);
+
 const candidateRegistrationPersonalDetailsSchema = z.object({
   namePrefix: candidateNamePrefixSchema,
   firstName: z.string().trim().min(2).max(160),
@@ -639,6 +647,7 @@ const emptyCandidateRegistrationLocationDetails = {
 
 export const createCandidateRegistrationSchema = z
   .object({
+    program: candidateProgramSchema,
     personalDetails: candidateRegistrationPersonalDetailsSchema,
     contactDetails: candidateRegistrationContactDetailsSchema,
     locationDetails: candidateRegistrationLocationDetailsSchema.optional().default(emptyCandidateRegistrationLocationDetails),

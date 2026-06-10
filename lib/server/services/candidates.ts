@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
 
-import { normalizeCandidateGender, normalizeCandidateNamePrefix } from "@/lib/candidate-field-options";
+import {
+  getCandidateProgramLabel,
+  normalizeCandidateGender,
+  normalizeCandidateNamePrefix,
+  normalizeCandidateProgram,
+  resolveCandidateProgramId,
+} from "@/lib/candidate-field-options";
 import { normalizeCandidateDistrict, normalizeCandidateState } from "@/lib/candidate-location-options";
 import { ApiError } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
@@ -26,6 +32,7 @@ import { applyBatchEnrollmentEligibilityFilters } from "@/lib/server/services/ba
 import { type AuthSession } from "@/lib/server/services/session";
 import { parseUserDateInput } from "@/lib/server/sidh-payload";
 import { buildCandidateExportWorkbook } from "@/lib/server/candidate-export";
+import { listCandidateImportTemplateOptions } from "@/lib/server/candidate-import-template";
 import {
   bulkQueueCandidateSyncSchema,
   createCandidateSchema,
@@ -477,7 +484,7 @@ function expandCandidateRegistrationInput(
   context: { centerId: string; programId: string; registrationMode: "internal_registration" | "existing_sidh_link" },
 ): CreateCandidateInput {
   return {
-    programId: context.programId,
+    programId: resolveCandidateProgramId(registrationInput.program) || context.programId,
     centerId: context.centerId,
     registrationMode: context.registrationMode,
     personalDetails: {
@@ -567,6 +574,7 @@ function serializeCandidate(candidate: CandidateLike) {
     id: candidate.candidateId,
     candidateId: candidate.candidateId,
     programId: candidate.programId,
+    program: getCandidateProgramLabel(candidate.programId) || null,
     centerId: candidate.centerId,
     registrationMode: candidate.registrationMode,
     personalDetails: {
@@ -1098,6 +1106,7 @@ function mapImportRowToCandidateInput(row: Record<string, unknown>): CreateCandi
   ).trim();
 
   return {
+    program: normalizeCandidateProgram(getCellValue(row, ["Program"])) as CreateCandidateRegistrationInput["program"],
     personalDetails: {
       namePrefix: normalizeCandidateNamePrefix(
         getCellValue(row, ["Name Prefix", "NamePrefix", "Salutation"]),
@@ -1373,8 +1382,11 @@ export async function exportCandidates(actor: AuthSession, query: CandidateExpor
     );
   }
 
-  const candidates = await CandidateModel.find(filter).sort({ createdAt: -1 }).limit(CANDIDATE_EXPORT_MAX_ROWS).lean();
-  const buffer = await buildCandidateExportWorkbook(candidates as CandidateLike[]);
+  const [candidates, templateOptions] = await Promise.all([
+    CandidateModel.find(filter).sort({ createdAt: -1 }).limit(CANDIDATE_EXPORT_MAX_ROWS).lean(),
+    listCandidateImportTemplateOptions(actor),
+  ]);
+  const buffer = await buildCandidateExportWorkbook(candidates as CandidateLike[], templateOptions);
 
   return {
     buffer,

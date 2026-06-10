@@ -2289,6 +2289,8 @@ export async function processQueuedBatchSyncJobs(actor: AuthSession, input: { li
         loadBatchRoster(batch.batchId),
       ]);
       const payload = buildBatchPayload(batch, center, course, scheme, program, roster.batchCandidates.length);
+      console.log(`[SIDH batch push] batchId=${batch.batchId}`);
+      console.log(JSON.stringify(payload, null, 2));
       const fingerprint = computeFingerprint(payload);
       state.requestFingerprint = fingerprint;
       claimedState.batchSync = state;

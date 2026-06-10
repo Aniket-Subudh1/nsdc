@@ -118,6 +118,8 @@ async function buildWorkbook(rows: Array<Record<string, unknown>>) {
   return writeWorkbookToArrayBuffer([{ name: "Candidates", rows }]);
 }
 
+const sampleRegistrationProgram = "Fee-Based Programs" as const;
+
 const activeReferenceCourse = {
   courseId: "cor_001",
   courseName: "Retail Sales Associate",
@@ -235,6 +237,7 @@ describe("candidate services", () => {
 
     await expect(
       createCandidate(actor as never, {
+        program: sampleRegistrationProgram,
         personalDetails: {
           namePrefix: "Mr",
           firstName: "New Learner",
@@ -271,6 +274,7 @@ describe("candidate services", () => {
 
     const sharedEmail = "shared@example.com";
     const first = await createCandidate(actor as never, {
+      program: sampleRegistrationProgram,
       personalDetails: {
         namePrefix: "Mr",
         firstName: "Learner One",
@@ -293,6 +297,7 @@ describe("candidate services", () => {
     });
 
     const second = await createCandidate(actor as never, {
+      program: sampleRegistrationProgram,
       personalDetails: {
         namePrefix: "Mrs",
         firstName: "Learner Two",
@@ -327,6 +332,7 @@ describe("candidate services", () => {
     mocks.candidateCreate.mockImplementation(async (value: Record<string, unknown>) => value);
 
     const result = await createCandidate(actor as never, {
+      program: sampleRegistrationProgram,
       personalDetails: {
         namePrefix: "Mr",
         firstName: "Amit Kumar",
@@ -363,6 +369,7 @@ describe("candidate services", () => {
     }));
 
     const result = await createCandidate(actor as never, {
+      program: sampleRegistrationProgram,
       personalDetails: {
         namePrefix: "Mr",
         firstName: "Amit Kumar",
@@ -411,6 +418,7 @@ describe("candidate services", () => {
     }));
 
     await createCandidate(actor as never, {
+      program: sampleRegistrationProgram,
       personalDetails: {
         namePrefix: "Mr",
         firstName: "Amit Kumar",
@@ -450,6 +458,7 @@ describe("candidate services", () => {
 
     await expect(
       createCandidate(actor as never, {
+        program: sampleRegistrationProgram,
         personalDetails: {
           namePrefix: "Mr",
           firstName: "Amit Kumar",
@@ -506,6 +515,7 @@ describe("candidate services", () => {
     mocks.candidateCreate.mockImplementation(async (value: Record<string, unknown>) => value);
 
     const result = await createCandidate(actor as never, {
+      program: sampleRegistrationProgram,
       personalDetails: {
         namePrefix: "Mr",
         firstName: "Rohit Kumar",
@@ -532,7 +542,8 @@ describe("candidate services", () => {
       district: "CUTTACK",
       state: "ODISHA",
     });
-    expect(result.programId).toBe("candidate_registration");
+    expect(result.programId).toBe(sampleRegistrationProgram);
+    expect(result.program).toBe(sampleRegistrationProgram);
     expect(result.centerId).toBe("tc_001");
     expect(mocks.programFindOne).not.toHaveBeenCalled();
     expect(mocks.trainingCenterFindOne).toHaveBeenCalledWith({
@@ -550,6 +561,7 @@ describe("candidate services", () => {
       "Name Prefix": "Mr",
       "Full Name": "Rohit Kumar",
       Gender: "Male",
+      Program: "NSQF School Programs",
       "Center Name": "Center One",
     });
   });
@@ -572,6 +584,7 @@ describe("candidate services", () => {
         Phone: "9876543210",
         State: "ODISHA",
         District: "CUTTACK",
+        Program: sampleRegistrationProgram,
         "Center Name": "Center One",
         "Course (reference only)": "Retail Sales Associate",
       },
@@ -620,6 +633,7 @@ describe("candidate services", () => {
         Phone: "9876543210",
         State: "ODISHA",
         District: "CUTTACK",
+        Program: sampleRegistrationProgram,
         "Center Name": "Center One",
       },
     ]);
@@ -652,6 +666,7 @@ describe("candidate services", () => {
         Phone: "9876543210",
         State: "ODISHA",
         District: "CUTTACK",
+        Program: sampleRegistrationProgram,
         "Center Name": "Center One",
       },
       {
@@ -665,6 +680,7 @@ describe("candidate services", () => {
         Phone: "",
         State: "ODISHA",
         District: "CUTTACK",
+        Program: sampleRegistrationProgram,
         "Center Name": "Center One",
       },
     ]);
@@ -720,6 +736,7 @@ describe("candidate services", () => {
         Phone: "9876543210",
         State: "ODISHA",
         District: "CUTTACK",
+        Program: sampleRegistrationProgram,
         "Center Name": "Center One",
       },
     ]);
@@ -752,6 +769,7 @@ describe("candidate services", () => {
         Phone: "9876543210",
         State: "ODISHA",
         District: "CUTTACK",
+        Program: sampleRegistrationProgram,
         "Center Name": "Center One",
       },
     ]);

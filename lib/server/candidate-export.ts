@@ -1,4 +1,7 @@
-import { writeWorkbookToArrayBuffer } from "@/lib/spreadsheet/node";
+import { getCandidateProgramLabel } from "@/lib/candidate-field-options";
+import { buildCandidateExcelWorkbook, type CandidateExcelRow } from "@/lib/candidate-excel-workbook";
+import type { CandidateImportTemplateOptions } from "@/lib/candidate-import-template-workbook";
+import { workbookToArrayBuffer } from "@/lib/spreadsheet/excel-template";
 
 export const CANDIDATE_IMPORT_EXPORT_HEADERS = [
   "Name Prefix",
@@ -12,11 +15,13 @@ export const CANDIDATE_IMPORT_EXPORT_HEADERS = [
   "Country Code",
   "State",
   "District",
+  "Program",
   "Center Name",
   "Course (reference only)",
 ] as const;
 
 type CandidateExportSource = {
+  programId?: string | null;
   centerName?: string | null;
   countryCode?: string | null;
   dateOfBirth: Date | string;
@@ -55,7 +60,7 @@ function formatExportDate(value?: Date | string | null) {
   return `${day}/${month}/${year}`;
 }
 
-export function mapCandidateToExportRow(candidate: CandidateExportSource) {
+export function mapCandidateToExportRow(candidate: CandidateExportSource): CandidateExcelRow {
   const state = candidate.permanentAddress?.state ?? candidate.domicileState ?? "";
   const district =
     candidate.permanentAddress?.district ??
@@ -75,18 +80,22 @@ export function mapCandidateToExportRow(candidate: CandidateExportSource) {
     "Country Code": candidate.countryCode ?? "91",
     State: state,
     District: district,
+    Program: getCandidateProgramLabel(candidate.programId) || "",
     "Center Name": candidate.centerName ?? "",
     "Course (reference only)": candidate.referenceCourseName ?? "",
   };
 }
 
-export async function buildCandidateExportWorkbook(candidates: CandidateExportSource[]) {
-  const rows = candidates.map((candidate) => mapCandidateToExportRow(candidate));
+export async function buildCandidateExportWorkbook(
+  candidates: CandidateExportSource[],
+  options: CandidateImportTemplateOptions,
+) {
+  const rows =
+    candidates.length > 0
+      ? candidates.map((candidate) => mapCandidateToExportRow(candidate))
+      : [Object.fromEntries(CANDIDATE_IMPORT_EXPORT_HEADERS.map((header) => [header, ""])) as CandidateExcelRow];
 
-  return writeWorkbookToArrayBuffer([
-    {
-      name: "Candidates",
-      rows: rows.length > 0 ? rows : [Object.fromEntries(CANDIDATE_IMPORT_EXPORT_HEADERS.map((header) => [header, ""]))],
-    },
-  ]);
+  const ExcelJS = (await import("exceljs")).default;
+  const workbook = buildCandidateExcelWorkbook(new ExcelJS.Workbook(), options, rows);
+  return workbookToArrayBuffer(workbook);
 }

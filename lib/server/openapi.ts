@@ -883,6 +883,18 @@ export function getOpenApiDocument() {
           properties: {
             id: { type: "string" },
             candidateId: { type: "string" },
+            program: {
+              type: "string",
+              nullable: true,
+              enum: [
+                "NSQF School Programs",
+                "Fee-Based Programs",
+                "CSR Programs",
+                "SFS Programs",
+                "ITI Programs",
+                "Diploma Programs",
+              ],
+            },
             programId: { type: "string" },
             centerId: { type: "string" },
             registrationMode: ref("CandidateRegistrationMode"),
@@ -904,10 +916,22 @@ export function getOpenApiDocument() {
         CreateCandidateRequest: {
           type: "object",
           required: [
+            "program",
             "personalDetails",
             "contactDetails"
           ],
           properties: {
+            program: {
+              type: "string",
+              enum: [
+                "NSQF School Programs",
+                "Fee-Based Programs",
+                "CSR Programs",
+                "SFS Programs",
+                "ITI Programs",
+                "Diploma Programs",
+              ],
+            },
             personalDetails: ref("CandidateRegistrationPersonalDetails"),
             contactDetails: ref("CandidateRegistrationContactDetails"),
             locationDetails: ref("CandidateRegistrationLocationDetails"),
@@ -954,7 +978,7 @@ export function getOpenApiDocument() {
         CandidateImportRequest: {
           type: "object",
           required: ["file"],
-          description: "Upload the Skill India candidate workbook. The current UI downloads public/candidate_details.xlsx; the accepted headers are Name Prefix, Full Name, Gender, DOB, Father's Name, Guardian's Name, Email, Phone, Country Code, State, City, and Center Name. Full Name maps to personalDetails.firstName (legacy First Name headers are still accepted). Name Prefix must be Mr, Mrs, Ms, or Mx. Gender must be Male, Female, or Transgender. The template workbook includes Excel dropdowns for both columns. Program and center metadata are optional and default internally when omitted.",
+          description: "Upload the Skill India candidate workbook. The current UI downloads public/candidate_details.xlsx; the accepted headers are Name Prefix, Full Name, Gender, DOB, Father's Name, Guardian's Name, Email, Phone, Country Code, State, District, Program, Center Name, and Course (reference only). Full Name maps to personalDetails.firstName (legacy First Name headers are still accepted). Name Prefix must be Mr, Mrs, Ms, or Mx. Gender must be Male, Female, or Transgender. Program must be one of the six supported program categories. The template workbook includes Excel dropdowns for those columns.",
           properties: {
             file: { type: "string", format: "binary" },
             programId: { type: "string", description: "Optional internal program scope. Defaults to candidate_registration when omitted." },

@@ -1,6 +1,7 @@
 import {
   CANDIDATE_GENDER_OPTIONS,
   CANDIDATE_NAME_PREFIX_OPTIONS,
+  CANDIDATE_PROGRAM_OPTIONS,
 } from "@/lib/candidate-field-options";
 import {
   CANDIDATE_STATE_DISTRICT_MAP,
@@ -19,6 +20,7 @@ export const CANDIDATE_IMPORT_TEMPLATE_HEADERS = [
   "Country Code",
   "State",
   "District",
+  "Program",
   "Center Name",
   "Course (reference only)",
 ] as const;
@@ -37,6 +39,7 @@ function buildListReferenceRows(options: CandidateImportTemplateOptions) {
   const rowCount = Math.max(
     CANDIDATE_NAME_PREFIX_OPTIONS.length,
     CANDIDATE_GENDER_OPTIONS.length,
+    CANDIDATE_PROGRAM_OPTIONS.length,
     options.centerNames.length,
     options.courseNames.length,
     CANDIDATE_STATE_OPTIONS.length,
@@ -49,6 +52,7 @@ function buildListReferenceRows(options: CandidateImportTemplateOptions) {
   return Array.from({ length: rowCount }, (_, index) => ({
     "Name Prefix": CANDIDATE_NAME_PREFIX_OPTIONS[index] ?? "",
     Gender: CANDIDATE_GENDER_OPTIONS[index] ?? "",
+    Program: CANDIDATE_PROGRAM_OPTIONS[index] ?? "",
     "Center Name": options.centerNames[index] ?? "",
     "Course (reference only)": options.courseNames[index] ?? "",
     State: CANDIDATE_STATE_OPTIONS[index] ?? "",
@@ -86,6 +90,7 @@ function buildSampleImportRow(options: CandidateImportTemplateOptions) {
     "Country Code": "91",
     State: sampleState,
     District: sampleDistrict,
+    Program: CANDIDATE_PROGRAM_OPTIONS[0] ?? "NSQF School Programs",
     "Center Name": options.centerNames[0] ?? "Center One",
     "Course (reference only)": options.courseNames[0] ?? "",
   };

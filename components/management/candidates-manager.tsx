@@ -34,6 +34,8 @@ import type { CandidateImportTemplateOptions } from "@/lib/candidate-import-temp
 import {
   CANDIDATE_GENDER_OPTIONS,
   CANDIDATE_NAME_PREFIX_OPTIONS,
+  CANDIDATE_PROGRAM_OPTIONS,
+  getCandidateProgramLabel,
 } from "@/lib/candidate-field-options";
 import {
   CANDIDATE_STATE_OPTIONS,
@@ -104,6 +106,7 @@ type CandidateRecord = {
     district: string | null;
     state: string | null;
   };
+  program: string | null;
   programId: string;
   referenceDetails?: {
     courseId: string | null;
@@ -209,6 +212,7 @@ type ImportRowPreview = {
   centerName: string;
   countryCode: string;
   courseName: string;
+  program: string;
   district: string;
   dob: string;
   email: string;
@@ -233,12 +237,14 @@ function extractImportRowPreview(normalized: Record<string, unknown>): ImportRow
   const contact = (normalized.contactDetails ?? {}) as Record<string, unknown>;
   const location = (normalized.locationDetails ?? {}) as Record<string, unknown>;
   const reference = (normalized.referenceDetails ?? {}) as Record<string, unknown>;
+  const program = String(normalized.program ?? "").trim();
   const namePrefix = String(personal.namePrefix ?? personal.salutation ?? "").trim();
   const fullName = String(personal.firstName ?? "").trim();
 
   return {
     centerName: displayImportValue(String(location.centerName ?? "")),
     courseName: displayImportValue(String(reference.courseName ?? "")),
+    program: displayImportValue(program),
     district: displayImportValue(String(location.district ?? location.city ?? "")),
     countryCode: displayImportValue(String(contact.countryCode ?? "91")),
     dob: displayImportValue(String(personal.dob ?? personal.dateOfBirth ?? "")),
@@ -254,6 +260,7 @@ function extractImportRowPreview(normalized: Record<string, unknown>): ImportRow
 }
 
 const IMPORT_FIELD_LABELS: Record<string, string> = {
+  program: "Program",
   duplicateHash: "Duplicate check",
   "contactDetails.email": "Email",
   "contactDetails.phone": "Phone",
@@ -344,6 +351,7 @@ type CourseOption = {
 type IndividualCandidateFormState = {
   centerId: string;
   courseId: string;
+  program: string;
   countryCode: string;
   district: string;
   dob: string;
@@ -463,6 +471,7 @@ function countActiveCandidateFilters(filters: CandidateFilters) {
 const emptyIndividualCandidateForm: IndividualCandidateFormState = {
   centerId: "",
   courseId: "",
+  program: "",
   countryCode: "91",
   district: "",
   dob: "",
@@ -528,6 +537,7 @@ function buildIndividualCandidatePayload(
   const selectedCourse = findSelectedCourse(form, courseOptions);
 
   return {
+    program: form.program,
     personalDetails: {
       namePrefix: form.namePrefix,
       firstName: form.firstName,
@@ -572,6 +582,7 @@ function buildIndividualCandidateUpdatePayload(
 
   return {
     centerId: form.centerId,
+    programId: form.program,
     personalDetails: {
       salutation: form.namePrefix,
       fullName: form.firstName,
@@ -620,6 +631,7 @@ function candidateToIndividualForm(candidate: CandidateRecord): IndividualCandid
   return {
     centerId: candidate.centerId,
     courseId: candidate.referenceDetails?.courseId ?? "",
+    program: candidate.program ?? getCandidateProgramLabel(candidate.programId),
     countryCode: "91",
     district,
     dob: candidate.personalDetails.dateOfBirth ?? "",
@@ -973,6 +985,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   const isImportReady = Boolean(importForm.file);
   const isIndividualCandidateReady = Boolean(
     individualCandidateForm.centerId &&
+      individualCandidateForm.program &&
       individualCandidateForm.namePrefix &&
       individualCandidateForm.firstName &&
       individualCandidateForm.gender &&
@@ -2141,8 +2154,8 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                 <ol className="mt-2 list-inside list-decimal space-y-1 text-xs text-slate-600">
                   <li>Download the template and fill in learner details</li>
                   <li>
-                    Use the dropdowns for <strong>Name prefix</strong>, <strong>Gender</strong>, <strong>Training
-                    center</strong>, and optional <strong>Course (reference only)</strong>
+                    Use the dropdowns for <strong>Name prefix</strong>, <strong>Gender</strong>, <strong>Program</strong>,{" "}
+                    <strong>Training center</strong>, and optional <strong>Course (reference only)</strong>
                   </li>
                   <li>Upload the file — we check every row and show errors in plain language</li>
                   <li>Save valid rows, then send learners to the government portal from All learners</li>
@@ -2639,7 +2652,24 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                     ))}
                   </select>
                 </FormField>
-                <FormField label="Training center *" className="sm:col-span-2">
+                <FormField label="Program *">
+                  <select
+                    value={individualCandidateForm.program}
+                    onChange={(event) =>
+                      setIndividualCandidateForm((current) => ({ ...current, program: event.target.value }))
+                    }
+                    className={inputClassName}
+                    required
+                  >
+                    <option value="">Select program</option>
+                    {CANDIDATE_PROGRAM_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </FormField>
+                <FormField label="Training center *">
                   <select
                     value={individualCandidateForm.centerId}
                     onChange={(event) =>
@@ -2745,6 +2775,13 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                       value={detailCandidate.personalDetails.dateOfBirth ?? "Not provided"}
                     />
                     <DetailMeta label="Gender" value={detailCandidate.personalDetails.gender ?? "—"} />
+                    <DetailMeta
+                      label="Program"
+                      value={
+                        detailCandidate.program ??
+                        (getCandidateProgramLabel(detailCandidate.programId) || "Not provided")
+                      }
+                    />
                     <DetailMeta
                       label="Course"
                       value={detailCandidate.referenceDetails?.courseName ?? "Not selected"}
@@ -3329,6 +3366,7 @@ function ImportRowViewModal({ onClose, row }: { onClose: () => void; row: Import
         <ImportDetailSection title="Location & reference">
           <ImportDetailField label="State" value={details.state} />
           <ImportDetailField label="District" value={details.district} />
+          <ImportDetailField label="Program" value={details.program} />
           <ImportDetailField label="Training center" value={details.centerName} />
           <ImportDetailField label="Course (reference only)" value={details.courseName} />
         </ImportDetailSection>

@@ -15,6 +15,14 @@ type WorksheetWithValidations = Worksheet & {
 
 export const MAX_TEMPLATE_DATA_ROW = 50_001;
 
+export function buildInlineListFormula(values: string[]) {
+  if (values.length === 0) {
+    return null;
+  }
+
+  return `"${values.join(",")}"`;
+}
+
 export function writeListColumn(worksheet: Worksheet, column: number, values: string[], listsSheetName = "Lists") {
   if (values.length === 0) {
     return null;

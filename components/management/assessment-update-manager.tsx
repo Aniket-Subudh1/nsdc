@@ -1,6 +1,8 @@
 "use client";
 
 import { startTransition, useEffect, useMemo, useState } from "react";
+
+import { useRefreshableLoad } from "@/lib/client/use-refreshable-load";
 import {
   IconAlertTriangle,
   IconClipboardCheck,
@@ -199,7 +201,7 @@ export default function AssessmentUpdateManager({ portal }: AssessmentUpdateMana
     certificationDate: todayIsoDate(),
     certificationName: "",
   });
-  const [isLoading, setIsLoading] = useState(true);
+  const loadState = useRefreshableLoad();
   const [isLoadingSummary, setIsLoadingSummary] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showOnlyEligible, setShowOnlyEligible] = useState(true);
@@ -219,7 +221,7 @@ export default function AssessmentUpdateManager({ portal }: AssessmentUpdateMana
   const selectedRows = useMemo(() => rows.filter((row) => row.selected), [rows]);
 
   async function loadBatches() {
-    setIsLoading(true);
+    loadState.begin();
 
     try {
       const [batchPage, coursePage] = await Promise.all([
@@ -231,7 +233,7 @@ export default function AssessmentUpdateManager({ portal }: AssessmentUpdateMana
     } catch (error) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to load batches");
     } finally {
-      setIsLoading(false);
+      loadState.end();
     }
   }
 
@@ -416,7 +418,7 @@ export default function AssessmentUpdateManager({ portal }: AssessmentUpdateMana
     }
   }
 
-  if (isLoading) {
+  if (loadState.isInitialLoading) {
     return (
       <div className="flex flex-1 items-center justify-center bg-slate-100 py-24 text-slate-400">
         <IconLoader2 className="h-6 w-6 animate-spin" />
@@ -434,10 +436,11 @@ export default function AssessmentUpdateManager({ portal }: AssessmentUpdateMana
         </div>
         <button
           type="button"
+          disabled={loadState.isRefreshing}
           onClick={() => startTransition(() => void loadBatches())}
-          className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:border-sky-300 sm:w-auto sm:shrink-0"
+          className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:border-sky-300 disabled:opacity-60 sm:w-auto sm:shrink-0"
         >
-          <IconRefresh className="h-4 w-4" />
+          <IconRefresh className={cn("h-4 w-4", loadState.isRefreshing && "animate-spin")} />
           Refresh
         </button>
       </div>

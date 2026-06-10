@@ -1,6 +1,8 @@
 "use client";
 
 import { startTransition, useEffect, useMemo, useState } from "react";
+
+import { useRefreshableLoad } from "@/lib/client/use-refreshable-load";
 import {
   IconBuildingCommunity,
   IconChevronLeft,
@@ -188,7 +190,7 @@ export default function UsersManager({ portal }: UsersManagerProps) {
   const [page, setPage] = useState(1);
   const [pageSize] = useState(20);
   const [total, setTotal] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
+  const loadState = useRefreshableLoad();
   const [isSaving, setIsSaving] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -255,7 +257,7 @@ export default function UsersManager({ portal }: UsersManagerProps) {
   }
 
   async function loadData(targetPage = page) {
-    setIsLoading(true);
+    loadState.begin();
     try {
       const [usersData, centerData] = await Promise.all([
         apiFetch<PagedUsers>(`/api/v1/admin/users?page=${targetPage}&pageSize=${pageSize}`),
@@ -267,14 +269,14 @@ export default function UsersManager({ portal }: UsersManagerProps) {
     } catch (error) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to load users");
     } finally {
-      setIsLoading(false);
+      loadState.end();
     }
   }
 
   useEffect(() => {
     let mounted = true;
     async function init() {
-      setIsLoading(true);
+      loadState.begin();
       try {
         const [usersData, centerData] = await Promise.all([
           apiFetch<PagedUsers>(`/api/v1/admin/users?page=${page}&pageSize=${pageSize}`),
@@ -288,7 +290,7 @@ export default function UsersManager({ portal }: UsersManagerProps) {
         if (!mounted) return;
         toast.error(error instanceof ClientApiError ? error.message : "Unable to load users");
       } finally {
-        if (mounted) setIsLoading(false);
+        if (mounted) loadState.end();
       }
     }
     void init();
@@ -422,10 +424,10 @@ export default function UsersManager({ portal }: UsersManagerProps) {
           <button
             type="button"
             onClick={() => startTransition(() => void loadData(page))}
-            disabled={isLoading}
+            disabled={loadState.isRefreshing}
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-neutral-600 transition-colors hover:bg-slate-50 disabled:opacity-50"
           >
-            <IconRefresh className={cn("h-4 w-4", isLoading && "animate-spin")} />
+            <IconRefresh className={cn("h-4 w-4", loadState.isRefreshing && "animate-spin")} />
             Refresh
           </button>
           <button
@@ -442,28 +444,28 @@ export default function UsersManager({ portal }: UsersManagerProps) {
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatCard
           label="Total team members"
-          value={isLoading ? null : stats.total}
+          value={loadState.isInitialLoading ? null : stats.total}
           icon={<IconUsers className="h-5 w-5" />}
           onClick={() => setStatusFilter("all")}
           active={statusFilter === "all"}
         />
         <StatCard
           label="Active accounts"
-          value={isLoading ? null : stats.active}
+          value={loadState.isInitialLoading ? null : stats.active}
           icon={<IconUserCheck className="h-5 w-5" />}
           onClick={() => setStatusFilter("active")}
           active={statusFilter === "active"}
         />
         <StatCard
           label="Inactive accounts"
-          value={isLoading ? null : stats.inactive}
+          value={loadState.isInitialLoading ? null : stats.inactive}
           icon={<IconUserMinus className="h-5 w-5" />}
           onClick={() => setStatusFilter("inactive")}
           active={statusFilter === "inactive"}
         />
         <StatCard
           label={isAdminPortal ? "Admins" : "Administrators"}
-          value={isLoading ? null : isAdminPortal ? stats.admins : stats.admins + stats.trainingPartners}
+          value={loadState.isInitialLoading ? null : isAdminPortal ? stats.admins : stats.admins + stats.trainingPartners}
           icon={<IconShield className="h-5 w-5" />}
           onClick={() =>
             setRoleFilter((current) =>
@@ -478,7 +480,7 @@ export default function UsersManager({ portal }: UsersManagerProps) {
         <ChartPanel title="People by role">
           <BarChart
             items={roleChartItems}
-            loading={isLoading}
+            loading={loadState.isInitialLoading}
             emptyMessage="Role breakdown will appear once users are added."
           />
         </ChartPanel>
@@ -504,7 +506,12 @@ export default function UsersManager({ portal }: UsersManagerProps) {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+      <div
+        className={cn(
+          "overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm transition-opacity",
+          loadState.isRefreshing && "opacity-70",
+        )}
+      >
         <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-4 sm:px-5 md:flex-row md:items-center md:justify-between">
           <div className="flex flex-wrap gap-1">
             {(["all", "active", "inactive"] as StatusFilter[]).map((s) => (
@@ -585,7 +592,7 @@ export default function UsersManager({ portal }: UsersManagerProps) {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {isLoading ? (
+              {loadState.isInitialLoading ? (
                 <tr>
                   <td colSpan={7} className="px-5 py-16 text-center text-sm text-slate-400">
                     <IconLoader2 className="mx-auto h-6 w-6 animate-spin" />
@@ -619,7 +626,7 @@ export default function UsersManager({ portal }: UsersManagerProps) {
         </div>
 
         <div className="divide-y divide-slate-100 md:hidden">
-          {isLoading ? (
+          {loadState.isInitialLoading ? (
             <div className="px-4 py-12 text-center text-sm text-slate-400">
               <IconLoader2 className="mx-auto h-6 w-6 animate-spin" />
               <p className="mt-2">Loading team members…</p>
@@ -641,7 +648,7 @@ export default function UsersManager({ portal }: UsersManagerProps) {
           )}
         </div>
 
-        {!isLoading && totalPages > 1 ? (
+        {!loadState.isInitialLoading && totalPages > 1 ? (
           <div className="flex flex-col gap-3 border-t border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
             <p className="text-xs text-slate-500">
               Page <span className="font-semibold text-slate-700">{page}</span> of{" "}

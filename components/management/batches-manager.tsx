@@ -1,6 +1,8 @@
 "use client";
 
 import { startTransition, useEffect, useMemo, useState } from "react";
+
+import { useRefreshableLoad } from "@/lib/client/use-refreshable-load";
 import {
   IconCalendar,
   IconCircleCheck,
@@ -323,6 +325,40 @@ function createEmptyBatchForm(enums?: ReferenceData["enums"]): BatchFormState {
 }
 
 const emptyBatchForm = createEmptyBatchForm();
+
+function toBatchListItem(detail: BatchDetail): BatchListItem {
+  const {
+    candidates,
+    sidhAssessmentMode: _sidhAssessmentMode,
+    sidhBatchType: _sidhBatchType,
+    sidhCategoryType: _sidhCategoryType,
+    sidhCreatedSource: _sidhCreatedSource,
+    sidhFeePaidBy: _sidhFeePaidBy,
+    sidhTpId: _sidhTpId,
+    status: _status,
+    ...listItem
+  } = detail;
+
+  return {
+    ...listItem,
+    candidateCount: candidates.length,
+  };
+}
+
+function upsertBatchListItem(items: BatchListItem[], detail: BatchDetail) {
+  const listItem = toBatchListItem(detail);
+  const index = items.findIndex((batch) => batch.batchId === listItem.batchId);
+
+  if (index === -1) {
+    return [listItem, ...items];
+  }
+
+  return items.map((batch, itemIndex) => (itemIndex === index ? listItem : batch));
+}
+
+function removeBatchFromList(items: BatchListItem[], batchId: string) {
+  return items.filter((batch) => batch.batchId !== batchId);
+}
 
 function canEditBatch(batch: Pick<BatchListItem, "sidhBatchId" | "syncState">) {
   const status = batch.syncState.batchSync.status;
@@ -804,7 +840,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [editingBatchId, setEditingBatchId] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const loadState = useRefreshableLoad();
   const [isSaving, setIsSaving] = useState(false);
   const [syncingBatchId, setSyncingBatchId] = useState<string | null>(null);
   const [syncingEnrollmentBatchId, setSyncingEnrollmentBatchId] = useState<string | null>(null);
@@ -1019,35 +1055,54 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
     setShowCreateModal(true);
   }
 
+  async function fetchReferenceData() {
+    const [refs, coursePage] = await Promise.all([
+      apiFetch<ReferenceData>("/api/v1/reference-data/candidate"),
+      apiFetch<PagedCourses>("/api/v1/masters/courses?page=1&pageSize=100&status=active&approvalStatus=approved"),
+    ]);
+
+    setReferenceData({ ...refs, courses: coursePage.items });
+    setBatchForm((current) => {
+      const next = { ...current };
+
+      if (!current.centerId && refs.trainingCenters.length === 1) {
+        next.centerId = refs.trainingCenters[0]?.centerId ?? "";
+      }
+
+      if (!current.tpId && refs.sidhBatchContext?.tpId) {
+        next.tpId = refs.sidhBatchContext.tpId;
+      }
+
+      return next;
+    });
+  }
+
+  async function fetchBatches() {
+    const batchPage = await apiFetch<PagedBatches>("/api/v1/batches?page=1&pageSize=100");
+    setBatches(batchPage.items);
+  }
+
   async function loadData() {
-    setIsLoading(true);
+    loadState.begin();
 
     try {
-      const [refs, coursePage, batchPage] = await Promise.all([
-        apiFetch<ReferenceData>("/api/v1/reference-data/candidate"),
-        apiFetch<PagedCourses>("/api/v1/masters/courses?page=1&pageSize=100&status=active&approvalStatus=approved"),
-        apiFetch<PagedBatches>("/api/v1/batches?page=1&pageSize=100"),
-      ]);
-
-      setReferenceData({ ...refs, courses: coursePage.items });
-      setBatches(batchPage.items);
-      setBatchForm((current) => {
-        const next = { ...current };
-
-        if (!current.centerId && refs.trainingCenters.length === 1) {
-          next.centerId = refs.trainingCenters[0]?.centerId ?? "";
-        }
-
-        if (!current.tpId && refs.sidhBatchContext?.tpId) {
-          next.tpId = refs.sidhBatchContext.tpId;
-        }
-
-        return next;
-      });
+      await Promise.all([fetchReferenceData(), fetchBatches()]);
     } catch (error) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to load batch details");
     } finally {
-      setIsLoading(false);
+      loadState.end();
+    }
+  }
+
+  async function refreshBatches() {
+    loadState.begin();
+
+    try {
+      await fetchBatches();
+    } catch (error) {
+      toast.error(error instanceof ClientApiError ? error.message : "Unable to refresh batches");
+    } finally {
+      loadState.end();
     }
   }
 
@@ -1237,7 +1292,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
       setBatchForm(createEmptyBatchForm(referenceData?.enums));
       resetSectorCourseSelection();
       setShowCreateModal(false);
-      await loadData();
+      setBatches((current) => upsertBatchListItem(current, createdBatch));
       await handleViewBatch(createdBatch.batchId, true);
     } catch (error) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to create batch");
@@ -1377,7 +1432,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
       setEditingBatchId(null);
       setBatchForm(createEmptyBatchForm(referenceData?.enums));
       setSelectedBatch(updatedBatch);
-      await loadData();
+      setBatches((current) => upsertBatchListItem(current, updatedBatch));
     } catch (error) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to update batch");
     } finally {
@@ -1392,7 +1447,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
 
       if (status.batchSync.status === "synced" && status.sidhBatchId) {
         toast.success(`Batch pushed to SIDH successfully. NSDC_SIDH batch ID: ${status.sidhBatchId}`);
-        await loadData();
+        await refreshBatches();
         if (selectedBatch?.batchId === batchId) {
           await handleViewBatch(batchId, false);
         }
@@ -1401,7 +1456,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
 
       if (["failed", "manual_review"].includes(status.batchSync.status)) {
         toast.error(status.batchSync.lastFailureMessage ?? "Batch push to SIDH failed");
-        await loadData();
+        await refreshBatches();
         if (selectedBatch?.batchId === batchId) {
           await handleViewBatch(batchId, false);
         }
@@ -1410,7 +1465,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
     }
 
     toast.message("Batch push is still processing. Refresh the page to check the latest status.");
-    await loadData();
+    await refreshBatches();
   }
 
   async function handlePushToSidh(batchId: string) {
@@ -1428,7 +1483,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
         method: "POST",
       });
       toast.success("Batch push to SIDH started");
-      await loadData();
+      await refreshBatches();
       await pollBatchSyncStatus(batchId);
     } catch (error) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to push batch to SIDH");
@@ -1482,7 +1537,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
       setShowEditModal(false);
       setEditingBatchId(null);
       setBatchForm(createEmptyBatchForm(referenceData?.enums));
-      await loadData();
+      await refreshBatches();
       await handlePushToSidh(batchId);
     } catch (error) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to save batch before push");
@@ -1500,7 +1555,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
         method: "POST",
       });
       toast.success("SIDH retry queued");
-      await loadData();
+      await refreshBatches();
       if (selectedBatch?.batchId === batchId) {
         await handleViewBatch(batchId, false);
       }
@@ -1520,7 +1575,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
         method: "POST",
       });
       toast.success("Enrollment retry queued");
-      await loadData();
+      await refreshBatches();
       await handleViewBatch(batchId, false);
       if (assignBatchId === batchId) {
         await loadAssignableCandidates(batchId);
@@ -1576,9 +1631,10 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
       );
       setCurrentEnrollmentJob(committedJob);
       setSelectedCandidateIds([]);
-      setSelectedBatch(await apiFetch<BatchDetail>(`/api/v1/batches/${assignBatchId}`));
+      const updatedBatch = await apiFetch<BatchDetail>(`/api/v1/batches/${assignBatchId}`);
+      setSelectedBatch(updatedBatch);
+      setBatches((current) => upsertBatchListItem(current, updatedBatch));
       toast.success(`${committedJob.committedRows} learner${committedJob.committedRows === 1 ? "" : "s"} enrolled and queued for SIDH sync`);
-      await loadData();
       await loadAssignableCandidates(assignBatchId);
       await loadEnrollmentRows(
         assignBatchId,
@@ -1617,7 +1673,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
       if (assignBatchId === batchId) {
         setAssignBatchId("");
       }
-      await loadData();
+      setBatches((current) => removeBatchFromList(current, batchId));
     } catch (error) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to delete batch");
     } finally {
@@ -1650,7 +1706,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
     setIsDeletingAllUnpushed(false);
     setSelectedBatch(null);
     setShowDetailModal(false);
-    await loadData();
+    await refreshBatches();
 
     if (deletedCount === unpushedBatches.length) {
       toast.success(`Deleted ${deletedCount} unpushed batch(es)`);
@@ -1673,8 +1729,8 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
         method: "DELETE",
       });
       setSelectedBatch(detail);
+      setBatches((current) => upsertBatchListItem(current, detail));
       toast.success("Learner removed from batch");
-      await loadData();
     } catch (error) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to remove learner from batch");
     } finally {
@@ -1703,8 +1759,8 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
         method: "DELETE",
       });
       setSelectedBatch(detail);
+      setBatches((current) => upsertBatchListItem(current, detail));
       toast.success("Removable learners removed from batch");
-      await loadData();
     } catch (error) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to remove learners from batch");
     } finally {
@@ -1726,7 +1782,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
     return "slate" as const;
   }
 
-  if (isLoading) {
+  if (loadState.isInitialLoading) {
     return (
       <div className="flex flex-1 items-center justify-center bg-slate-100 py-24 text-slate-400">
         <IconLoader2 className="h-6 w-6 animate-spin" />
@@ -2014,10 +2070,11 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
           <button
             type="button"
+            disabled={loadState.isRefreshing}
             onClick={() => startTransition(() => void loadData())}
-            className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:border-sky-300 sm:w-auto"
+            className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:border-sky-300 disabled:opacity-60 sm:w-auto"
           >
-            <IconRefresh className="h-4 w-4" />
+            <IconRefresh className={cn("h-4 w-4", loadState.isRefreshing && "animate-spin")} />
             Refresh
           </button>
           <button
@@ -2056,7 +2113,12 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
         <StatCard active={syncFilter === "attention"} icon={<IconRotateClockwise className="h-5 w-5" />} label="Needs attention" value={batchStats.attention} onClick={() => setSyncFilter("attention")} />
       </div>
 
-      <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+      <section
+        className={cn(
+          "overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm transition-opacity",
+          loadState.isRefreshing && "opacity-70",
+        )}
+      >
         <div className="border-b border-slate-100 px-4 py-4 sm:px-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>

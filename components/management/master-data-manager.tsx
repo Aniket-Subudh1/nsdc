@@ -1,6 +1,8 @@
 "use client";
 
 import { startTransition, useEffect, useMemo, useState } from "react";
+
+import { useRefreshableLoad } from "@/lib/client/use-refreshable-load";
 import {
   IconBook,
   IconBriefcase,
@@ -326,7 +328,8 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
 
   const [referenceEnums, setReferenceEnums] = useState<Record<string, Array<{ code: string; label: string }>>>({});
   const [sidhFieldOptions, setSidhFieldOptions] = useState<SidhBatchFieldOptionsResponse | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const loadState = useRefreshableLoad();
+  const [isCoursesLoading, setIsCoursesLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -561,7 +564,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
   }
 
   async function loadData() {
-    setIsLoading(true);
+    loadState.begin();
     try {
       const [programData, sectorData, schemeData] = await Promise.all([
         apiFetch<PagedResponse<ProgramRecord>>("/api/v1/masters/programs?page=1&pageSize=100"),
@@ -576,7 +579,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
     } catch (error) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to load master data");
     } finally {
-      setIsLoading(false);
+      loadState.end();
     }
   }
 
@@ -637,7 +640,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
     let isMounted = true;
 
     async function refreshCourses() {
-      setIsLoading(true);
+      setIsCoursesLoading(true);
 
       try {
         await loadCourses();
@@ -647,7 +650,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
         }
       } finally {
         if (isMounted) {
-          setIsLoading(false);
+          setIsCoursesLoading(false);
         }
       }
     }
@@ -904,7 +907,6 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
     all: activeList.length,
     inactive: activeList.filter((i) => i.status === "inactive").length,
   };
-
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col gap-6 overflow-hidden bg-slate-100 px-4 py-4 md:px-8 md:py-8">
       <div className="shrink-0 flex flex-wrap items-start justify-between gap-3">
@@ -916,10 +918,10 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           <button
             type="button"
             onClick={() => startTransition(() => void loadData())}
-            disabled={isLoading}
+            disabled={loadState.isRefreshing}
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-neutral-600 transition-colors hover:bg-slate-50 disabled:opacity-50"
           >
-            <IconRefresh className={cn("h-4 w-4", isLoading && "animate-spin")} />
+            <IconRefresh className={cn("h-4 w-4", loadState.isRefreshing && "animate-spin")} />
             Refresh
           </button>
           {activeTab === "courses" ? (
@@ -962,28 +964,28 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
       <div className="grid shrink-0 grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatCard
           label="Programs"
-          value={isLoading ? null : programs.length}
+          value={loadState.isInitialLoading ? null : programs.length}
           icon={<IconBriefcase className="h-5 w-5" />}
           active={activeTab === "programs"}
           onClick={() => switchTab("programs")}
         />
         <StatCard
           label="Sectors"
-          value={isLoading ? null : sectors.length}
+          value={loadState.isInitialLoading ? null : sectors.length}
           icon={<IconStack2 className="h-5 w-5" />}
           active={activeTab === "sectors"}
           onClick={() => switchTab("sectors")}
         />
         <StatCard
           label="Schemes"
-          value={isLoading ? null : schemes.length}
+          value={loadState.isInitialLoading ? null : schemes.length}
           icon={<IconHierarchy className="h-5 w-5" />}
           active={activeTab === "schemes"}
           onClick={() => switchTab("schemes")}
         />
         <StatCard
           label="Courses"
-          value={isLoading ? null : courseTotal}
+          value={loadState.isInitialLoading ? null : courseTotal}
           icon={<IconBook className="h-5 w-5" />}
           active={activeTab === "courses"}
           onClick={() => switchTab("courses")}
@@ -1219,10 +1221,15 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
             </div>
           ) : (
             <>
-          <div className="hidden overflow-x-auto lg:block">
+          <div
+            className={cn(
+              "hidden overflow-x-auto lg:block transition-opacity",
+              (loadState.isRefreshing || (activeTab === "courses" && isCoursesLoading)) && "opacity-70",
+            )}
+          >
           {activeTab === "programs" && (
             <ProgramsTable
-              isLoading={isLoading}
+              isLoading={loadState.isInitialLoading}
               readOnly={!canManageCoreMasters}
               onDelete={handleDelete}
               programs={filteredPrograms}
@@ -1233,7 +1240,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           )}
           {activeTab === "sectors" && (
             <SectorsTable
-              isLoading={isLoading}
+              isLoading={loadState.isInitialLoading}
               readOnly={!canManageCoreMasters}
               onDelete={handleDelete}
               onEdit={(id) => openEditModal(id)}
@@ -1242,7 +1249,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           )}
           {activeTab === "schemes" && (
             <SchemesTable
-              isLoading={isLoading}
+              isLoading={loadState.isInitialLoading}
               readOnly={!canManageCoreMasters}
               onDelete={handleDelete}
               schemes={filteredSchemes}
@@ -1254,7 +1261,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           {activeTab === "courses" && (
             <CoursesTable
               courses={courses}
-              isLoading={isLoading}
+              isLoading={loadState.isInitialLoading || isCoursesLoading}
               onDelete={handleDelete}
               onEdit={(id) => openEditModal(id)}
               page={coursePage}
@@ -1266,10 +1273,15 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           )}
         </div>
 
-        <div className="divide-y divide-slate-100 lg:hidden">
+        <div
+          className={cn(
+            "divide-y divide-slate-100 lg:hidden transition-opacity",
+            (loadState.isRefreshing || (activeTab === "courses" && isCoursesLoading)) && "opacity-70",
+          )}
+        >
           {activeTab === "programs" && (
             <ProgramsMobileList
-              isLoading={isLoading}
+              isLoading={loadState.isInitialLoading}
               readOnly={!canManageCoreMasters}
               onDelete={handleDelete}
               onEdit={(id) => openEditModal(id)}
@@ -1280,7 +1292,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           )}
           {activeTab === "sectors" && (
             <SectorsMobileList
-              isLoading={isLoading}
+              isLoading={loadState.isInitialLoading}
               readOnly={!canManageCoreMasters}
               onDelete={handleDelete}
               onEdit={(id) => openEditModal(id)}
@@ -1289,7 +1301,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           )}
           {activeTab === "schemes" && (
             <SchemesMobileList
-              isLoading={isLoading}
+              isLoading={loadState.isInitialLoading}
               readOnly={!canManageCoreMasters}
               onDelete={handleDelete}
               onEdit={(id) => openEditModal(id)}
@@ -1301,7 +1313,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
           {activeTab === "courses" && (
             <CoursesMobileList
               courses={courses}
-              isLoading={isLoading}
+              isLoading={loadState.isInitialLoading || isCoursesLoading}
               onDelete={handleDelete}
               onEdit={(id) => openEditModal(id)}
               page={coursePage}

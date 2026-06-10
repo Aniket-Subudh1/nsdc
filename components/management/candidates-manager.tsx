@@ -1,6 +1,8 @@
 "use client";
 
 import { memo, startTransition, useEffect, useMemo, useState } from "react";
+
+import { useRefreshableLoad } from "@/lib/client/use-refreshable-load";
 import {
   IconArrowRight,
   IconChevronLeft,
@@ -939,7 +941,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   const [selectedSyncJobId, setSelectedSyncJobId] = useState<string | null>(null);
   const [selectedSyncJob, setSelectedSyncJob] = useState<SyncJobRecord | null>(null);
   const [processLimit, setProcessLimit] = useState("5");
-  const [isLoading, setIsLoading] = useState(true);
+  const loadState = useRefreshableLoad();
   const [isLoadingSyncDetail, setIsLoadingSyncDetail] = useState(false);
   const [isUploadingImport, setIsUploadingImport] = useState(false);
   const [isCreatingCandidate, setIsCreatingCandidate] = useState(false);
@@ -1090,7 +1092,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   }
 
   async function refreshVisibleData() {
-    setIsLoading(true);
+    loadState.begin();
 
     try {
       const [candidateData, syncJobData] = await Promise.all([fetchCandidates(candidateFilters), fetchSyncJobs(syncFilters)]);
@@ -1115,7 +1117,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
     } catch (error) {
       setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to refresh candidate operations data");
     } finally {
-      setIsLoading(false);
+      loadState.end();
     }
   }
 
@@ -1143,7 +1145,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
     let isMounted = true;
 
     async function refreshLists() {
-      setIsLoading(true);
+      loadState.begin();
 
       try {
         const [candidateData, syncJobData] = await Promise.all([fetchCandidates(candidateFilters), fetchSyncJobs(syncFilters)]);
@@ -1162,7 +1164,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
         }
       } finally {
         if (isMounted) {
-          setIsLoading(false);
+          loadState.end();
         }
       }
     }
@@ -1537,10 +1539,11 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <button
             type="button"
+            disabled={loadState.isRefreshing}
             onClick={() => startTransition(() => void refreshVisibleData())}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-sky-300 hover:text-sky-700"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-sky-300 hover:text-sky-700 disabled:opacity-60"
           >
-            <IconRefresh className="h-4 w-4" />
+            <IconRefresh className={cn("h-4 w-4", loadState.isRefreshing && "animate-spin")} />
             Refresh
           </button>
           <button
@@ -1582,28 +1585,28 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
           active={activeTab === "all_candidates" && !candidateFilters.syncStatus && !candidateFilters.search}
           icon={<IconUsers className="h-5 w-5" />}
           label="Total learners"
-          value={isLoading ? null : candidatePagination.total}
+          value={loadState.isInitialLoading ? null : candidatePagination.total}
           onClick={clearLearnerFilters}
         />
         <StatCard
           active={activeTab === "all_candidates" && candidateFilters.syncStatus === "not_queued"}
           icon={<IconCircleCheck className="h-5 w-5" />}
           label="Ready to send"
-          value={isLoading ? null : readyToSyncCount}
+          value={loadState.isInitialLoading ? null : readyToSyncCount}
           onClick={() => applySyncFilter("not_queued")}
         />
         <StatCard
           active={activeTab === "all_candidates" && candidateFilters.syncStatus === "failed"}
           icon={<IconRotateClockwise className="h-5 w-5" />}
           label="Needs attention"
-          value={isLoading ? null : needsAttentionCount}
+          value={loadState.isInitialLoading ? null : needsAttentionCount}
           onClick={() => applySyncFilter("failed")}
         />
         <StatCard
           active={activeTab === "skill_india_queue"}
           icon={<IconSend className="h-5 w-5" />}
           label="Sync queue"
-          value={isLoading ? null : syncPagination.total}
+          value={loadState.isInitialLoading ? null : syncPagination.total}
           onClick={() => switchTab("skill_india_queue")}
         />
       </div>
@@ -1637,7 +1640,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
           ))}
         </div>
 
-        <div className="p-4 sm:p-5 md:p-6">
+        <div className={cn("p-4 sm:p-5 md:p-6 transition-opacity", loadState.isRefreshing && "opacity-70")}>
           {activeTab === "all_candidates" ? (
             <div className="space-y-4">
               <WorkflowBanner onGoToSync={() => switchTab("skill_india_queue")} />
@@ -1934,7 +1937,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                   </div>
                 ) : null}
 
-              {isLoading ? (
+              {loadState.isInitialLoading ? (
                 <div className="flex items-center justify-center py-16 text-slate-400">
                   <IconLoader2 className="h-6 w-6 animate-spin" />
                 </div>
@@ -2403,7 +2406,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                 <ImportStat label="Total jobs" value={syncPagination.total} />
               </div>
 
-              {isLoading ? (
+              {loadState.isInitialLoading ? (
                 <div className="flex items-center justify-center py-16 text-slate-400">
                   <IconLoader2 className="h-6 w-6 animate-spin" />
                 </div>

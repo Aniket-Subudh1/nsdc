@@ -1,6 +1,8 @@
 "use client";
 
 import { startTransition, useEffect, useMemo, useState } from "react";
+
+import { useRefreshableLoad } from "@/lib/client/use-refreshable-load";
 import {
   IconBuildingCommunity,
   IconChevronDown,
@@ -109,7 +111,7 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
   const [page, setPage] = useState(1);
   const [pageSize] = useState(20);
   const [total, setTotal] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
+  const loadState = useRefreshableLoad();
   const [isSaving, setIsSaving] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -176,7 +178,7 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
   }
 
   async function loadCenters(targetPage = page) {
-    setIsLoading(true);
+    loadState.begin();
     try {
       const [centerData, programData] = await Promise.all([
         apiFetch<PagedCenters>(
@@ -192,14 +194,15 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
         error instanceof ClientApiError ? error.message : "Unable to load training centers",
       );
     } finally {
-      setIsLoading(false);
+      loadState.end();
     }
   }
 
   useEffect(() => {
     let mounted = true;
+
     async function init() {
-      setIsLoading(true);
+      loadState.begin();
       try {
         const [centerData, programData] = await Promise.all([
           apiFetch<PagedCenters>(
@@ -217,9 +220,10 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
           error instanceof ClientApiError ? error.message : "Unable to load training centers",
         );
       } finally {
-        if (mounted) setIsLoading(false);
+        if (mounted) loadState.end();
       }
     }
+
     void init();
     return () => {
       mounted = false;
@@ -327,10 +331,10 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
           <button
             type="button"
             onClick={() => startTransition(() => void loadCenters(page))}
-            disabled={isLoading}
+            disabled={loadState.isRefreshing}
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-neutral-600 transition-colors hover:bg-slate-50 disabled:opacity-50"
           >
-            <IconRefresh className={cn("h-4 w-4", isLoading && "animate-spin")} />
+            <IconRefresh className={cn("h-4 w-4", loadState.isRefreshing && "animate-spin")} />
             Refresh
           </button>
           <button
@@ -350,14 +354,14 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
       <div className="grid shrink-0 grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatCard
           label="Total centers"
-          value={isLoading ? null : stats.total}
+          value={loadState.isInitialLoading ? null : stats.total}
           icon={<IconBuildingCommunity className="h-5 w-5" />}
           onClick={clearFilters}
           active={statusFilter === "all" && workflowFilter === "all"}
         />
         <StatCard
           label="Active centers"
-          value={isLoading ? null : stats.active}
+          value={loadState.isInitialLoading ? null : stats.active}
           icon={<IconMapPin className="h-5 w-5" />}
           onClick={() => {
             setStatusFilter("active");
@@ -367,7 +371,7 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
         />
         <StatCard
           label="Verified locally"
-          value={isLoading ? null : stats.verified}
+          value={loadState.isInitialLoading ? null : stats.verified}
           icon={<IconCircleCheck className="h-5 w-5" />}
           onClick={() => {
             setStatusFilter("all");
@@ -377,7 +381,7 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
         />
         <StatCard
           label="Ready for NSDC_SIDH sync"
-          value={isLoading ? null : stats.sidhReady}
+          value={loadState.isInitialLoading ? null : stats.sidhReady}
           icon={<IconCircleCheck className="h-5 w-5" />}
           onClick={() => {
             setStatusFilter("all");
@@ -387,7 +391,12 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
         />
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+      <div
+        className={cn(
+          "flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm transition-opacity",
+          loadState.isRefreshing && "opacity-70",
+        )}
+      >
         <div className="flex shrink-0 flex-col gap-3 border-b border-slate-100 px-4 py-4 sm:px-5 md:flex-row md:items-center md:justify-between">
           <div className="flex flex-wrap gap-1">
             {(["all", "active", "inactive"] as StatusFilter[]).map((s) => (
@@ -454,7 +463,7 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {isLoading ? (
+              {loadState.isInitialLoading ? (
                 <tr>
                   <td colSpan={9} className="px-5 py-16 text-center text-sm text-slate-400">
                     <IconLoader2 className="mx-auto h-6 w-6 animate-spin" />
@@ -490,7 +499,7 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
         </div>
 
         <div className="divide-y divide-slate-100 lg:hidden">
-          {isLoading ? (
+          {loadState.isInitialLoading ? (
             <div className="px-4 py-12 text-center text-sm text-slate-400">
               <IconLoader2 className="mx-auto h-6 w-6 animate-spin" />
               <p className="mt-2">Loading training centers…</p>
@@ -515,7 +524,7 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
         </div>
         </div>
 
-        {!isLoading && totalPages > 1 ? (
+        {!loadState.isInitialLoading && totalPages > 1 ? (
           <div className="flex shrink-0 flex-col gap-3 border-t border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
             <p className="text-xs text-slate-500">
               Page <span className="font-semibold text-slate-700">{page}</span> of{" "}

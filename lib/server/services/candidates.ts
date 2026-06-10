@@ -25,11 +25,13 @@ import { writeAuditLog } from "@/lib/server/services/audit";
 import { applyBatchEnrollmentEligibilityFilters } from "@/lib/server/services/batch-enrollment-jobs";
 import { type AuthSession } from "@/lib/server/services/session";
 import { parseUserDateInput } from "@/lib/server/sidh-payload";
+import { buildCandidateExportWorkbook } from "@/lib/server/candidate-export";
 import {
   bulkQueueCandidateSyncSchema,
   createCandidateSchema,
   createCandidateRegistrationSchema,
   type CandidateImportInput,
+  type CandidateExportQuery,
   type CandidateListQuery,
   type BulkQueueCandidateSyncInput,
   type CreateCandidateInput,
@@ -1260,10 +1262,9 @@ function appendFilterCondition(conditions: Array<Record<string, unknown>>, condi
   conditions.push(condition);
 }
 
-export async function listCandidates(actor: AuthSession, query: CandidateListQuery): Promise<PagedList<SerializedCandidate>> {
-  await connectToDatabase();
-  ensureCanReadCandidates(actor);
+const CANDIDATE_EXPORT_MAX_ROWS = 50_000;
 
+async function buildCandidateListFilter(actor: AuthSession, query: CandidateExportQuery) {
   const filter: Record<string, unknown> = {};
   const andConditions: Array<Record<string, unknown>> = [];
   const scopedCenterFilter = query.eligibleForBatchId ? undefined : resolveScopedCenterFilter(actor, query.centerId);
@@ -1335,6 +1336,14 @@ export async function listCandidates(actor: AuthSession, query: CandidateListQue
     filter.$and = andConditions;
   }
 
+  return filter;
+}
+
+export async function listCandidates(actor: AuthSession, query: CandidateListQuery): Promise<PagedList<SerializedCandidate>> {
+  await connectToDatabase();
+  ensureCanReadCandidates(actor);
+
+  const filter = await buildCandidateListFilter(actor, query);
   const skip = (query.page - 1) * query.pageSize;
   const [items, total] = await Promise.all([
     CandidateModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(query.pageSize),
@@ -1345,6 +1354,30 @@ export async function listCandidates(actor: AuthSession, query: CandidateListQue
     items: items.map((item) => serializeCandidate(item)),
     page: query.page,
     pageSize: query.pageSize,
+    total,
+  };
+}
+
+export async function exportCandidates(actor: AuthSession, query: CandidateExportQuery) {
+  await connectToDatabase();
+  ensureCanReadCandidates(actor);
+
+  const filter = await buildCandidateListFilter(actor, query);
+  const total = await CandidateModel.countDocuments(filter);
+
+  if (total > CANDIDATE_EXPORT_MAX_ROWS) {
+    throw new ApiError(
+      400,
+      "CANDIDATE_EXPORT_TOO_LARGE",
+      `Export is limited to ${CANDIDATE_EXPORT_MAX_ROWS.toLocaleString()} learners. Narrow your filters and try again.`,
+    );
+  }
+
+  const candidates = await CandidateModel.find(filter).sort({ createdAt: -1 }).limit(CANDIDATE_EXPORT_MAX_ROWS).lean();
+  const buffer = await buildCandidateExportWorkbook(candidates as CandidateLike[]);
+
+  return {
+    buffer,
     total,
   };
 }

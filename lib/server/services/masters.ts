@@ -16,6 +16,10 @@ import { ReferenceValueModel } from "@/lib/server/models/reference-value";
 import { SchemeModel } from "@/lib/server/models/scheme";
 import { SectorModel } from "@/lib/server/models/sector";
 import { TrainingCenterModel } from "@/lib/server/models/training-center";
+import {
+  buildCourseExportWorkbook,
+  createCourseExportLookups,
+} from "@/lib/server/course-export";
 import { canManageCoreMasters, canManageMasters, getPermissionsForRoles } from "@/lib/server/rbac";
 import { writeAuditLog } from "@/lib/server/services/audit";
 import { type AuthSession } from "@/lib/server/services/session";
@@ -115,6 +119,10 @@ type CourseListInput = ListMastersInput & {
   sectorId?: string;
   validOn?: string;
 };
+
+type CourseExportInput = Omit<CourseListInput, "page" | "pageSize">;
+
+const COURSE_EXPORT_MAX_ROWS = 50_000;
 
 function ensureCanReadMasters(actor: AuthSession) {
   if (!getPermissionsForRoles(actor.user.roles).includes("masters:read")) {
@@ -1207,10 +1215,7 @@ export async function syncSchemeToSidh(actor: AuthSession, schemeId: string, req
   return serializeScheme(scheme);
 }
 
-export async function listCourses(actor: AuthSession, input: CourseListInput): Promise<PagedList<ReturnType<typeof serializeCourse>>> {
-  await connectToDatabase();
-  ensureCanReadMasters(actor);
-
+function buildCourseListFilter(input: CourseExportInput) {
   const searchRegex = createSearchRegex(input.search);
   const filter: Record<string, unknown> = {};
 
@@ -1242,6 +1247,14 @@ export async function listCourses(actor: AuthSession, input: CourseListInput): P
     ];
   }
 
+  return filter;
+}
+
+export async function listCourses(actor: AuthSession, input: CourseListInput): Promise<PagedList<ReturnType<typeof serializeCourse>>> {
+  await connectToDatabase();
+  ensureCanReadMasters(actor);
+
+  const filter = buildCourseListFilter(input);
   const [items, total] = await Promise.all([
     CourseModel.find(filter)
       .sort({ createdAt: -1 })
@@ -1251,6 +1264,37 @@ export async function listCourses(actor: AuthSession, input: CourseListInput): P
   ]);
 
   return { items: items.map((item) => serializeCourse(item)), total, page: input.page, pageSize: input.pageSize };
+}
+
+export async function exportCourses(actor: AuthSession, input: CourseExportInput) {
+  await connectToDatabase();
+  ensureCanReadMasters(actor);
+
+  const filter = buildCourseListFilter(input);
+  const total = await CourseModel.countDocuments(filter);
+
+  if (total > COURSE_EXPORT_MAX_ROWS) {
+    throw new ApiError(
+      400,
+      "COURSE_EXPORT_TOO_LARGE",
+      `Export is limited to ${COURSE_EXPORT_MAX_ROWS.toLocaleString()} courses. Narrow your filters and try again.`,
+    );
+  }
+
+  const [courses, sectors, programs, schemes] = await Promise.all([
+    CourseModel.find(filter).sort({ createdAt: -1 }).limit(COURSE_EXPORT_MAX_ROWS).lean(),
+    SectorModel.find().select({ sectorId: 1, name: 1 }).lean(),
+    ProgramModel.find().select({ programId: 1, name: 1 }).lean(),
+    SchemeModel.find().select({ schemeId: 1, name: 1, sidhSchemeId: 1 }).lean(),
+  ]);
+
+  const lookups = createCourseExportLookups({ sectors, programs, schemes });
+  const buffer = await buildCourseExportWorkbook(courses, lookups);
+
+  return {
+    buffer,
+    total,
+  };
 }
 
 export async function createCourse(actor: AuthSession, input: CourseInput) {

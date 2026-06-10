@@ -379,12 +379,18 @@ export const updateCourseSchema = z
     message: "At least one field is required",
   });
 
-export const courseListQuerySchema = listQueryBaseSchema.extend({
+const courseFilterQueryFields = {
+  search: z.string().trim().optional(),
+  status: statusSchema.optional(),
   sectorId: z.string().trim().optional(),
   programId: z.string().trim().optional(),
   approvalStatus: approvalStatusSchema.optional(),
   validOn: z.string().date().optional(),
-});
+} as const;
+
+export const courseListQuerySchema = paginationQuerySchema.extend(courseFilterQueryFields);
+
+export const courseExportQuerySchema = z.object(courseFilterQueryFields);
 
 export const courseVersionsQuerySchema = z.object({
   courseId: z.string().trim().min(1),
@@ -759,21 +765,27 @@ export const linkExistingSidhCandidateSchema = z.object({
   dateOfBirth: z.string().date(),
 });
 
+const candidateFilterQueryFields = {
+  search: z.string().trim().optional(),
+  programId: z.string().trim().optional(),
+  centerId: z.string().trim().optional(),
+  referenceCourseId: z.string().trim().optional(),
+  state: z.string().trim().optional(),
+  district: z.string().trim().optional(),
+  gender: z.enum(CANDIDATE_GENDER_OPTIONS).optional(),
+  syncStatus: candidateSyncStatusSchema.optional(),
+  registrationMode: registrationModeSchema.optional(),
+  eligibleForBatchId: z.string().trim().optional(),
+} as const;
+
 export const candidateListQuerySchema = paginationQuerySchema
   .omit({ pageSize: true })
   .extend({
     pageSize: z.coerce.number().int().positive().max(200).default(20),
-    search: z.string().trim().optional(),
-    programId: z.string().trim().optional(),
-    centerId: z.string().trim().optional(),
-    referenceCourseId: z.string().trim().optional(),
-    state: z.string().trim().optional(),
-    district: z.string().trim().optional(),
-    gender: z.enum(CANDIDATE_GENDER_OPTIONS).optional(),
-    syncStatus: candidateSyncStatusSchema.optional(),
-    registrationMode: registrationModeSchema.optional(),
-    eligibleForBatchId: z.string().trim().optional(),
+    ...candidateFilterQueryFields,
   });
+
+export const candidateExportQuerySchema = z.object(candidateFilterQueryFields);
 
 const optionalFormStringSchema = z.preprocess(
   (value) => (value === null || value === undefined || value === "" ? undefined : value),
@@ -1019,6 +1031,8 @@ export type CreateCandidateRegistrationInput = z.infer<typeof createCandidateReg
 export type UpdateCandidateInput = z.infer<typeof updateCandidateSchema>;
 export type LinkExistingSidhCandidateInput = z.infer<typeof linkExistingSidhCandidateSchema>;
 export type CandidateListQuery = z.infer<typeof candidateListQuerySchema>;
+export type CandidateExportQuery = z.infer<typeof candidateExportQuerySchema>;
+export type CourseExportQuery = z.infer<typeof courseExportQuerySchema>;
 export type CandidateImportInput = z.infer<typeof candidateImportSchema>;
 export type BulkQueueCandidateSyncInput = z.infer<typeof bulkQueueCandidateSyncSchema>;
 export type SyncJobsQuery = z.infer<typeof syncJobsQuerySchema>;

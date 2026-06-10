@@ -7,6 +7,8 @@ import {
   IconChevronLeft,
   IconChevronRight,
   IconCircleCheck,
+  IconDownload,
+  IconFilter,
   IconHierarchy,
   IconLoader2,
   IconPencil,
@@ -197,6 +199,93 @@ const emptySchemeForm = {
   validTo: "",
 };
 
+type CourseListFilters = {
+  approvalStatus: string;
+  page: number;
+  pageSize: number;
+  programId: string;
+  search: string;
+  sectorId: string;
+  status: string;
+  validOn: string;
+};
+
+function buildQueryString(values: Record<string, string | number | undefined>) {
+  const params = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined) {
+      continue;
+    }
+
+    const normalized = String(value).trim();
+
+    if (!normalized) {
+      continue;
+    }
+
+    params.set(key, normalized);
+  }
+
+  return params.toString();
+}
+
+function buildCourseListQuery(filters: CourseListFilters) {
+  return buildQueryString({
+    page: filters.page,
+    pageSize: filters.pageSize,
+    search: filters.search || undefined,
+    status: filters.status || undefined,
+    sectorId: filters.sectorId || undefined,
+    programId: filters.programId || undefined,
+    approvalStatus: filters.approvalStatus || undefined,
+    validOn: filters.validOn || undefined,
+  });
+}
+
+function buildCourseExportQuery(filters: Omit<CourseListFilters, "page" | "pageSize">) {
+  return buildQueryString({
+    search: filters.search || undefined,
+    status: filters.status || undefined,
+    sectorId: filters.sectorId || undefined,
+    programId: filters.programId || undefined,
+    approvalStatus: filters.approvalStatus || undefined,
+    validOn: filters.validOn || undefined,
+  });
+}
+
+async function downloadCourseExport(filters: Omit<CourseListFilters, "page" | "pageSize">) {
+  const query = buildCourseExportQuery(filters);
+  const response = await fetch(`/api/v1/masters/courses/exports?${query}`, {
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    let message = "Unable to export courses";
+    try {
+      const payload = (await response.json()) as { message?: string };
+      if (payload.message) {
+        message = payload.message;
+      }
+    } catch {
+      // Keep default message when the response is not JSON.
+    }
+
+    throw new ClientApiError(message, response.status);
+  }
+
+  const blob = await response.blob();
+  const stamp = new Date().toISOString().slice(0, 10);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `courses_export_${stamp}.xlsx`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 const emptyCourseForm = {
   approvalDate: "",
   approvalStatus: "pending" as "approved" | "pending",
@@ -243,6 +332,12 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
   const [showEditModal, setShowEditModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
+  const [showAdvancedCourseFilters, setShowAdvancedCourseFilters] = useState(false);
+  const [courseSectorFilter, setCourseSectorFilter] = useState("");
+  const [courseProgramFilter, setCourseProgramFilter] = useState("");
+  const [courseApprovalFilter, setCourseApprovalFilter] = useState("");
+  const [courseValidOnFilter, setCourseValidOnFilter] = useState("");
+  const [isExportingCourses, setIsExportingCourses] = useState(false);
 
   const selectedProgram = programs.find((p) => p.programId === selectedProgramId) ?? null;
   const selectedSector = sectors.find((sector) => sector.sectorId === selectedSectorId) ?? null;
@@ -253,8 +348,60 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
     setActiveTab(tab);
     setSearchQuery("");
     setStatusFilter("all");
+    setShowAdvancedCourseFilters(false);
+    setCourseSectorFilter("");
+    setCourseProgramFilter("");
+    setCourseApprovalFilter("");
+    setCourseValidOnFilter("");
     if (tab === "courses") setCoursePage(1);
     if (tab !== "courses") setCourseViewMode("list");
+  }
+
+  const courseListFilters = useMemo<CourseListFilters>(
+    () => ({
+      approvalStatus: courseApprovalFilter,
+      page: coursePage,
+      pageSize: coursePageSize,
+      programId: courseProgramFilter,
+      search: activeTab === "courses" ? searchQuery : "",
+      sectorId: courseSectorFilter,
+      status: activeTab === "courses" && statusFilter !== "all" ? statusFilter : "",
+      validOn: courseValidOnFilter,
+    }),
+    [
+      activeTab,
+      courseApprovalFilter,
+      coursePage,
+      coursePageSize,
+      courseProgramFilter,
+      courseSectorFilter,
+      courseValidOnFilter,
+      searchQuery,
+      statusFilter,
+    ],
+  );
+
+  const activeCourseFilterCount = useMemo(
+    () =>
+      [
+        courseListFilters.search,
+        courseListFilters.status,
+        courseListFilters.sectorId,
+        courseListFilters.programId,
+        courseListFilters.approvalStatus,
+        courseListFilters.validOn,
+      ].filter(Boolean).length,
+    [courseListFilters],
+  );
+
+  function clearCourseFilters() {
+    setSearchQuery("");
+    setStatusFilter("all");
+    setCourseSectorFilter("");
+    setCourseProgramFilter("");
+    setCourseApprovalFilter("");
+    setCourseValidOnFilter("");
+    setCoursePage(1);
   }
 
   const activeList = useMemo(
@@ -400,25 +547,48 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
     }
   }
 
+  async function loadCourses() {
+    const courseData = await apiFetch<PagedResponse<CourseRecord>>(
+      `/api/v1/masters/courses?${buildCourseListQuery(courseListFilters)}`,
+    );
+    setCourses(courseData.items);
+    setCourseTotal(courseData.total);
+  }
+
   async function loadData() {
     setIsLoading(true);
     try {
-      const [programData, sectorData, schemeData, courseData] = await Promise.all([
+      const [programData, sectorData, schemeData] = await Promise.all([
         apiFetch<PagedResponse<ProgramRecord>>("/api/v1/masters/programs?page=1&pageSize=100"),
         apiFetch<PagedResponse<SectorRecord>>("/api/v1/masters/sectors?page=1&pageSize=100"),
         apiFetch<PagedResponse<SchemeRecord>>("/api/v1/masters/schemes?page=1&pageSize=100"),
-        apiFetch<PagedResponse<CourseRecord>>(`/api/v1/masters/courses?page=${coursePage}&pageSize=${coursePageSize}`),
         loadSidhFieldOptions(),
       ]);
       setPrograms(programData.items);
       setSectors(sectorData.items);
       setSchemes(schemeData.items);
-      setCourses(courseData.items);
-      setCourseTotal(courseData.total);
+      await loadCourses();
     } catch (error) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to load master data");
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  async function handleExportCourses() {
+    setIsExportingCourses(true);
+
+    try {
+      await downloadCourseExport(courseListFilters);
+      toast.success(
+        activeCourseFilterCount > 0
+          ? `Exported ${courseTotal.toLocaleString()} filtered course${courseTotal === 1 ? "" : "s"} to Excel`
+          : `Exported ${courseTotal.toLocaleString()} course${courseTotal === 1 ? "" : "s"} to Excel`,
+      );
+    } catch (error) {
+      toast.error(error instanceof ClientApiError ? error.message : "Unable to export courses");
+    } finally {
+      setIsExportingCourses(false);
     }
   }
 
@@ -452,7 +622,47 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
 
   useEffect(() => {
     void loadData();
-  }, [coursePage]);
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== "courses" || courseViewMode === "bulk_import") {
+      return;
+    }
+
+    let isMounted = true;
+
+    async function refreshCourses() {
+      setIsLoading(true);
+
+      try {
+        await loadCourses();
+      } catch (error) {
+        if (isMounted) {
+          toast.error(error instanceof ClientApiError ? error.message : "Unable to load courses");
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    void refreshCourses();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [
+    activeTab,
+    courseViewMode,
+    courseListFilters.approvalStatus,
+    courseListFilters.page,
+    courseListFilters.programId,
+    courseListFilters.search,
+    courseListFilters.sectorId,
+    courseListFilters.status,
+    courseListFilters.validOn,
+  ]);
 
   function openCreateModal() {
     if (activeTab === "programs") setProgramForm(createEmptyProgramForm(referenceEnums));
@@ -804,51 +1014,191 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
         </div>
 
         {!(activeTab === "courses" && courseViewMode === "bulk_import") ? (
-          <div className="flex shrink-0 flex-col gap-3 border-b border-slate-100 px-4 py-4 sm:px-5 md:flex-row md:items-center md:justify-between">
-            <div className="flex flex-wrap gap-1">
-              {(["all", "active", "inactive"] as const).map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => setStatusFilter(s)}
-                  className={cn(
-                    "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold capitalize transition",
-                    statusFilter === s
-                      ? "bg-sky-100 text-sky-700"
-                      : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
-                  )}
-                >
-                  {s === "all" ? "All items" : s}
-                  <span
+          <div className="shrink-0 space-y-3 border-b border-slate-100 px-4 py-4 sm:px-5">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="flex flex-wrap gap-1">
+                {(["all", "active", "inactive"] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => {
+                      setStatusFilter(s);
+                      if (activeTab === "courses") {
+                        setCoursePage(1);
+                      }
+                    }}
                     className={cn(
-                      "rounded-full px-1.5 py-0.5 text-[10px] font-bold",
-                      statusFilter === s ? "bg-sky-200/70 text-sky-800" : "bg-neutral-100 text-neutral-500"
+                      "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold capitalize transition",
+                      statusFilter === s
+                        ? "bg-sky-100 text-sky-700"
+                        : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
                     )}
                   >
-                    {statusCounts[s]}
-                  </span>
-                </button>
-              ))}
+                    {s === "all" ? "All items" : s}
+                    <span
+                      className={cn(
+                        "rounded-full px-1.5 py-0.5 text-[10px] font-bold",
+                        statusFilter === s ? "bg-sky-200/70 text-sky-800" : "bg-neutral-100 text-neutral-500"
+                      )}
+                    >
+                      {statusCounts[s]}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <div className="relative min-w-0 flex-1 sm:max-w-xs md:max-w-sm">
+                  <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      if (activeTab === "courses") {
+                        setCoursePage(1);
+                      }
+                    }}
+                    placeholder="Search by name or code"
+                    className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-8 text-sm text-slate-800 outline-none transition focus:border-sky-300 focus:bg-white"
+                  />
+                  {searchQuery ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchQuery("");
+                        if (activeTab === "courses") {
+                          setCoursePage(1);
+                        }
+                      }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
+                    >
+                      <IconX className="h-4 w-4" />
+                    </button>
+                  ) : null}
+                </div>
+                {activeTab === "courses" ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvancedCourseFilters((current) => !current)}
+                      className={cn(
+                        "inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition",
+                        showAdvancedCourseFilters || activeCourseFilterCount > 0
+                          ? "border-sky-200 bg-sky-50 text-sky-700"
+                          : "border-slate-200 bg-white text-slate-700 hover:border-sky-200 hover:text-sky-700",
+                      )}
+                    >
+                      <IconFilter className="h-4 w-4" />
+                      Advanced filters
+                      {activeCourseFilterCount > 0 ? (
+                        <span className="rounded-full bg-sky-600 px-2 py-0.5 text-[10px] font-semibold text-white">
+                          {activeCourseFilterCount}
+                        </span>
+                      ) : null}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isExportingCourses || courseTotal === 0}
+                      onClick={() => void handleExportCourses()}
+                      className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition hover:border-sky-200 hover:text-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isExportingCourses ? (
+                        <IconLoader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <IconDownload className="h-4 w-4" />
+                      )}
+                      Export Excel
+                      {courseTotal > 0 ? (
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                          {courseTotal.toLocaleString()}
+                        </span>
+                      ) : null}
+                    </button>
+                    {activeCourseFilterCount > 0 ? (
+                      <button
+                        type="button"
+                        onClick={clearCourseFilters}
+                        className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 hover:bg-slate-50"
+                      >
+                        <IconX className="h-4 w-4" />
+                        Clear all
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
             </div>
-            <div className="relative min-w-0 flex-1 sm:max-w-xs md:max-w-sm">
-              <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search by name or code"
-                className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-8 text-sm text-slate-800 outline-none transition focus:border-sky-300 focus:bg-white"
-              />
-              {searchQuery ? (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery("")}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
-                >
-                  <IconX className="h-4 w-4" />
-                </button>
-              ) : null}
-            </div>
+            {activeTab === "courses" && showAdvancedCourseFilters ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <label className="block space-y-1.5 text-sm">
+                    <span className="font-medium text-slate-700">Sector</span>
+                    <select
+                      value={courseSectorFilter}
+                      onChange={(event) => {
+                        setCourseSectorFilter(event.target.value);
+                        setCoursePage(1);
+                      }}
+                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-sky-300"
+                    >
+                      <option value="">All sectors</option>
+                      {sectors.map((sector) => (
+                        <option key={sector.sectorId} value={sector.sectorId}>
+                          {sector.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block space-y-1.5 text-sm">
+                    <span className="font-medium text-slate-700">Program</span>
+                    <select
+                      value={courseProgramFilter}
+                      onChange={(event) => {
+                        setCourseProgramFilter(event.target.value);
+                        setCoursePage(1);
+                      }}
+                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-sky-300"
+                    >
+                      <option value="">All programs</option>
+                      {programs.map((program) => (
+                        <option key={program.programId} value={program.programId}>
+                          {program.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block space-y-1.5 text-sm">
+                    <span className="font-medium text-slate-700">Approval status</span>
+                    <select
+                      value={courseApprovalFilter}
+                      onChange={(event) => {
+                        setCourseApprovalFilter(event.target.value);
+                        setCoursePage(1);
+                      }}
+                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-sky-300"
+                    >
+                      <option value="">All approval statuses</option>
+                      <option value="approved">Approved</option>
+                      <option value="pending">Pending</option>
+                      <option value="rejected">Rejected</option>
+                      <option value="expired">Expired</option>
+                    </select>
+                  </label>
+                  <label className="block space-y-1.5 text-sm">
+                    <span className="font-medium text-slate-700">Valid on</span>
+                    <input
+                      type="date"
+                      value={courseValidOnFilter}
+                      onChange={(event) => {
+                        setCourseValidOnFilter(event.target.value);
+                        setCoursePage(1);
+                      }}
+                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-sky-300"
+                    />
+                  </label>
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
 

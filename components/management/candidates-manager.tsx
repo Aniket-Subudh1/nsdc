@@ -675,6 +675,48 @@ async function downloadCandidateImportTemplate() {
   URL.revokeObjectURL(url);
 }
 
+async function downloadCandidateExport(filters: CandidateFilters) {
+  const query = buildQueryString({
+    search: filters.search || undefined,
+    syncStatus: filters.syncStatus || undefined,
+    state: filters.state || undefined,
+    district: filters.district || undefined,
+    centerId: filters.centerId || undefined,
+    referenceCourseId: filters.referenceCourseId || undefined,
+    gender: filters.gender || undefined,
+    registrationMode: filters.registrationMode || undefined,
+    programId: filters.programId || undefined,
+  });
+  const response = await fetch(`/api/v1/candidates/exports?${query}`, {
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    let message = "Unable to export learners";
+    try {
+      const payload = (await response.json()) as { message?: string };
+      if (payload.message) {
+        message = payload.message;
+      }
+    } catch {
+      // Keep default message when the response is not JSON.
+    }
+
+    throw createApiError(message, response.status);
+  }
+
+  const blob = await response.blob();
+  const stamp = new Date().toISOString().slice(0, 10);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `candidates_export_${stamp}.xlsx`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function createApiError(message: string, status = 400) {
   return new ClientApiError(message, status);
 }
@@ -922,6 +964,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   const [detailCandidate, setDetailCandidate] = useState<CandidateRecord | null>(null);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [isQueueingSelected, setIsQueueingSelected] = useState(false);
+  const [isExportingCandidates, setIsExportingCandidates] = useState(false);
   const [isLinkingCandidate, setIsLinkingCandidate] = useState(false);
   const [linkForm, setLinkForm] = useState(emptyLinkForm);
   const [centers, setCenters] = useState<CenterOption[]>([]);
@@ -1292,6 +1335,25 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
       setSuccessMessage("Sample upload sheet downloaded successfully");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Unable to download sample import workbook");
+    }
+  }
+
+  async function handleExportCandidates() {
+    setIsExportingCandidates(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    try {
+      await downloadCandidateExport(candidateFilters);
+      setSuccessMessage(
+        activeCandidateFilterCount > 0
+          ? `Exported ${candidatePagination.total.toLocaleString()} filtered learner${candidatePagination.total === 1 ? "" : "s"} to Excel`
+          : `Exported ${candidatePagination.total.toLocaleString()} learner${candidatePagination.total === 1 ? "" : "s"} to Excel`,
+      );
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Unable to export learners");
+    } finally {
+      setIsExportingCandidates(false);
     }
   }
 
@@ -1685,6 +1747,24 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                       {activeCandidateFilterCount > 0 ? (
                         <span className="rounded-full bg-sky-600 px-2 py-0.5 text-[10px] font-semibold text-white">
                           {activeCandidateFilterCount}
+                        </span>
+                      ) : null}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isExportingCandidates || candidatePagination.total === 0}
+                      onClick={() => void handleExportCandidates()}
+                      className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition hover:border-sky-200 hover:text-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isExportingCandidates ? (
+                        <IconLoader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <IconDownload className="h-4 w-4" />
+                      )}
+                      Export Excel
+                      {candidatePagination.total > 0 ? (
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                          {candidatePagination.total.toLocaleString()}
                         </span>
                       ) : null}
                     </button>

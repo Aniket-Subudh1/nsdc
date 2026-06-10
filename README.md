@@ -1,4 +1,4 @@
-# Gram Tarang_NSDC Training Platform
+# Gram Tarang- NSDC Skill Training Platform
 
 This repository contains the NSDC training management portal built on Next.js, MongoDB, and internal `/api/v1` APIs. The current workspace includes Sprint 01 authentication and user management, Sprint 02 master data, Sprint 03 candidate intake and sync queueing, and Sprint 04 batch creation, enrollment sync, and attendance staging.
 

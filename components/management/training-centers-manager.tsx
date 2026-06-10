@@ -82,12 +82,12 @@ type WorkflowFilter = "all" | CenterWorkflowState;
 const portalContent = {
   admin: {
     description:
-      "Add and manage your training locations, link programs, and keep government portal IDs ready for batch sync.",
+      "Add and manage your training locations, link programs, and keep NSDC_SIDH portal IDs ready for batch sync.",
     heading: "Training Centers",
   },
   training_partner: {
     description:
-      "Manage the centers in your scope, keep program links accurate, and store approved government portal IDs.",
+      "Manage the centers in your scope, keep program links accurate, and store approved NSDC_SIDH portal IDs.",
     heading: "Your Training Centers",
   },
 } as const;
@@ -376,7 +376,7 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
           active={workflowFilter === "verified"}
         />
         <StatCard
-          label="Ready for government sync"
+          label="Ready for NSDC_SIDH sync"
           value={isLoading ? null : stats.sidhReady}
           icon={<IconCircleCheck className="h-5 w-5" />}
           onClick={() => {
@@ -441,7 +441,7 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 bg-slate-50/80">
-                {["Center", "Code", "Location", "Programs", "Government ID", "Setup status", "Status", "Updated", ""].map(
+                {["Center", "Code", "Location", "Programs", "NSDC_SIDH ID", "Setup status", "Status", "Updated", ""].map(
                   (h) => (
                     <th
                       key={h}

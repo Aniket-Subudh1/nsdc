@@ -487,7 +487,7 @@ export default function AssessmentUpdateManager({ portal }: AssessmentUpdateMana
         {selectedBatch && !selectedBatch.sidhBatchId ? (
           <div className="mt-4 flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
             <IconAlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            <p>Sync this batch to SIDH before submitting assessment data. Assessment updates require a government batch ID.</p>
+            <p>Sync this batch to SIDH before submitting assessment data. Assessment updates require an NSDC_SIDH batch ID.</p>
           </div>
         ) : null}
       </section>

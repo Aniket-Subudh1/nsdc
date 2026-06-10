@@ -6,7 +6,7 @@ import { motion } from "motion/react";
 
 import { Sidebar, SidebarBody, SidebarLink, SidebarLogoutLink, useSidebar } from "../ui/sidebar";
 import { cn } from "@/lib/utils";
-import { PLATFORM_NAME } from "@/constants/branding";
+import { PlatformName } from "@/components/branding/platform-name";
 import { SidebarProps } from "@/types/sidebar";
 
 function SidebarContent({
@@ -81,9 +81,9 @@ export const Logo = () => {
       <motion.span
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        className="whitespace-pre font-semibold text-black text-sm"
+        className="font-semibold text-black text-xs leading-tight"
       >
-        {PLATFORM_NAME}
+        <PlatformName />
       </motion.span>
     </div>
   );

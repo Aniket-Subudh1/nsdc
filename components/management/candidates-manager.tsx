@@ -402,12 +402,12 @@ type CandidateWorkspaceTab = "all_candidates" | "bulk_upload" | "skill_india_que
 const portalContent = {
   admin: {
     description:
-      "Register learners one at a time or in bulk, then send them to the government portal when ready.",
+      "Register learners one at a time or in bulk, then send them to the NSDC_SIDH portal when ready.",
     heading: "Learners",
   },
   training_partner: {
     description:
-      "Manage learners at your centers — register, import from Excel, and track government portal sync.",
+      "Manage learners at your centers — register, import from Excel, and track NSDC_SIDH portal sync.",
     heading: "Learners",
   },
 } as const;
@@ -777,7 +777,7 @@ function getLearnerActionState(candidate: CandidateRecord): LearnerActionState {
       canQueue: false,
       canSelect: false,
       canViewQueue: false,
-      disableReason: "This learner was linked from the government portal",
+      disableReason: "This learner was linked from the NSDC_SIDH portal",
       nextStep: "No sync needed — enroll in a batch when ready",
       status,
       statusLabel: "Linked externally",
@@ -789,7 +789,7 @@ function getLearnerActionState(candidate: CandidateRecord): LearnerActionState {
       canQueue: false,
       canSelect: false,
       canViewQueue: false,
-      disableReason: "Already registered on the government portal",
+      disableReason: "Already registered on the NSDC_SIDH portal",
       nextStep: "Enroll this learner in a training batch",
       status,
       statusLabel: "Registered",
@@ -823,7 +823,7 @@ function getLearnerActionState(candidate: CandidateRecord): LearnerActionState {
     canQueue: true,
     canSelect: true,
     canViewQueue: false,
-    nextStep: "Select and add to government queue",
+    nextStep: "Select and add to NSDC_SIDH queue",
     status,
     statusLabel: "Ready to send",
   };
@@ -1411,10 +1411,10 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
       });
       setShowLinkModal(false);
       setLinkForm(emptyLinkForm);
-      setSuccessMessage("Learner linked to existing government ID");
+      setSuccessMessage("Learner linked to existing NSDC_SIDH ID");
       await refreshVisibleData();
     } catch (error) {
-      setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to link existing government ID");
+      setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to link existing NSDC_SIDH ID");
     } finally {
       setIsLinkingCandidate(false);
     }
@@ -1428,7 +1428,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
       await apiFetch<SyncJobRecord>(`/api/v1/candidates/${candidateId}/sync`, {
         method: "POST",
       });
-      setSuccessMessage("Learner added to the government queue. Open Sync queue and run sync to submit.");
+      setSuccessMessage("Learner added to the NSDC_SIDH queue. Open Sync queue and run sync to submit.");
       await refreshVisibleData();
     } catch (error) {
       setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to add candidate to the Skill India queue");
@@ -1450,7 +1450,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
       setSuccessMessage(
         result.queuedCount === 0
           ? "No selected learners were added to the queue — they may already be queued or registered"
-          : `${result.queuedCount} learner${result.queuedCount === 1 ? "" : "s"} added to the government queue. Open Sync queue and run sync to submit.`,
+          : `${result.queuedCount} learner${result.queuedCount === 1 ? "" : "s"} added to the NSDC_SIDH queue. Open Sync queue and run sync to submit.`,
       );
       await refreshVisibleData();
     } catch (error) {
@@ -1549,7 +1549,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
             className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-sky-300 hover:text-sky-700"
           >
             <IconLink className="h-4 w-4" />
-            Link govt. ID
+            Link NSDC_SIDH ID
           </button>
           <button
             type="button"
@@ -1939,7 +1939,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                   <IconLoader2 className="h-6 w-6 animate-spin" />
                 </div>
               ) : candidates.length === 0 ? (
-                <EmptyState message="No learners match your filters. Register one, import from Excel, or link an existing government ID." />
+                <EmptyState message="No learners match your filters. Register one, import from Excel, or link an existing NSDC_SIDH ID." />
               ) : (
                 <>
                   <div className="hidden overflow-x-auto rounded-2xl border border-slate-200 md:block">
@@ -1949,7 +1949,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                           <th className="w-10 px-4 py-3">Select</th>
                           <th className="px-4 py-3">Learner</th>
                           <th className="px-4 py-3">Mobile</th>
-                          <th className="px-4 py-3">Government ID</th>
+                          <th className="px-4 py-3">NSDC_SIDH ID</th>
                           <th className="px-4 py-3">Status</th>
                           <th className="px-4 py-3">Next step</th>
                           <th className="px-4 py-3 text-right">Actions</th>
@@ -1974,7 +1974,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                                   type="checkbox"
                                   checked={isSelected}
                                   disabled={!actionState.canSelect}
-                                  title={actionState.disableReason ?? "Select to add to government queue"}
+                                  title={actionState.disableReason ?? "Select to add to NSDC_SIDH queue"}
                                   onChange={(event) => {
                                     setSelectedCandidateIds((current) =>
                                       event.target.checked
@@ -2158,7 +2158,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                     <strong>Training center</strong>, and optional <strong>Course (reference only)</strong>
                   </li>
                   <li>Upload the file — we check every row and show errors in plain language</li>
-                  <li>Save valid rows, then send learners to the government portal from All learners</li>
+                  <li>Save valid rows, then send learners to the NSDC_SIDH portal from All learners</li>
                 </ol>
               </div>
 
@@ -2230,7 +2230,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                       <p className="text-sm font-semibold text-slate-900">{currentImportJob.fileName}</p>
                       <p className="text-xs text-slate-500">
                         {currentImportJob.status === "committed"
-                          ? `${currentImportJob.committedRows} learner${currentImportJob.committedRows === 1 ? "" : "s"} saved — go to All learners to send them to the government portal`
+                          ? `${currentImportJob.committedRows} learner${currentImportJob.committedRows === 1 ? "" : "s"} saved — go to All learners to send them to the NSDC_SIDH portal`
                           : `${currentImportJob.validRows} of ${currentImportJob.totalRows} rows are ready to save`}
                       </p>
                     </div>
@@ -2346,13 +2346,13 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
             <div className="space-y-4">
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                 Learners must be added to this queue from the <strong>All learners</strong> tab first. Then use{" "}
-                <strong>Run sync</strong> below to submit them to the government portal.
+                <strong>Run sync</strong> below to submit them to the NSDC_SIDH portal.
               </div>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <h2 className="text-base font-semibold text-slate-900">Government sync queue</h2>
+                  <h2 className="text-base font-semibold text-slate-900">NSDC_SIDH sync queue</h2>
                   <p className="mt-0.5 text-sm text-slate-500">
-                    Submit queued learners to the government portal and track delivery status.
+                    Submit queued learners to the NSDC_SIDH portal and track delivery status.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -2479,8 +2479,8 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
           title={editingCandidateId ? "Edit learner" : "Register learner"}
           subtitle={
             editingCandidateId
-              ? "Update learner details before sending to the government portal."
-              : "Add one learner with the same fields used for government portal registration."
+              ? "Update learner details before sending to the NSDC_SIDH portal."
+              : "Add one learner with the same fields used for NSDC_SIDH portal registration."
           }
           onClose={closeLearnerFormModal}
         >
@@ -2767,7 +2767,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                       value={detailCandidate.contactDetails.email ?? "Not provided"}
                     />
                     <DetailMeta
-                      label="Government ID"
+                      label="NSDC_SIDH ID"
                       value={detailCandidate.sidhCandidateId ?? "Not assigned yet"}
                     />
                     <DetailMeta
@@ -2841,7 +2841,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                     {actionState.canQueue ? (
                       <LearnerActionButton
                         icon={<IconSend className="h-3.5 w-3.5" />}
-                        label="Add to government queue"
+                        label="Add to NSDC_SIDH queue"
                         onClick={() => void handleQueueSync(detailCandidate.candidateId)}
                         tone="primary"
                       />
@@ -2859,7 +2859,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                     {!detailCandidate.sidhCandidateId && detailCandidate.registrationMode !== "existing_sidh_link" ? (
                       <LearnerActionButton
                         icon={<IconLink className="h-3.5 w-3.5" />}
-                        label="Link existing govt. ID"
+                        label="Link existing NSDC_SIDH ID"
                         onClick={() => {
                           setShowDetailModal(false);
                           openLinkModal(detailCandidate);
@@ -2878,12 +2878,12 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
         <Modal
           icon={<IconLink className="h-5 w-5 text-sky-600" />}
           iconBg="bg-sky-50"
-          title="Link existing government ID"
-          subtitle="Connect a learner who is already registered on the government portal."
+          title="Link existing NSDC_SIDH ID"
+          subtitle="Connect a learner who is already registered on the NSDC_SIDH portal."
           onClose={() => setShowLinkModal(false)}
         >
           <form className="space-y-4" onSubmit={handleLinkExistingCandidate}>
-            <FormField label="Government candidate ID *">
+            <FormField label="NSDC_SIDH candidate ID *">
               <input
                 value={linkForm.sidhCandidateId}
                 onChange={(event) => setLinkForm((current) => ({ ...current, sidhCandidateId: event.target.value }))}
@@ -3081,8 +3081,8 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
 function WorkflowBanner({ onGoToSync }: { onGoToSync: () => void }) {
   const steps = [
     { label: "Register", detail: "Add one learner or import from Excel" },
-    { label: "Select & queue", detail: "Tick ready learners and add to government queue" },
-    { label: "Run sync", detail: "Submit queued learners to the government portal" },
+    { label: "Select & queue", detail: "Tick ready learners and add to NSDC_SIDH queue" },
+    { label: "Run sync", detail: "Submit queued learners to the NSDC_SIDH portal" },
   ];
 
   return (

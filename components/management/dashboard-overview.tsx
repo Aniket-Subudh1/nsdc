@@ -220,14 +220,14 @@ const ACTIVITY_LABELS: Record<string, string> = {
   "batch.updated": "Training batch details were updated",
   "batch.candidates.added": "Learners were added to a batch",
   "batch.candidate.removed": "A learner was removed from a batch",
-  "batch.sync.queued": "Batch sync to government portal was started",
-  "batch.sync.succeeded": "Batch synced successfully to government portal",
+  "batch.sync.queued": "Batch sync to NSDC_SIDH portal was started",
+  "batch.sync.succeeded": "Batch synced successfully to NSDC_SIDH portal",
   "batch.enrollment_sync.queued": "Learner enrollment sync was started",
   "attendance.import.staged": "An attendance file was uploaded",
   "attendance.import.committed": "Attendance records were saved",
   "candidate.created": "A new learner was registered",
   "candidate.updated": "Learner details were updated",
-  "candidate.sync.queued": "Learner sync to government portal was started",
+  "candidate.sync.queued": "Learner sync to NSDC_SIDH portal was started",
   "candidate.sync.succeeded": "Learner synced successfully",
   "candidate.import.committed": "Bulk learner import was completed",
   "masters.program.created": "A new program was added",
@@ -400,7 +400,7 @@ export default function DashboardOverview({ portal }: DashboardOverviewProps) {
           color="green"
         />
         <StatusCard
-          label="Pending government sync"
+          label="Pending NSDC_SIDH sync"
           value={loading ? null : stats?.highlights.pendingGovernmentSync ?? 0}
           icon={<IconAlertCircle className="h-4 w-4 text-amber-600" />}
           color="amber"
@@ -424,7 +424,7 @@ export default function DashboardOverview({ portal }: DashboardOverviewProps) {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <ChartPanel title="Batch enrollment on government portal">
+        <ChartPanel title="Batch enrollment on NSDC_SIDH portal">
           <BarChart
             items={enrollmentChartItems.length > 0 ? enrollmentChartItems : [{ label: "No enrollments yet", value: 0, colorClass: "bg-neutral-300" }]}
             loading={loading}

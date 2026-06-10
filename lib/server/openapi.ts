@@ -33,10 +33,10 @@ export function getOpenApiDocument() {
   return {
     openapi: "3.0.3",
     info: {
-      title: "Gram Tarang_NSDC Training Platform API",
+      title: "Gram Tarang- NSDC Skill Training Platform API",
       version: "0.6.0",
       description:
-        "Authentication, master data, candidate intake, sync processing, batch operations, enrollment management, and attendance ingestion for the Gram Tarang_NSDC Training Platform.",
+        "Authentication, master data, candidate intake, sync processing, batch operations, enrollment management, and attendance ingestion for the Gram Tarang- NSDC Skill Training Platform.",
     },
     servers: [{ url: "/api/v1" }],
     tags: [

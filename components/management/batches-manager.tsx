@@ -291,7 +291,7 @@ type SyncFilter = "" | "attention" | "pending" | "synced";
 
 const portalContent = {
   admin: {
-    description: "Create training batches, sync them to the government portal, and enroll registered learners.",
+    description: "Create training batches, sync them to the NSDC_SIDH portal, and enroll registered learners.",
     heading: "Training Batches",
   },
   training_partner: {
@@ -1391,7 +1391,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
       const status = await apiFetch<BatchSyncStatus>(`/api/v1/batches/${batchId}/status`);
 
       if (status.batchSync.status === "synced" && status.sidhBatchId) {
-        toast.success(`Batch pushed to SIDH successfully. Government batch ID: ${status.sidhBatchId}`);
+        toast.success(`Batch pushed to SIDH successfully. NSDC_SIDH batch ID: ${status.sidhBatchId}`);
         await loadData();
         if (selectedBatch?.batchId === batchId) {
           await handleViewBatch(batchId, false);
@@ -1824,7 +1824,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
             ))}
           </FieldSelect>
         </div>
-        <ReadOnlyField label="Government course ID" value={selectedCourse?.sidhCourseId || selectedCourse?.courseCode || ""} />
+        <ReadOnlyField label="NSDC_SIDH course ID" value={selectedCourse?.sidhCourseId || selectedCourse?.courseCode || ""} />
         <ReadOnlyField label="Training center ID" value={selectedCenter?.sidhTcId ?? ""} />
         <div className="space-y-2">
           <Label htmlFor="startDate">Start date</Label>
@@ -1938,7 +1938,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
 
       <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
         <h3 className="text-sm font-semibold text-slate-900">SIDH batch parameters</h3>
-        <p className="mt-1 text-xs text-slate-500">These values are sent to the government portal when you push the batch.</p>
+        <p className="mt-1 text-xs text-slate-500">These values are sent to the NSDC_SIDH portal when you push the batch.</p>
         <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div className="space-y-2">
             <Label htmlFor="assessmentMode">Assessment mode</Label>
@@ -1994,7 +1994,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
       </div>
       {sidhPayloadPreview ? (
         <details className="mt-4 rounded-xl border border-slate-200 bg-slate-50">
-          <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-slate-700">Preview government portal payload</summary>
+          <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-slate-700">Preview NSDC_SIDH portal payload</summary>
           <div className="border-t border-slate-200 p-4">
             <SidhPayloadPreview payload={sidhPayloadPreview} />
           </div>
@@ -2044,7 +2044,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs sm:text-sm">
           <li>Create and save the batch locally.</li>
           <li>Review or edit the batch details and SIDH payload preview.</li>
-          <li>Push the batch to SIDH and store the returned government batch ID.</li>
+          <li>Push the batch to SIDH and store the returned NSDC_SIDH batch ID.</li>
           <li>Enroll learners after the batch is synced.</li>
         </ol>
       </section>
@@ -2269,7 +2269,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
           icon={<IconEdit className="h-5 w-5 text-sky-600" />}
           iconBg="bg-sky-50"
           title="Edit batch"
-          subtitle="Update batch details and SIDH parameters before pushing to the government portal."
+          subtitle="Update batch details and SIDH parameters before pushing to the NSDC_SIDH portal."
           onClose={() => {
             setShowEditModal(false);
             setEditingBatchId(null);
@@ -2331,7 +2331,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
               {selectedBatch.sidhBatchId ? (
                 <p className="mt-1 break-all font-mono text-lg font-bold text-emerald-800">{selectedBatch.sidhBatchId}</p>
               ) : (
-                <p className="mt-1 text-sm text-amber-700">Not pushed yet. Edit the batch and push to SIDH to receive the government batch ID.</p>
+                <p className="mt-1 text-sm text-amber-700">Not pushed yet. Edit the batch and push to SIDH to receive the NSDC_SIDH batch ID.</p>
               )}
             </div>
             <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
@@ -2415,7 +2415,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                     <tr className="border-b border-slate-100 bg-slate-50 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500">
                       <th className="px-3 py-2">Learner</th>
                       <th className="px-3 py-2">Mobile</th>
-                      <th className="px-3 py-2">Govt. ID</th>
+                      <th className="px-3 py-2">NSDC_SIDH ID</th>
                       <th className="px-3 py-2">Enrollment</th>
                       <th className="px-3 py-2 text-right">Actions</th>
                     </tr>

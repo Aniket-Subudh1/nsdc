@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { getPortalRedirectPath } from "@/lib/auth-redirect";
 import type { RoleKey } from "@/lib/server/rbac";
-import { PLATFORM_NAME } from "@/constants/branding";
+import { PlatformName } from "@/components/branding/platform-name";
 import { LoginPageProps } from "@/types/auth";
 import { Mail, Lock, Eye, EyeOff, ArrowRight, Building2, Loader2, ShieldCheck } from "lucide-react";
 
@@ -245,8 +245,8 @@ export default function LoginPage({
 
       {/* Heading block */}
       <div className="mb-7">
-        <p className="text-[10px] font-bold text-[#3b82f6] tracking-[0.3em] uppercase mb-2.5">
-          {PLATFORM_NAME}
+        <p className="text-[10px] font-bold text-[#3b82f6] tracking-[0.2em] uppercase mb-2.5 leading-snug">
+          <PlatformName />
         </p>
         <h2 className="text-[#0a1628] text-[22px] md:text-[24px] font-bold tracking-tight leading-tight mb-2">
           {heading}

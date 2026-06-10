@@ -1,7 +1,8 @@
 import Image from "next/image";
 import { ShieldCheck } from "lucide-react";
 
-import { LOGO_ALT, PLATFORM_NAME, POWERED_BY_LABEL } from "@/constants/branding";
+import { PlatformName } from "@/components/branding/platform-name";
+import { LOGO_ALT, POWERED_BY_LABEL } from "@/constants/branding";
 
 type ForgotPasswordBrandPanelProps = {
   description: string;
@@ -25,8 +26,11 @@ export function ForgotPasswordBrandPanel({ description }: ForgotPasswordBrandPan
         </div>
 
         <div className="max-w-85">
-          <h1 className="text-[#0f172a] text-[30px] xl:text-[34px] font-black leading-[1.15] tracking-tight mb-6">
-            {PLATFORM_NAME}
+          <h1 className="text-[#0f172a] font-black leading-[1.15] tracking-tight mb-6">
+            <PlatformName
+              line1ClassName="block text-[30px] xl:text-[34px]"
+              line2ClassName="block text-[24px] xl:text-[28px] mt-1"
+            />
           </h1>
           <p className="text-[#64748b] text-[14px] leading-[1.85] font-normal">{description}</p>
         </div>

@@ -2035,8 +2035,8 @@ function SchemesTable({
   schemes: SchemeRecord[];
 }) {
   const headers = readOnly
-    ? ["Scheme", "Code", "Government ID", "Setup status", "Valid until", "Status"]
-    : ["Scheme", "Code", "Government ID", "Setup status", "Valid until", "Status", ""];
+    ? ["Scheme", "Code", "NSDC_SIDH ID", "Setup status", "Valid until", "Status"]
+    : ["Scheme", "Code", "NSDC_SIDH ID", "Setup status", "Valid until", "Status", ""];
 
   return (
     <table className="w-full text-sm">

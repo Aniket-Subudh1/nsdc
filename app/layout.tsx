@@ -17,7 +17,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: PLATFORM_NAME,
-  description: "Manage learners, training batches, and center operations on the Gram Tarang NSDC training platform",
+  description: "Manage learners, training batches, and center operations on the Gram Tarang- NSDC Skill Training Platform",
 };
 
 export default function RootLayout({

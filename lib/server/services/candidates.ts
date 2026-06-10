@@ -382,21 +382,21 @@ async function resolveCandidateRegistrationContext(
 
 function assertLearnerMutableBeforeSidh(candidate: CandidateLike) {
   if (candidate.registrationMode === "existing_sidh_link") {
-    throw new ApiError(409, "CANDIDATE_NOT_MUTABLE", "Linked government portal learners cannot be changed here");
+    throw new ApiError(409, "CANDIDATE_NOT_MUTABLE", "Linked NSDC_SIDH portal learners cannot be changed here");
   }
 
   if (candidate.sidhCandidateId) {
-    throw new ApiError(409, "CANDIDATE_ALREADY_SYNCED", "Learner is already registered on the government portal");
+    throw new ApiError(409, "CANDIDATE_ALREADY_SYNCED", "Learner is already registered on the NSDC_SIDH portal");
   }
 
   const status = String(candidate.syncState?.status ?? "not_queued");
 
   if (status === "queued" || status === "processing") {
-    throw new ApiError(409, "CANDIDATE_SYNC_IN_PROGRESS", "Learner is already in the government sync queue");
+    throw new ApiError(409, "CANDIDATE_SYNC_IN_PROGRESS", "Learner is already in the NSDC_SIDH sync queue");
   }
 
   if (status === "synced" || status === "succeeded") {
-    throw new ApiError(409, "CANDIDATE_ALREADY_SYNCED", "Learner is already registered on the government portal");
+    throw new ApiError(409, "CANDIDATE_ALREADY_SYNCED", "Learner is already registered on the NSDC_SIDH portal");
   }
 }
 

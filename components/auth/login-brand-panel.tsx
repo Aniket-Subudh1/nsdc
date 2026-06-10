@@ -1,7 +1,8 @@
 import Image from "next/image";
 import { CheckCircle2, ShieldCheck } from "lucide-react";
 
-import { LOGO_ALT, PLATFORM_NAME, POWERED_BY_LABEL } from "@/constants/branding";
+import { PlatformName } from "@/components/branding/platform-name";
+import { LOGO_ALT, POWERED_BY_LABEL } from "@/constants/branding";
 
 export function LoginBrandPanel() {
   return (
@@ -28,7 +29,10 @@ export function LoginBrandPanel() {
         <div>
           <div className="mb-5">
             <h1 className="text-white font-bold leading-tight tracking-tight">
-              <span className="block text-[34px] xl:text-[40px] leading-[1.1]">{PLATFORM_NAME}</span>
+              <PlatformName
+                line1ClassName="block text-[34px] xl:text-[40px] leading-[1.1]"
+                line2ClassName="block text-[28px] xl:text-[32px] leading-[1.1] mt-1"
+              />
             </h1>
             <div className="mt-3 flex items-center gap-3">
               <div className="h-[2px] w-12 bg-[#2563eb] rounded-full" />

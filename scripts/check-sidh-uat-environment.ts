@@ -91,7 +91,7 @@ function summarizeBody(text: string) {
   }
 }
 
-async function runCheck(name: string, fn: () => Promise<string | void>): Promise<CheckResult> {
+async function runCheck(name: string, fn: () => Promise<string | undefined>): Promise<CheckResult> {
   try {
     const detail = await fn();
     return { name, ok: true, detail };

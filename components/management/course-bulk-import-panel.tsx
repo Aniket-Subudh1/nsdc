@@ -202,6 +202,7 @@ export default function CourseBulkImportPanel({ onImportCommitted }: CourseBulkI
       return;
     }
 
+    const importJobId = importJob.importJobId;
     let isMounted = true;
 
     async function refreshImportRows() {
@@ -209,7 +210,7 @@ export default function CourseBulkImportPanel({ onImportCommitted }: CourseBulkI
 
       try {
         const rowData = await fetchCourseImportRows(
-          importJob.importJobId,
+          importJobId,
           importPagination.page,
           importPagination.pageSize,
           importRowStatusFilter,

@@ -129,7 +129,10 @@ async function ensureScriptMasterData(actor: Awaited<ReturnType<typeof resolveWo
       requestId,
       status: "active",
     });
-    sector = { sectorId: created.sectorId };
+    sector = await SectorModel.findOne({ sectorId: created.sectorId }).lean();
+    if (!sector) {
+      throw new Error(`Failed to load created sector ${created.sectorId}`);
+    }
     console.log(`Created sector: ${created.sectorId}`);
   } else {
     console.log(`Reusing sector: ${sector.sectorId}`);
@@ -153,7 +156,10 @@ async function ensureScriptMasterData(actor: Awaited<ReturnType<typeof resolveWo
       status: "active",
       syncToSidh: true,
     });
-    program = { programId: created.programId, name: created.name };
+    program = await ProgramModel.findOne({ programId: created.programId }).lean();
+    if (!program) {
+      throw new Error(`Failed to load created program ${created.programId}`);
+    }
     console.log(`Created program: ${created.programId}`);
   } else {
     console.log(`Reusing program: ${program.programId}`);
@@ -178,7 +184,10 @@ async function ensureScriptMasterData(actor: Awaited<ReturnType<typeof resolveWo
       validFrom: validityStartDate,
       validTo: validityEndDate,
     });
-    scheme = { schemeId: created.schemeId };
+    scheme = await SchemeModel.findOne({ schemeId: created.schemeId }).lean();
+    if (!scheme) {
+      throw new Error(`Failed to load created scheme ${created.schemeId}`);
+    }
     console.log(`Created scheme: ${created.schemeId}`);
   } else {
     console.log(`Reusing scheme: ${scheme.schemeId}`);
@@ -210,7 +219,10 @@ async function ensureScriptMasterData(actor: Awaited<ReturnType<typeof resolveWo
       validityEndDate,
       validityStartDate,
     });
-    course = { courseId: created.courseId, sidhCourseId: created.sidhCourseId };
+    course = await CourseModel.findOne({ courseId: created.courseId }).lean();
+    if (!course) {
+      throw new Error(`Failed to load created course ${created.courseId}`);
+    }
     console.log(`Created course: ${created.courseId} (${created.sidhCourseId})`);
   } else {
     const existingCourse = await CourseModel.findOne({ courseId: course.courseId });
@@ -242,7 +254,10 @@ async function ensureScriptMasterData(actor: Awaited<ReturnType<typeof resolveWo
       state: "Odisha",
       status: "active",
     });
-    center = { centerId: created.centerId, verifiedForSidh: created.verifiedForSidh };
+    center = await TrainingCenterModel.findOne({ centerId: created.centerId }).lean();
+    if (!center) {
+      throw new Error(`Failed to load created training center ${created.centerId}`);
+    }
     console.log(`Created training center: ${created.centerId} (${options.sidhTcId})`);
   } else {
     console.log(`Reusing training center: ${center.centerId} (${center.sidhTcId ?? options.sidhTcId})`);

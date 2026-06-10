@@ -1224,7 +1224,7 @@ function RoleBadges({
   portal: "admin" | "training_partner";
   roles: RoleKey[];
 }) {
-  const displayRoles =
+  const displayRoles: RoleKey[] =
     portal === "admin"
       ? [getAdminUserType(roles) === "admin" ? "platform_admin" : "center_manager"]
       : roles;

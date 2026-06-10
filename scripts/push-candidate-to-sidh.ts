@@ -11,15 +11,25 @@ import { serializeUser } from "@/lib/server/services/session";
 
 loadEnvConfig(process.cwd());
 
+type CandidateGender = "Male" | "Female" | "Transgender";
+
 type CliOptions = {
   candidateId?: string;
   create: boolean;
   dryRun: boolean;
   fatherName: string;
   firstName: string;
-  gender: string;
+  gender: CandidateGender;
   mobile?: string;
 };
+
+function parseGender(value: string | undefined, fallback: CandidateGender): CandidateGender {
+  if (value === "Male" || value === "Female" || value === "Transgender") {
+    return value;
+  }
+
+  return fallback;
+}
 
 function parseOptions(): CliOptions {
   const args = process.argv.slice(2);
@@ -93,13 +103,13 @@ function parseOptions(): CliOptions {
     }
 
     if (argument === "--gender") {
-      options.gender = args[index + 1]?.trim() || options.gender;
+      options.gender = parseGender(args[index + 1]?.trim(), options.gender);
       index += 1;
       continue;
     }
 
     if (argument.startsWith("--gender=")) {
-      options.gender = argument.split("=")[1]?.trim() || options.gender;
+      options.gender = parseGender(argument.split("=")[1]?.trim(), options.gender);
     }
   }
 
@@ -172,7 +182,7 @@ async function resolveCandidateId(actor: Awaited<ReturnType<typeof resolveWorker
       },
       locationDetails: {
         centerName: "UAT Script Center",
-        city: "Bhubaneswar",
+        district: "Bhubaneswar",
         state: "Odisha",
       },
       personalDetails: {

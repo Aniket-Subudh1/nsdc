@@ -33,10 +33,10 @@ export function getOpenApiDocument() {
   return {
     openapi: "3.0.3",
     info: {
-      title: "NSDC Training Management Portal API",
+      title: "Gram Tarang_NSDC Training Platform API",
       version: "0.6.0",
       description:
-        "Authentication, master data, candidate intake, sync processing, batch operations, enrollment management, and attendance ingestion for the NSDC training management platform.",
+        "Authentication, master data, candidate intake, sync processing, batch operations, enrollment management, and attendance ingestion for the Gram Tarang_NSDC Training Platform.",
     },
     servers: [{ url: "/api/v1" }],
     tags: [

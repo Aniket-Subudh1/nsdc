@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
 
+import { PLATFORM_NAME } from "@/constants/branding";
 import { getEnv } from "@/lib/server/env";
 
 const globalMailer = globalThis as typeof globalThis & {
@@ -42,15 +43,14 @@ export async function sendPasswordResetOtpEmail(input: {
   const env = getEnv();
   const portalLabel = input.portal === "admin" ? "Admin" : "Training Partner";
   const ttlMinutes = env.PASSWORD_RESET_OTP_TTL_MINUTES;
-
   await getTransport().sendMail({
     from: env.SMTP_FROM,
     to: input.email,
-    subject: `NSDC Portal ${portalLabel} password reset OTP`,
-    text: `Hello ${input.name},\n\nYour NSDC Portal ${portalLabel} password reset OTP is ${input.otp}. It is valid for ${ttlMinutes} minutes. If you did not request this, please ignore this email.`,
+    subject: `${PLATFORM_NAME} ${portalLabel} password reset OTP`,
+    text: `Hello ${input.name},\n\nYour ${PLATFORM_NAME} ${portalLabel} password reset OTP is ${input.otp}. It is valid for ${ttlMinutes} minutes. If you did not request this, please ignore this email.`,
     html: `
       <div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:560px;margin:0 auto;padding:24px;">
-        <h2 style="margin:0 0 12px;font-size:24px;">Reset your NSDC Portal password</h2>
+        <h2 style="margin:0 0 12px;font-size:24px;">Reset your ${PLATFORM_NAME} password</h2>
         <p style="margin:0 0 16px;">Hello ${input.name},</p>
         <p style="margin:0 0 16px;">Use the OTP below to reset your ${portalLabel} portal password.</p>
         <div style="margin:20px 0;padding:16px 20px;border-radius:12px;background:#eff6ff;border:1px solid #bfdbfe;font-size:28px;font-weight:700;letter-spacing:8px;text-align:center;">${input.otp}</div>

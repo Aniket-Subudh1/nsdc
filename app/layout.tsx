@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+
+import { PLATFORM_NAME } from "@/constants/branding";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Toaster } from "sonner";
 import "./globals.css";
@@ -14,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "NSDC Training Platform",
-  description: "Manage learners, training batches, and center operations",
+  title: PLATFORM_NAME,
+  description: "Manage learners, training batches, and center operations on the Gram Tarang NSDC training platform",
 };
 
 export default function RootLayout({

@@ -6,6 +6,7 @@ import { motion } from "motion/react";
 
 import { Sidebar, SidebarBody, SidebarLink, SidebarLogoutLink, useSidebar } from "../ui/sidebar";
 import { cn } from "@/lib/utils";
+import { PLATFORM_NAME } from "@/constants/branding";
 import { SidebarProps } from "@/types/sidebar";
 
 function SidebarContent({
@@ -82,7 +83,7 @@ export const Logo = () => {
         animate={{ opacity: 1 }}
         className="whitespace-pre font-semibold text-black text-sm"
       >
-        Gram Tarang Training Center
+        {PLATFORM_NAME}
       </motion.span>
     </div>
   );

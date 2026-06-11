@@ -13,3 +13,8 @@ export const AUTH_BRAND_GALLERY_IMAGES = [
 ] as const;
 
 export const NSDC_LOGO = { src: "/8.jpeg", alt: "NSDC logo" } as const;
+
+export const SKILL_INDIA_LOGO = {
+  src: "/skill.png",
+  alt: "Skill India — Transforming the skill landscape of India",
+} as const;

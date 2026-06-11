@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 
+import { HomeLanding } from "@/components/marketing/home-landing";
 import { getDefaultRedirectPath, getServerSession } from "@/lib/server/services/session";
 
 export default async function HomePage() {
@@ -9,5 +10,5 @@ export default async function HomePage() {
     redirect(getDefaultRedirectPath(session.user.roles));
   }
 
-  redirect("/admin/login");
+  return <HomeLanding />;
 }

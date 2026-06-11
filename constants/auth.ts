@@ -7,13 +7,13 @@ export const AUTH_CONTENT = {
         portal:"admin",
         ForgotPasswordUrl:"/admin/forgot-password",
         RedirectUrl:"/training-partner/login",
-        SecondaryButtonText:"Login as Training Partner"
+        SecondaryButtonText:"Login as Training Center"
     },
     trainingPartner:{
-        heading:"Welcome back, Training Partner!",
-        subHeading:"Login as a training partner to manage your courses and trainees",
-        SubmitButtonText:"Login as Training Partner",
-        PlaceholderMail:"partner@example.com",
+        heading:"Welcome back, Training Center!",
+        subHeading:"Login as a training center to manage your courses and trainees",
+        SubmitButtonText:"Login as Training Center",
+        PlaceholderMail:"center@example.com",
         portal:"training_partner",
         ForgotPasswordUrl:"/training-partner/forgot-password",
         RedirectUrl:"/admin/login",

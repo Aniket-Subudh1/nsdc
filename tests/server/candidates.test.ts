@@ -118,7 +118,7 @@ async function buildWorkbook(rows: Array<Record<string, unknown>>) {
   return writeWorkbookToArrayBuffer([{ name: "Candidates", rows }]);
 }
 
-const sampleRegistrationProgram = "Fee-Based Programs" as const;
+const sampleRegistrationProgram = "Fee-Based" as const;
 
 const activeReferenceCourse = {
   courseId: "cor_001",

@@ -175,7 +175,7 @@ async function resolveCandidateId(actor: Awaited<ReturnType<typeof resolveWorker
   const created = await createCandidate(
     actor,
     {
-      program: "Fee-Based Programs",
+      program: "Fee-Based",
       contactDetails: {
         countryCode: "91",
         email: `uat.test.${mobileNumber}@example.com`,

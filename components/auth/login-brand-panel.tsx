@@ -58,7 +58,7 @@ export function LoginBrandPanel() {
           </ul>
 
           <div className="mt-5 flex w-full justify-center">
-            <AuthBrandGallery variant="dark" className="max-w-[360px] sm:max-w-[400px]" />
+            <AuthBrandGallery variant="dark" />
           </div>
 
           <div className="mt-5 grid grid-cols-3 gap-x-3 gap-y-3 border-t border-white/5 pt-4">

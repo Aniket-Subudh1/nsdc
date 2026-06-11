@@ -8,8 +8,9 @@ export const PLATFORM_STATS = [
 ] as const;
 
 export const AUTH_BRAND_GALLERY_IMAGES = [
-  { src: "/6.jpeg", alt: "Gram Tarang trained candidates" },
-  { src: "/7.jpeg", alt: "Gram Tarang skill development platform" },
+  { src: "/login1.jpeg", alt: "Skill development training session" },
+  { src: "/login2.jpeg", alt: "Vocational training in progress" },
+  { src: "/login3.jpeg", alt: "Candidates learning industry skills" },
 ] as const;
 
 export const NSDC_LOGO = { src: "/8.jpeg", alt: "NSDC logo" } as const;

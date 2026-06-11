@@ -24,6 +24,8 @@ export async function GET(request: Request) {
         syncStatus: url.searchParams.get("syncStatus") ?? undefined,
         registrationMode: url.searchParams.get("registrationMode") ?? undefined,
         eligibleForBatchId: url.searchParams.get("eligibleForBatchId") ?? undefined,
+        registeredFrom: url.searchParams.get("registeredFrom") ?? undefined,
+        registeredTo: url.searchParams.get("registeredTo") ?? undefined,
       });
 
       return listCandidates(session, query);

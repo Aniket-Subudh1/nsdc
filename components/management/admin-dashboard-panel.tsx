@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   IconActivity,
   IconBuildingCommunity,
+  IconChartBar,
   IconChevronLeft,
   IconChevronRight,
   IconSearch,
@@ -13,6 +14,7 @@ import {
 
 import { apiFetch, ClientApiError } from "@/lib/client/api";
 import { cn } from "@/lib/utils";
+import EnrollmentAnalyticsPanel from "@/components/management/enrollment-analytics-panel";
 
 type DashboardPlatformOverview = {
   totals: {
@@ -80,7 +82,7 @@ type DashboardPlatformOverview = {
   };
 };
 
-type DashboardTab = "overview" | "centers" | "catalog" | "batches" | "activity";
+type DashboardTab = "overview" | "centers" | "catalog" | "batches" | "activity" | "analytics";
 type CatalogKind = "sectors" | "courses";
 
 type PagedSectionResponse<T> = {
@@ -239,6 +241,7 @@ export default function AdminDashboardPanel({
         { id: "catalog" as const, label: "Sectors & courses", count: (totals?.sectors ?? 0) + (totals?.courses ?? 0) },
         { id: "batches" as const, label: "Batches", count: totals?.batches ?? 0 },
         { id: "activity" as const, label: "Activity", count: null },
+        { id: "analytics" as const, label: "Enrollment Analytics", count: null },
       ] satisfies Array<{ id: DashboardTab; label: string; count: number | null }>,
     [totals?.batches, totals?.courses, totals?.sectors, totals?.trainingCenters],
   );
@@ -390,6 +393,7 @@ export default function AdminDashboardPanel({
                   : "text-slate-600 hover:bg-slate-50 hover:text-slate-900",
               )}
             >
+              {tab.id === "analytics" ? <IconChartBar className="h-4 w-4" /> : null}
               {tab.label}
               {tab.count !== null && !loading ? (
                 <span
@@ -778,6 +782,8 @@ export default function AdminDashboardPanel({
           />
         </SectionShell>
       ) : null}
+
+      {activeTab === "analytics" ? <EnrollmentAnalyticsPanel /> : null}
     </div>
   );
 }

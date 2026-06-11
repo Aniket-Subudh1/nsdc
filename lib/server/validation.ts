@@ -792,16 +792,34 @@ const candidateFilterQueryFields = {
   syncStatus: candidateSyncStatusSchema.optional(),
   registrationMode: registrationModeSchema.optional(),
   eligibleForBatchId: z.string().trim().optional(),
+  registeredFrom: z.string().date().optional(),
+  registeredTo: z.string().date().optional(),
 } as const;
+
+function validateCandidateRegistrationDateRange(
+  value: { registeredFrom?: string; registeredTo?: string },
+  ctx: z.RefinementCtx,
+) {
+  if (value.registeredFrom && value.registeredTo && value.registeredFrom > value.registeredTo) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Registered from date must be on or before registered to date",
+      path: ["registeredTo"],
+    });
+  }
+}
 
 export const candidateListQuerySchema = paginationQuerySchema
   .omit({ pageSize: true })
   .extend({
     pageSize: z.coerce.number().int().positive().max(200).default(20),
     ...candidateFilterQueryFields,
-  });
+  })
+  .superRefine(validateCandidateRegistrationDateRange);
 
-export const candidateExportQuerySchema = z.object(candidateFilterQueryFields);
+export const candidateExportQuerySchema = z
+  .object(candidateFilterQueryFields)
+  .superRefine(validateCandidateRegistrationDateRange);
 
 const optionalFormStringSchema = z.preprocess(
   (value) => (value === null || value === undefined || value === "" ? undefined : value),

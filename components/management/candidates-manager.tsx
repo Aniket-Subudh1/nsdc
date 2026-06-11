@@ -46,6 +46,7 @@ import {
   normalizeCandidateState,
 } from "@/lib/candidate-location-options";
 import { cn } from "@/lib/utils";
+import { formatUserDateTime } from "@/lib/format-datetime";
 
 type CandidatesManagerProps = {
   portal: "admin" | "training_partner";
@@ -116,6 +117,7 @@ type CandidateRecord = {
   };
   registrationMode: "internal_registration" | "existing_sidh_link";
   sidhCandidateId: string | null;
+  createdAt: string | null;
   syncState: {
     lastAttemptAt?: string | null;
     lastFailureCode?: string | null;
@@ -338,6 +340,8 @@ type CandidateFilters = {
   pageSize: number;
   programId: string;
   referenceCourseId: string;
+  registeredFrom: string;
+  registeredTo: string;
   registrationMode: string;
   search: string;
   state: string;
@@ -450,6 +454,8 @@ const initialCandidateFilters: CandidateFilters = {
   pageSize: 12,
   programId: "",
   referenceCourseId: "",
+  registeredFrom: "",
+  registeredTo: "",
   registrationMode: "",
   search: "",
   state: "",
@@ -467,6 +473,8 @@ function countActiveCandidateFilters(filters: CandidateFilters) {
     filters.gender,
     filters.registrationMode,
     filters.programId,
+    filters.registeredFrom,
+    filters.registeredTo,
   ].filter(Boolean).length;
 }
 
@@ -666,8 +674,21 @@ async function downloadCandidateImportTemplate() {
   await downloadCandidateImportTemplateWorkbook("candidate_details.xlsx", options);
 }
 
-async function downloadCandidateExport(filters: CandidateFilters) {
-  const query = buildQueryString({
+function buildCandidateFilterQuery(filters: Pick<
+  CandidateFilters,
+  | "search"
+  | "syncStatus"
+  | "state"
+  | "district"
+  | "centerId"
+  | "referenceCourseId"
+  | "gender"
+  | "registrationMode"
+  | "programId"
+  | "registeredFrom"
+  | "registeredTo"
+>) {
+  return buildQueryString({
     search: filters.search || undefined,
     syncStatus: filters.syncStatus || undefined,
     state: filters.state || undefined,
@@ -677,7 +698,13 @@ async function downloadCandidateExport(filters: CandidateFilters) {
     gender: filters.gender || undefined,
     registrationMode: filters.registrationMode || undefined,
     programId: filters.programId || undefined,
+    registeredFrom: filters.registeredFrom || undefined,
+    registeredTo: filters.registeredTo || undefined,
   });
+}
+
+async function downloadCandidateExport(filters: CandidateFilters) {
+  const query = buildCandidateFilterQuery(filters);
   const response = await fetch(`/api/v1/candidates/exports?${query}`, {
     credentials: "include",
   });
@@ -733,12 +760,7 @@ function buildQueryString(values: Record<string, string | number | undefined>) {
 }
 
 function formatDateTime(value?: string | null) {
-  if (!value) {
-    return "Not available";
-  }
-
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+  return formatUserDateTime(value, "Not available");
 }
 
 function formatStatusLabel(value?: string | null) {
@@ -890,6 +912,8 @@ async function fetchCandidates(filters: CandidateFilters) {
     gender: filters.gender || undefined,
     registrationMode: filters.registrationMode || undefined,
     programId: filters.programId || undefined,
+    registeredFrom: filters.registeredFrom || undefined,
+    registeredTo: filters.registeredTo || undefined,
   });
 
   return apiFetch<PagedCandidates>(`/api/v1/candidates?${query}`);
@@ -1018,7 +1042,14 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   }
 
   function updateCandidateFilters(patch: Partial<CandidateFilters>) {
-    setCandidateFilters((current) => ({ ...current, page: 1, ...patch }));
+    setCandidateFilters((current) => {
+      const next = { ...current, page: 1, ...patch };
+      if (next.registeredFrom && next.registeredTo && next.registeredFrom > next.registeredTo) {
+        toast.error("Registered from date must be on or before registered to date");
+        return current;
+      }
+      return next;
+    });
   }
 
   function switchTab(tab: CandidateWorkspaceTab) {
@@ -1907,6 +1938,25 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                           ))}
                         </select>
                       </FormField>
+
+                      <FormField label="Registered from">
+                        <input
+                          type="date"
+                          value={candidateFilters.registeredFrom}
+                          onChange={(event) => updateCandidateFilters({ registeredFrom: event.target.value })}
+                          className={inputClassName}
+                        />
+                      </FormField>
+
+                      <FormField label="Registered to">
+                        <input
+                          type="date"
+                          value={candidateFilters.registeredTo}
+                          min={candidateFilters.registeredFrom || undefined}
+                          onChange={(event) => updateCandidateFilters({ registeredTo: event.target.value })}
+                          className={inputClassName}
+                        />
+                      </FormField>
                     </div>
 
                     <div className="mt-3 flex flex-wrap gap-1.5">
@@ -1952,6 +2002,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                           <th className="w-10 px-4 py-3">Select</th>
                           <th className="px-4 py-3">Learner</th>
                           <th className="px-4 py-3">Mobile</th>
+                          <th className="px-4 py-3">Registered on</th>
                           <th className="px-4 py-3">NSDC_SIDH ID</th>
                           <th className="px-4 py-3">Status</th>
                           <th className="px-4 py-3">Next step</th>
@@ -1993,6 +2044,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                                 <div className="text-xs text-slate-400">{candidate.candidateId}</div>
                               </td>
                               <td className="px-4 py-3 text-slate-600">{candidate.contactDetails.mobileNumber}</td>
+                              <td className="px-4 py-3 text-slate-600">{formatUserDateTime(candidate.createdAt)}</td>
                               <td className="px-4 py-3 text-slate-600">
                                 {candidate.sidhCandidateId ?? <span className="text-slate-300">Not assigned</span>}
                               </td>
@@ -2086,6 +2138,9 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                                       {candidate.personalDetails.fullName}
                                     </div>
                                     <div className="text-xs text-slate-500">{candidate.contactDetails.mobileNumber}</div>
+                                    <div className="text-xs text-slate-400">
+                                      Registered {formatUserDateTime(candidate.createdAt)}
+                                    </div>
                                   </div>
                                   <StatusPill status={actionState.status} label={actionState.statusLabel} />
                                 </div>

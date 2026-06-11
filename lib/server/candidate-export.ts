@@ -1,7 +1,19 @@
 import { getCandidateProgramLabel } from "@/lib/candidate-field-options";
-import { buildCandidateExcelWorkbook, type CandidateExcelRow } from "@/lib/candidate-excel-workbook";
-import type { CandidateImportTemplateOptions } from "@/lib/candidate-import-template-workbook";
+import {
+  buildCandidateExcelWorkbook,
+  type CandidateExcelRow,
+} from "@/lib/candidate-excel-workbook";
+import {
+  CANDIDATE_IMPORT_TEMPLATE_HEADERS,
+  type CandidateImportTemplateOptions,
+} from "@/lib/candidate-import-template-workbook";
+import {
+  formatUserDateForExport,
+  formatUserDateTimeForExport,
+} from "@/lib/format-datetime";
 import { workbookToArrayBuffer } from "@/lib/spreadsheet/excel-template";
+
+const REGISTERED_ON_EXPORT_HEADER = "Registered on";
 
 export const CANDIDATE_IMPORT_EXPORT_HEADERS = [
   "Name Prefix",
@@ -24,6 +36,7 @@ type CandidateExportSource = {
   programId?: string | null;
   centerName?: string | null;
   countryCode?: string | null;
+  createdAt?: Date | string | null;
   dateOfBirth: Date | string;
   domicileDistrict?: string | null;
   domicileState?: string | null;
@@ -42,24 +55,6 @@ type CandidateExportSource = {
   salutation?: string | null;
 };
 
-function formatExportDate(value?: Date | string | null) {
-  if (!value) {
-    return "";
-  }
-
-  const parsed = value instanceof Date ? value : new Date(value);
-
-  if (Number.isNaN(parsed.getTime())) {
-    return "";
-  }
-
-  const day = String(parsed.getUTCDate()).padStart(2, "0");
-  const month = String(parsed.getUTCMonth() + 1).padStart(2, "0");
-  const year = parsed.getUTCFullYear();
-
-  return `${day}/${month}/${year}`;
-}
-
 export function mapCandidateToExportRow(candidate: CandidateExportSource): CandidateExcelRow {
   const state = candidate.permanentAddress?.state ?? candidate.domicileState ?? "";
   const district =
@@ -72,7 +67,7 @@ export function mapCandidateToExportRow(candidate: CandidateExportSource): Candi
     "Name Prefix": candidate.salutation ?? "",
     "Full Name": candidate.fullName,
     Gender: candidate.gender ?? "",
-    DOB: formatExportDate(candidate.dateOfBirth),
+    DOB: formatUserDateForExport(candidate.dateOfBirth),
     "Father's Name": candidate.fathersName ?? "",
     "Guardian Name": candidate.guardiansName ?? "",
     Email: candidate.email ?? "",
@@ -97,5 +92,16 @@ export async function buildCandidateExportWorkbook(
 
   const ExcelJS = (await import("exceljs")).default;
   const workbook = buildCandidateExcelWorkbook(new ExcelJS.Workbook(), options, rows);
+  const sheet = workbook.getWorksheet("Candidates");
+
+  if (sheet) {
+    const registeredOnColumn = CANDIDATE_IMPORT_TEMPLATE_HEADERS.length + 1;
+    sheet.getCell(1, registeredOnColumn).value = REGISTERED_ON_EXPORT_HEADER;
+
+    candidates.forEach((candidate, index) => {
+      sheet.getCell(index + 2, registeredOnColumn).value = formatUserDateTimeForExport(candidate.createdAt);
+    });
+  }
+
   return workbookToArrayBuffer(workbook);
 }

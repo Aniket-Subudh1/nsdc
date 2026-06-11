@@ -24,6 +24,7 @@ import {
 import { toast } from "sonner";
 
 import { apiFetch, ClientApiError } from "@/lib/client/api";
+import { formatUserDateTime } from "@/lib/format-datetime";
 import { cn } from "@/lib/utils";
 import {
   BATCH_FEE_MIN_ERROR,
@@ -175,6 +176,8 @@ type AssignCandidateFilters = {
   gender: string;
   programId: string;
   referenceCourseId: string;
+  registeredFrom: string;
+  registeredTo: string;
   registrationMode: string;
   state: string;
   syncStatus: string;
@@ -215,6 +218,8 @@ const initialAssignCandidateFilters: AssignCandidateFilters = {
   gender: "",
   programId: "",
   referenceCourseId: "",
+  registeredFrom: "",
+  registeredTo: "",
   registrationMode: "",
   state: "",
   syncStatus: "",
@@ -1152,7 +1157,14 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
   }
 
   function updateAssignFilters(patch: Partial<AssignCandidateFilters>) {
-    setAssignFilters((current) => ({ ...current, ...patch }));
+    setAssignFilters((current) => {
+      const next = { ...current, ...patch };
+      if (next.registeredFrom && next.registeredTo && next.registeredFrom > next.registeredTo) {
+        toast.error("Registered from date must be on or before registered to date");
+        return current;
+      }
+      return next;
+    });
   }
 
   function clearAssignFilters() {
@@ -1199,6 +1211,12 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
       }
       if (filters.syncStatus) {
         params.set("syncStatus", filters.syncStatus);
+      }
+      if (filters.registeredFrom) {
+        params.set("registeredFrom", filters.registeredFrom);
+      }
+      if (filters.registeredTo) {
+        params.set("registeredTo", filters.registeredTo);
       }
 
       const [candidatePage] = await Promise.all([
@@ -2758,6 +2776,27 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                       ))}
                     </select>
                   </div>
+
+                  <div className="space-y-2">
+                    <Label>Registered from</Label>
+                    <input
+                      type="date"
+                      value={assignFilters.registeredFrom}
+                      onChange={(event) => updateAssignFilters({ registeredFrom: event.target.value })}
+                      className={assignInputClassName}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Registered to</Label>
+                    <input
+                      type="date"
+                      value={assignFilters.registeredTo}
+                      min={assignFilters.registeredFrom || undefined}
+                      onChange={(event) => updateAssignFilters({ registeredTo: event.target.value })}
+                      className={assignInputClassName}
+                    />
+                  </div>
                 </div>
               </div>
             ) : null}
@@ -2811,6 +2850,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                       </th>
                       <th className="px-3 py-2">Learner</th>
                       <th className="px-3 py-2">Mobile</th>
+                      <th className="px-3 py-2">Registered on</th>
                       <th className="px-3 py-2">Location</th>
                     </tr>
                   </thead>
@@ -2832,6 +2872,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                         </td>
                         <td className="min-w-0 truncate px-3 py-2.5 font-medium text-slate-900">{candidate.personalDetails.fullName}</td>
                         <td className="px-3 py-2.5 text-slate-600">{candidate.contactDetails.mobileNumber}</td>
+                        <td className="px-3 py-2.5 text-slate-600">{formatUserDateTime(candidate.createdAt)}</td>
                         <td className="min-w-0 truncate px-3 py-2.5 text-slate-600">
                           {[candidate.locationDetails.district ?? candidate.locationDetails.city, candidate.locationDetails.state].filter(Boolean).join(", ") || "—"}
                         </td>

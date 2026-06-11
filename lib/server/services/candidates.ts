@@ -1271,6 +1271,28 @@ function appendFilterCondition(conditions: Array<Record<string, unknown>>, condi
   conditions.push(condition);
 }
 
+function appendRegisteredDateFilter(
+  filter: Record<string, unknown>,
+  registeredFrom?: string,
+  registeredTo?: string,
+) {
+  if (!registeredFrom && !registeredTo) {
+    return;
+  }
+
+  const createdAt: Record<string, Date> = {};
+
+  if (registeredFrom) {
+    createdAt.$gte = new Date(`${registeredFrom}T00:00:00.000+05:30`);
+  }
+
+  if (registeredTo) {
+    createdAt.$lte = new Date(`${registeredTo}T23:59:59.999+05:30`);
+  }
+
+  filter.createdAt = createdAt;
+}
+
 const CANDIDATE_EXPORT_MAX_ROWS = 50_000;
 
 async function buildCandidateListFilter(actor: AuthSession, query: CandidateExportQuery) {
@@ -1340,6 +1362,8 @@ async function buildCandidateListFilter(actor: AuthSession, query: CandidateExpo
       userCenterId: query.centerId,
     });
   }
+
+  appendRegisteredDateFilter(filter, query.registeredFrom, query.registeredTo);
 
   if (andConditions.length > 0) {
     filter.$and = andConditions;

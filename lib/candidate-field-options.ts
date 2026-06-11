@@ -1,12 +1,12 @@
 export const CANDIDATE_NAME_PREFIX_OPTIONS = ["Mr", "Mrs", "Ms", "Mx"] as const;
 export const CANDIDATE_GENDER_OPTIONS = ["Male", "Female", "Transgender"] as const;
 export const CANDIDATE_PROGRAM_OPTIONS = [
-  "NSQF School Programs",
-  "Fee-Based Programs",
-  "CSR Programs",
-  "SFS Programs",
-  "ITI Programs",
-  "Diploma Programs",
+  "NSQF School",
+  "Fee-Based",
+  "CSR",
+  "SFS - Skill for Success",
+  "ITI",
+  "Diploma",
 ] as const;
 
 export type CandidateNamePrefix = (typeof CANDIDATE_NAME_PREFIX_OPTIONS)[number];

@@ -561,7 +561,7 @@ describe("candidate services", () => {
       "Name Prefix": "Mr",
       "Full Name": "Rohit Kumar",
       Gender: "Male",
-      Program: "NSQF School Programs",
+      Program: "NSQF School",
       "Center Name": "Center One",
     });
   });

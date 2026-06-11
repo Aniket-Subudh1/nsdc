@@ -90,7 +90,7 @@ function buildSampleImportRow(options: CandidateImportTemplateOptions) {
     "Country Code": "91",
     State: sampleState,
     District: sampleDistrict,
-    Program: CANDIDATE_PROGRAM_OPTIONS[0] ?? "NSQF School Programs",
+    Program: CANDIDATE_PROGRAM_OPTIONS[0] ?? "NSQF School",
     "Center Name": options.centerNames[0] ?? "Center One",
     "Course (reference only)": options.courseNames[0] ?? "",
   };

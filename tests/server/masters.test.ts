@@ -258,7 +258,7 @@ describe("masters service", () => {
         code: "NSQF_SCHOOL",
         createdAt: new Date("2024-01-01T00:00:00.000Z"),
         description: null,
-        name: "NSQF School Program",
+        name: "NSQF School",
         programId: "prg_001",
         status: "active",
         syncToSidh: true,

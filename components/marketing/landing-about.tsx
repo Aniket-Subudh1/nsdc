@@ -3,6 +3,8 @@ import Link from "next/link";
 import { ArrowRight, CheckCircle2 } from "lucide-react";
 
 import {
+  GRAM_TARANG_LEARN_MORE_LABEL,
+  GRAM_TARANG_WEBSITE_URL,
   LANDING_ABOUT_FEATURES,
   LANDING_ABOUT_TEXT,
   LANDING_PARTNERSHIP_TEXT,
@@ -26,7 +28,18 @@ export function LandingAbout() {
             ))}
           </ul>
 
-          
+          <p className="mt-6 text-[12px] leading-relaxed text-[#4b6485] sm:text-[13px]">
+            To learn more about Gram Tarang, visit our official website.
+          </p>
+          <Link
+            href={GRAM_TARANG_WEBSITE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-3 inline-flex items-center gap-1 text-[13px] font-semibold text-[#2563eb] transition hover:text-[#1d4ed8]"
+          >
+            {GRAM_TARANG_LEARN_MORE_LABEL}
+            <ArrowRight size={14} />
+          </Link>
         </div>
 
         <div className="flex items-center">
@@ -38,7 +51,8 @@ export function LandingAbout() {
                 alt={NSDC_LOGO.alt}
                 width={200}
                 height={80}
-                className="h-16 w-auto object-contain sm:h-20"
+                className="h-16 object-contain sm:h-20"
+                style={{ width: "auto" }}
               />
             </div>
             <p className="mx-auto mt-5 max-w-md text-[12px] leading-relaxed text-[#4b6485] sm:text-[13px]">

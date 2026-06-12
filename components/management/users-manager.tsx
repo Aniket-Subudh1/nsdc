@@ -93,7 +93,7 @@ const ADMIN_USER_TYPE_OPTIONS: Array<{
     description: "Full access to all training centers and platform management",
   },
   {
-    label: "Training Partner",
+    label: "Training Center",
     value: "training_partner",
     role: "center_manager",
     description: "Creates and monitors candidates and batches for an assigned training center",
@@ -154,7 +154,7 @@ const ROLE_CHART_COLORS: Record<RoleKey, string> = {
 
 const portalContent = {
   admin: {
-    description: "Create admins with platform-wide access or training partners scoped to a single training center.",
+    description: "Create admins with platform-wide access or training center users scoped to a single center.",
     heading: "Team & Users",
   },
   training_partner: {
@@ -304,12 +304,12 @@ export default function UsersManager({ portal }: UsersManagerProps) {
     const centerIds = isAdminRole(roles) ? [] : createForm.centerIds;
 
     if (requiresTrainingCenter(roles) && centerIds.length === 0) {
-      toast.error("Training partners must be assigned to a training center");
+      toast.error("Training center users must be assigned to a center");
       return;
     }
 
     if (isAdminPortal && roles.length === 1 && roles[0] === "center_manager" && centerIds.length !== 1) {
-      toast.error("Training partners must be assigned to exactly one training center");
+      toast.error("Training center users must be assigned to exactly one center");
       return;
     }
 
@@ -344,12 +344,12 @@ export default function UsersManager({ portal }: UsersManagerProps) {
     const centerIds = isAdminRole(roles) ? [] : editForm.centerIds;
 
     if (requiresTrainingCenter(roles) && centerIds.length === 0) {
-      toast.error("Training partners must be assigned to a training center");
+      toast.error("Training center users must be assigned to a center");
       return;
     }
 
     if (isAdminPortal && roles.length === 1 && roles[0] === "center_manager" && centerIds.length !== 1) {
-      toast.error("Training partners must be assigned to exactly one training center");
+      toast.error("Training center users must be assigned to exactly one center");
       return;
     }
 
@@ -490,8 +490,8 @@ export default function UsersManager({ portal }: UsersManagerProps) {
             {isAdminPortal ? (
               <>
                 <li>Admins get full platform access across all training centers.</li>
-                <li>Training partners must be linked to a training center for candidates and batches.</li>
-                <li>Training partners sign in via the Training Partner login page.</li>
+                <li>Training center users must be linked to a center for candidates and batches.</li>
+                <li>Training center users sign in via the Training Center login page.</li>
                 <li>Use inactive status instead of deleting accounts you may need again.</li>
               </>
             ) : (
@@ -1504,7 +1504,7 @@ function ModalCenterSelector({
 function formatRole(role: RoleKey, portal: "admin" | "training_partner" = "training_partner") {
   if (portal === "admin") {
     if (role === "platform_admin") return "Admin";
-    if (TRAINING_PARTNER_ROLES.includes(role) || role === "center_manager") return "Training Partner";
+    if (TRAINING_PARTNER_ROLES.includes(role) || role === "center_manager") return "Training Center";
   }
 
   return role

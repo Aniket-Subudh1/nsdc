@@ -34,13 +34,13 @@ const AdminLoginPage = async () => {
                 alt="Logo"
                 height={34}
                 width={105}
-                className="object-contain h-auto w-auto"
+                className="object-contain"
+                style={{ width: "auto", height: "auto" }}
               />
             </div>
           </div>
 
           <div className="bg-white rounded-2xl shadow-[0_2px_4px_rgba(0,0,0,0.04),0_16px_48px_rgba(37,99,235,0.09)] border border-[#e8effe] overflow-hidden">
-            <div className="h-[3px] bg-[#2563eb]" />
             <Login
               heading={AUTH_CONTENT.admin.heading}
               subHeading={AUTH_CONTENT.admin.subHeading}
@@ -54,8 +54,8 @@ const AdminLoginPage = async () => {
           </div>
 
           <div className="flex items-center justify-center gap-2 mt-5">
-            <Award size={11} className="text-[#94a3b8]" />
-            <p className="text-center text-[10.5px] text-[#94a3b8] tracking-wide">{POWERED_BY_LABEL}</p>
+            <Award size={13} className="text-[#64748b]" />
+            <p className="text-center text-[12px] font-medium text-[#64748b] tracking-wide">{POWERED_BY_LABEL}</p>
           </div>
         </div>
       </section>

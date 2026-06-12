@@ -27,7 +27,8 @@ export function LoginBrandPanel() {
             alt={LOGO_ALT}
             height={28}
             width={96}
-            className="h-auto w-auto object-contain"
+            className="object-contain"
+            style={{ width: "auto", height: "auto" }}
           />
         </div>
 
@@ -44,30 +45,30 @@ export function LoginBrandPanel() {
             <div className="h-[2px] w-3 rounded-full bg-[#2563eb]/30" />
           </div>
 
-          <p className="mt-4 max-w-[280px] text-[12px] leading-relaxed text-[#3d5a80]">
+          <p className="mt-4 max-w-[300px] text-[13px] font-medium leading-relaxed text-[#cbd5e1] xl:text-[14px]">
             Empowering India through skill development and vocational training.
           </p>
 
-          <ul className="mt-4 space-y-2">
+          <ul className="mt-4 space-y-2.5">
             {HIGHLIGHTS.map((item) => (
-              <li key={item} className="flex items-start gap-2">
-                <CheckCircle2 size={12} className="mt-0.5 shrink-0 text-[#2563eb]" />
-                <span className="text-[11px] leading-snug text-[#3d5a80]">{item}</span>
+              <li key={item} className="flex items-start gap-2.5">
+                <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-[#60a5fa]" />
+                <span className="text-[12px] font-medium leading-snug text-[#e2e8f0] xl:text-[13px]">{item}</span>
               </li>
             ))}
           </ul>
 
-          <div className="mt-5 flex w-full justify-center">
+          <div className="mt-5 w-full">
             <AuthBrandGallery variant="dark" />
           </div>
 
-          <div className="mt-5 grid grid-cols-3 gap-x-3 gap-y-3 border-t border-white/5 pt-4">
+          <div className="mt-5 grid grid-cols-3 gap-x-3 gap-y-4 border-t border-white/15 pt-5">
             {PLATFORM_STATS.map((stat) => (
               <div key={stat.label}>
-                <p className="text-[14px] font-bold leading-none tracking-tight text-white xl:text-[15px]">
+                <p className="text-[15px] font-bold leading-none tracking-tight text-white xl:text-[16px]">
                   {stat.value}
                 </p>
-                <p className="mt-1 text-[8px] font-medium uppercase leading-tight tracking-wide text-[#3d5a80] xl:text-[9px]">
+                <p className="mt-1.5 text-[9px] font-semibold uppercase leading-tight tracking-wide text-[#94a3b8] xl:text-[10px]">
                   {stat.label}
                 </p>
               </div>
@@ -75,12 +76,12 @@ export function LoginBrandPanel() {
           </div>
         </div>
 
-        <div className="flex items-center justify-between border-t border-white/6 pt-4">
-          <div className="flex items-center gap-2">
-            <div className="flex h-6 w-6 items-center justify-center rounded-full border border-[#1e3a6e] bg-[#0c1f35]">
-              <ShieldCheck size={11} className="text-[#4b7cc8]" />
+        <div className="flex items-center justify-between border-t border-white/15 pt-4">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-7 w-7 items-center justify-center rounded-full border border-[#3b82f6]/40 bg-[#0f2744]">
+              <ShieldCheck size={13} className="text-[#60a5fa]" />
             </div>
-            <span className="text-[10px] tracking-wide text-[#2e4a68]">{POWERED_BY_LABEL}</span>
+            <span className="text-[11px] font-medium tracking-wide text-[#cbd5e1] xl:text-[12px]">{POWERED_BY_LABEL}</span>
           </div>
 
           <div className="rounded-lg bg-white px-3 py-1.5">
@@ -89,7 +90,8 @@ export function LoginBrandPanel() {
               alt={NSDC_LOGO.alt}
               width={72}
               height={36}
-              className="h-8 w-auto object-contain"
+              className="h-8 object-contain"
+              style={{ width: "auto" }}
             />
           </div>
         </div>

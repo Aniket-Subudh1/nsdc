@@ -10,7 +10,8 @@ export function LandingPartnerLogos() {
         alt={NSDC_LOGO.alt}
         width={600}
         height={600}
-        className="h-14 w-auto object-contain sm:h-16"
+        className="h-14 object-contain sm:h-16"
+        style={{ width: "auto" }}
       />
       <div className="h-12 w-px shrink-0 bg-[#b0b8c4] sm:h-14" aria-hidden />
       <Image
@@ -18,7 +19,8 @@ export function LandingPartnerLogos() {
         alt={SKILL_INDIA_LOGO.alt}
         width={400}
         height={330}
-        className="h-14 w-auto object-contain sm:h-16"
+        className="h-14 object-contain sm:h-16"
+        style={{ width: "auto" }}
       />
     </div>
   );

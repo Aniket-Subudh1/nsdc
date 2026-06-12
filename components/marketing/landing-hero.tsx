@@ -6,32 +6,26 @@ import { LandingPartnerLogos } from "@/components/marketing/landing-partner-logo
 
 export function LandingHero() {
   return (
-    <section
-      id="home"
-      className="relative overflow-hidden bg-white"
-      style={{ minHeight: "clamp(300px, 52vw, 700px)" }}
-    >
-      <div className="absolute inset-0 z-0">
+    <section id="home" className="relative overflow-hidden bg-white">
+      {/* Mobile image banner */}
+      <div className="relative h-[220px] w-full sm:h-[260px] lg:hidden">
         <Image
           src="/6.jpeg"
           alt="Gram Tarang trained students"
           fill
           priority
-          className="object-cover object-[50%_8%]"
-          sizes="100vw"
+          quality={92}
+          className="object-cover object-[center_32%]"
+          sizes="(max-width: 1023px) 100vw, 0px"
         />
-        <div
-          className="absolute inset-0"
-          style={{
-            background:
-              "linear-gradient(to right, #ffffff 0%, #ffffff 36%, rgba(255,255,255,0.85) 46%, rgba(255,255,255,0.3) 56%, transparent 68%)",
-          }}
-        />
+        <div className="absolute inset-y-0 left-0 w-12 bg-linear-to-r from-white to-transparent sm:w-16" />
+        <div className="absolute inset-y-0 right-0 w-12 bg-linear-to-l from-white to-transparent sm:w-16" />
+        <div className="absolute inset-x-0 bottom-0 h-16 bg-linear-to-t from-white to-transparent" />
       </div>
 
-      {/* Text content — sits on top of the white gradient */}
-      <div className="relative z-10 mt-20 mx-auto flex max-w-[1400px] items-start px-5 py-12 sm:px-8 sm:py-14 lg:px-12 lg:py-16 xl:px-16">
-        <div className="w-full max-w-[500px] xl:max-w-[540px]">
+      <div className="mx-auto flex max-w-[1400px] flex-col lg:min-h-[clamp(520px,44vw,640px)] lg:flex-row lg:items-stretch">
+        {/* Text content */}
+        <div className="relative z-10 flex w-full flex-col justify-center px-5 py-8 sm:px-8 sm:py-10 lg:w-[46%] lg:px-10 lg:py-14 xl:px-14">
           <h1 className="text-[38px] font-extrabold leading-[1.04] tracking-tight text-[#0f2d5c] sm:text-[46px] lg:text-[52px]">
             Gram Tarang
           </h1>
@@ -39,7 +33,6 @@ export function LandingHero() {
             Employability Training Services Pvt Ltd.
           </p>
 
-          {/* Green tagline with decorative line */}
           <div className="mt-3 flex items-center gap-2">
             <span className="inline-block h-[3px] w-10 rounded-full bg-[#16a34a]" />
             <p className="text-[14px] font-semibold text-[#16a34a] sm:text-[15px]">
@@ -51,11 +44,10 @@ export function LandingHero() {
             Empowering India Through Skill Development
           </h2>
           <p className="mt-3 text-[13px] leading-relaxed text-[#4b6485] sm:text-[14px]">
-            Industry-aligned training, NSDC certifications, placement
-            assistance, and career opportunities for youth across India.
+            Industry-aligned training, NSDC certifications, placement assistance, and career
+            opportunities for youth across India.
           </p>
 
-          {/* CTA buttons */}
           <div className="mt-6 flex flex-wrap gap-2.5">
             <Link
               href="#courses"
@@ -69,29 +61,40 @@ export function LandingHero() {
               className="inline-flex items-center gap-1.5 rounded-[6px] bg-[#0f2d5c] px-5 py-[10px] text-[13px] font-semibold text-white transition hover:bg-[#0a2247]"
             >
               <User size={14} />
-              Training Partner Login
+              Training Center Login
               <ArrowRight size={14} />
             </Link>
-           
           </div>
 
-          {/* Partner logos */}
           <LandingPartnerLogos />
+        </div>
+
+        {/* Desktop image panel */}
+        <div className="relative hidden lg:block lg:w-[54%]">
+          <div className="absolute inset-0">
+            <Image
+              src="/6.jpeg"
+              alt="Gram Tarang trained students"
+              fill
+              priority
+              quality={92}
+              className="object-cover object-[center_32%]"
+              sizes="(min-width: 1024px) 54vw, 0px"
+            />
+            <div className="absolute inset-y-0 left-0 w-28 bg-linear-to-r from-white via-white/70 to-transparent xl:w-36" />
+            <div className="absolute inset-y-0 right-0 w-20 bg-linear-to-l from-white via-white/70 to-transparent xl:w-28" />
+          </div>
         </div>
       </div>
 
-      {/* Wave divider — green sweep then dark navy, overlays the bottom of the photo */}
-      <div
-        className="pointer-events-none absolute inset-x-0 bottom-0 z-20"
-        aria-hidden
-      >
+      {/* Wave divider */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20" aria-hidden>
         <svg
           viewBox="0 0 1440 130"
           preserveAspectRatio="none"
           className="block w-full"
           style={{ height: "clamp(70px, 9vw, 115px)", display: "block" }}
         >
-          {/* Green upper wave */}
           <path
             d="M0,65
                C120,30 280,90 480,55
@@ -100,7 +103,6 @@ export function LandingHero() {
                L1440,130 L0,130 Z"
             fill="#16a34a"
           />
-          {/* Dark navy lower wave — sits just below the green */}
           <path
             d="M0,90
                C140,55 300,110 500,78

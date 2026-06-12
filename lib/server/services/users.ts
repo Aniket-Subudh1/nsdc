@@ -57,8 +57,8 @@ function ensureAssignableRoles(actor: AuthSession, roles: RoleKey[]) {
 }
 
 const ROLE_CENTER_MESSAGES: Record<RoleCenterValidationCode, string> = {
-  CENTER_REQUIRED: "Training partners must be assigned to a training center",
-  CENTER_COUNT_INVALID: "Training partners must be assigned to exactly one training center",
+  CENTER_REQUIRED: "Training center users must be assigned to a center",
+  CENTER_COUNT_INVALID: "Training center users must be assigned to exactly one center",
   CENTER_NOT_ALLOWED: "Admins cannot be assigned to specific training centers",
 };
 

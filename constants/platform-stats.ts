@@ -8,9 +8,24 @@ export const PLATFORM_STATS = [
 ] as const;
 
 export const AUTH_BRAND_GALLERY_IMAGES = [
-  { src: "/login1.jpeg", alt: "Skill development training session" },
-  { src: "/login2.jpeg", alt: "Vocational training in progress" },
-  { src: "/login3.jpeg", alt: "Candidates learning industry skills" },
+  {
+    src: "/login1.jpeg",
+    alt: "Skill development training session",
+    objectPosition: "center 38%",
+    scale: 1.15,
+  },
+  {
+    src: "/login2.jpeg",
+    alt: "Vocational training in progress",
+    objectPosition: "center 42%",
+    scale: 1.15,
+  },
+  {
+    src: "/login3.jpeg",
+    alt: "Candidates learning industry skills",
+    objectPosition: "center 38%",
+    scale: 1.15,
+  },
 ] as const;
 
 export const NSDC_LOGO = { src: "/8.jpeg", alt: "NSDC logo" } as const;

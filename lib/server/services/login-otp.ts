@@ -38,11 +38,26 @@ export function maskEmail(email: string) {
   return `${visible}${"*".repeat(Math.max(1, localPart.length - 1))}@${domain}`;
 }
 
+type IssueLoginOtpInput = {
+  auditAction: "auth.login.otp_sent" | "auth.login.otp_resent";
+  email: string;
+  ipAddress?: string | null;
+  requestId?: string;
+  userId: string;
+};
+
 type InitiateAdminLoginOtpInput = {
   email: string;
   ipAddress?: string | null;
   requestId?: string;
   userId: string;
+};
+
+type ResendAdminLoginOtpInput = {
+  challengeId: string;
+  email: string;
+  ipAddress?: string | null;
+  requestId?: string;
 };
 
 type VerifyAdminLoginOtpInput = {
@@ -53,17 +68,7 @@ type VerifyAdminLoginOtpInput = {
   requestId?: string;
 };
 
-export async function initiateAdminLoginOtp(input: InitiateAdminLoginOtpInput) {
-  await connectToDatabase();
-
-  if (!isMailerConfigured()) {
-    throw new ApiError(
-      500,
-      "MAILER_NOT_CONFIGURED",
-      "SMTP is not configured for admin login verification emails",
-    );
-  }
-
+async function issueLoginOtpForUser(input: IssueLoginOtpInput) {
   const user = await UserModel.findOne({ userId: input.userId, status: "active" });
 
   if (!user) {
@@ -111,7 +116,7 @@ export async function initiateAdminLoginOtp(input: InitiateAdminLoginOtpInput) {
   }
 
   await writeAuditLog({
-    action: "auth.login.otp_sent",
+    action: input.auditAction,
     actorUserId: user.userId,
     entityId: user.userId,
     entityType: "user",
@@ -120,11 +125,112 @@ export async function initiateAdminLoginOtp(input: InitiateAdminLoginOtpInput) {
     requestId: input.requestId,
   });
 
+  const message =
+    input.auditAction === "auth.login.otp_resent"
+      ? "A new verification code has been sent to your registered email address."
+      : "A verification code has been sent to your registered email address.";
+
   return {
     challengeId,
     maskedEmail: maskEmail(user.email),
-    message: "A verification code has been sent to your registered email address.",
+    message,
   };
+}
+
+async function findLoginOtpChallenge(email: string, challengeId: string) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const normalizedChallengeId = challengeId.trim();
+
+  const userByChallenge = await UserModel.findOne({
+    email: normalizedEmail,
+    loginOtpChallengeId: normalizedChallengeId,
+    status: "active",
+  });
+
+  if (userByChallenge) {
+    return {
+      expiryTime: getOtpExpiryTime(userByChallenge.loginOtpExpiresAt),
+      match: "exact" as const,
+      user: userByChallenge,
+    };
+  }
+
+  const userByEmail = await UserModel.findOne({
+    email: normalizedEmail,
+    status: "active",
+  });
+
+  if (!userByEmail) {
+    return { expiryTime: null, match: "not_found" as const, user: null };
+  }
+
+  if (userByEmail.loginOtpChallengeId) {
+    return {
+      expiryTime: getOtpExpiryTime(userByEmail.loginOtpExpiresAt),
+      match: "replaced" as const,
+      user: userByEmail,
+    };
+  }
+
+  return { expiryTime: null, match: "no_challenge" as const, user: userByEmail };
+}
+
+export async function initiateAdminLoginOtp(input: InitiateAdminLoginOtpInput) {
+  await connectToDatabase();
+
+  if (!isMailerConfigured()) {
+    throw new ApiError(
+      500,
+      "MAILER_NOT_CONFIGURED",
+      "SMTP is not configured for admin login verification emails",
+    );
+  }
+
+  return issueLoginOtpForUser({
+    auditAction: "auth.login.otp_sent",
+    email: input.email,
+    ipAddress: input.ipAddress,
+    requestId: input.requestId,
+    userId: input.userId,
+  });
+}
+
+export async function resendAdminLoginOtp(input: ResendAdminLoginOtpInput) {
+  await connectToDatabase();
+
+  if (!isMailerConfigured()) {
+    throw new ApiError(
+      500,
+      "MAILER_NOT_CONFIGURED",
+      "SMTP is not configured for admin login verification emails",
+    );
+  }
+
+  const challenge = await findLoginOtpChallenge(input.email, input.challengeId);
+
+  if (challenge.match === "not_found" || challenge.match === "no_challenge") {
+    throw new ApiError(
+      400,
+      "OTP_CHALLENGE_INVALID",
+      "Your verification session expired. Please sign in again.",
+    );
+  }
+
+  if (challenge.match === "replaced") {
+    throw new ApiError(
+      400,
+      "OTP_REPLACED",
+      "A newer verification code was already sent. Use the latest code from your email, or sign in again.",
+    );
+  }
+
+  return issueLoginOtpForUser({
+    auditAction: "auth.login.otp_resent",
+    email: input.email,
+    ipAddress: input.ipAddress,
+    requestId: input.requestId,
+    userId: challenge.user.userId,
+  });
 }
 
 export async function verifyAdminLoginOtp(input: VerifyAdminLoginOtpInput) {
@@ -133,34 +239,72 @@ export async function verifyAdminLoginOtp(input: VerifyAdminLoginOtpInput) {
   const normalizedEmail = input.email.trim().toLowerCase();
   const normalizedOtp = input.otp.trim();
   const normalizedChallengeId = input.challengeId.trim();
-  const user = await UserModel.findOne({
-    email: normalizedEmail,
-    loginOtpChallengeId: normalizedChallengeId,
-    status: "active",
-  });
+  const challenge = await findLoginOtpChallenge(normalizedEmail, normalizedChallengeId);
 
-  if (!user) {
-    throw new ApiError(400, "INVALID_OTP", "Invalid or expired verification code");
+  if (challenge.match === "not_found" || challenge.match === "no_challenge") {
+    throw new ApiError(
+      400,
+      "OTP_CHALLENGE_INVALID",
+      "Your verification session expired. Please sign in again.",
+    );
   }
 
-  const expiryTime = getOtpExpiryTime(user.loginOtpExpiresAt);
-  const isOtpValid =
-    Boolean(user.loginOtpHash) &&
-    expiryTime !== null &&
-    expiryTime > Date.now() &&
-    user.loginOtpHash === createOtpHash(normalizedOtp);
+  if (challenge.match === "replaced") {
+    throw new ApiError(
+      400,
+      "OTP_REPLACED",
+      "This verification code was replaced by a newer one. Use the latest code from your email.",
+    );
+  }
 
-  if (!isOtpValid) {
+  const user = challenge.user;
+  const expiryTime = challenge.expiryTime;
+  const hasOtpHash = Boolean(user.loginOtpHash);
+
+  if (!hasOtpHash || expiryTime === null) {
+    throw new ApiError(
+      400,
+      "OTP_CHALLENGE_INVALID",
+      "Your verification session expired. Please sign in again.",
+    );
+  }
+
+  if (expiryTime <= Date.now()) {
     await writeAuditLog({
       action: "auth.login.otp_failed",
       actorUserId: user.userId,
       entityId: user.userId,
       entityType: "user",
       ipAddress: input.ipAddress,
-      metadata: { email: normalizedEmail, challengeId: normalizedChallengeId },
+      metadata: {
+        email: normalizedEmail,
+        challengeId: normalizedChallengeId,
+        reason: "expired",
+      },
       requestId: input.requestId,
     });
-    throw new ApiError(400, "INVALID_OTP", "Invalid or expired verification code");
+    throw new ApiError(
+      400,
+      "OTP_EXPIRED",
+      "This verification code has expired. Resend a new code or sign in again.",
+    );
+  }
+
+  if (user.loginOtpHash !== createOtpHash(normalizedOtp)) {
+    await writeAuditLog({
+      action: "auth.login.otp_failed",
+      actorUserId: user.userId,
+      entityId: user.userId,
+      entityType: "user",
+      ipAddress: input.ipAddress,
+      metadata: {
+        email: normalizedEmail,
+        challengeId: normalizedChallengeId,
+        reason: "wrong_code",
+      },
+      requestId: input.requestId,
+    });
+    throw new ApiError(400, "OTP_WRONG", "The verification code you entered is incorrect.");
   }
 
   const clearedUser = await UserModel.findOneAndUpdate(
@@ -181,7 +325,11 @@ export async function verifyAdminLoginOtp(input: VerifyAdminLoginOtpInput) {
   );
 
   if (!clearedUser) {
-    throw new ApiError(400, "INVALID_OTP", "Invalid or expired verification code");
+    throw new ApiError(
+      400,
+      "OTP_REPLACED",
+      "This verification code was replaced by a newer one. Use the latest code from your email.",
+    );
   }
 
   return clearedUser;

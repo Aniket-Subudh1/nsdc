@@ -236,16 +236,14 @@ export async function verifyLoginOtp(input: {
   await ensureBootstrapData();
 
   if (input.portal !== "admin") {
-    throw new ApiError(400, "INVALID_OTP", "Invalid or expired verification code");
+    throw new ApiError(
+      400,
+      "OTP_CHALLENGE_INVALID",
+      "Your verification session expired. Please sign in again.",
+    );
   }
 
   const normalizedEmail = input.email.trim().toLowerCase();
-  const user = await UserModel.findOne({ email: normalizedEmail });
-
-  if (!user) {
-    throw new ApiError(400, "INVALID_OTP", "Invalid or expired verification code");
-  }
-
   const verifiedUser = await verifyAdminLoginOtp({
     challengeId: input.challengeId,
     email: normalizedEmail,

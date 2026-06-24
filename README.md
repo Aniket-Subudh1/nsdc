@@ -161,6 +161,7 @@ Worker behavior:
 
 - `/api/v1/auth/login`
 - `/api/v1/auth/login/verify-otp`
+- `/api/v1/auth/login/resend-otp`
 - `/api/v1/auth/forgot-password/request`
 - `/api/v1/auth/forgot-password/reset`
 - `/api/v1/auth/logout`

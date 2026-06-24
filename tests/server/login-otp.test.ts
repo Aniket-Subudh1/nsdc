@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "@/lib/server/http";
 import { resetEnvCache } from "@/lib/server/env";
 import { sendLoginOtpEmail } from "@/lib/server/mailer";
 import { UserModel } from "@/lib/server/models/user";
@@ -7,6 +8,7 @@ import {
   createOtpHash,
   getOtpExpiryTime,
   initiateAdminLoginOtp,
+  resendAdminLoginOtp,
   verifyAdminLoginOtp,
 } from "@/lib/server/services/login-otp";
 
@@ -85,8 +87,15 @@ describe("login otp", () => {
       storedOtpHash = set.loginOtpHash;
       return { matchedCount: 1 } as never;
     });
-    vi.spyOn(UserModel, "findOne").mockImplementation(async () => {
-      if (!storedChallengeId) {
+    vi.spyOn(UserModel, "findOne").mockImplementation(async (filter) => {
+      const query = filter as {
+        email?: string;
+        loginOtpChallengeId?: string;
+        userId?: string;
+        status?: string;
+      };
+
+      if (query.userId) {
         return {
           userId: "usr_test",
           email: "admin@example.com",
@@ -94,14 +103,29 @@ describe("login otp", () => {
         } as never;
       }
 
-      return {
-        userId: "usr_test",
-        email: "admin@example.com",
-        loginOtpChallengeId: storedChallengeId,
-        loginOtpHash: storedOtpHash,
-        loginOtpExpiresAt: new Date(Date.now() + 60_000),
-        status: "active",
-      } as never;
+      if (query.loginOtpChallengeId && query.loginOtpChallengeId === storedChallengeId) {
+        return {
+          userId: "usr_test",
+          email: "admin@example.com",
+          loginOtpChallengeId: storedChallengeId,
+          loginOtpHash: storedOtpHash,
+          loginOtpExpiresAt: new Date(Date.now() + 60_000),
+          status: "active",
+        } as never;
+      }
+
+      if (query.email === "admin@example.com") {
+        return {
+          userId: "usr_test",
+          email: "admin@example.com",
+          loginOtpChallengeId: storedChallengeId || null,
+          loginOtpHash: storedOtpHash || null,
+          loginOtpExpiresAt: storedChallengeId ? new Date(Date.now() + 60_000) : null,
+          status: "active",
+        } as never;
+      }
+
+      return null as never;
     });
     vi.spyOn(UserModel, "findOneAndUpdate").mockResolvedValue({
       userId: "usr_test",
@@ -125,5 +149,126 @@ describe("login otp", () => {
     });
 
     expect(verifiedUser.email).toBe("admin@example.com");
+  });
+
+  it("resends a login OTP using the active challenge", async () => {
+    let storedChallengeId = "lch_old";
+    let sentOtps: string[] = [];
+
+    vi.mocked(sendLoginOtpEmail).mockImplementation(async (input) => {
+      sentOtps.push(input.otp);
+    });
+    vi.spyOn(UserModel, "updateOne").mockResolvedValue({ matchedCount: 1 } as never);
+    vi.spyOn(UserModel, "findOne").mockImplementation(async (filter) => {
+      const query = filter as {
+        email?: string;
+        loginOtpChallengeId?: string;
+        userId?: string;
+      };
+
+      if (query.userId) {
+        return {
+          userId: "usr_test",
+          email: "admin@example.com",
+          name: "Platform Admin",
+        } as never;
+      }
+
+      if (query.loginOtpChallengeId === "lch_old") {
+        return {
+          userId: "usr_test",
+          email: "admin@example.com",
+          loginOtpChallengeId: "lch_old",
+          loginOtpHash: "hash",
+          loginOtpExpiresAt: new Date(Date.now() + 60_000),
+          status: "active",
+        } as never;
+      }
+
+      return null as never;
+    });
+
+    const result = await resendAdminLoginOtp({
+      email: "admin@example.com",
+      challengeId: "lch_old",
+    });
+
+    expect(result.challengeId).toMatch(/^lch_/);
+    expect(result.challengeId).not.toBe("lch_old");
+    expect(sentOtps).toHaveLength(1);
+  });
+
+  it("returns an expired OTP error", async () => {
+    vi.spyOn(UserModel, "findOne").mockResolvedValue({
+      userId: "usr_test",
+      email: "admin@example.com",
+      loginOtpChallengeId: "lch_current",
+      loginOtpHash: createOtpHash("123456"),
+      loginOtpExpiresAt: new Date(Date.now() - 60_000),
+      status: "active",
+    } as never);
+
+    await expect(
+      verifyAdminLoginOtp({
+        email: "admin@example.com",
+        challengeId: "lch_current",
+        otp: "123456",
+      }),
+    ).rejects.toMatchObject({
+      errorCode: "OTP_EXPIRED",
+    } satisfies Partial<ApiError>);
+  });
+
+  it("returns a wrong OTP error", async () => {
+    vi.spyOn(UserModel, "findOne").mockResolvedValue({
+      userId: "usr_test",
+      email: "admin@example.com",
+      loginOtpChallengeId: "lch_current",
+      loginOtpHash: createOtpHash("123456"),
+      loginOtpExpiresAt: new Date(Date.now() + 60_000),
+      status: "active",
+    } as never);
+
+    await expect(
+      verifyAdminLoginOtp({
+        email: "admin@example.com",
+        challengeId: "lch_current",
+        otp: "654321",
+      }),
+    ).rejects.toMatchObject({
+      errorCode: "OTP_WRONG",
+    } satisfies Partial<ApiError>);
+  });
+
+  it("returns a replaced OTP error for stale challenges", async () => {
+    vi.spyOn(UserModel, "findOne").mockImplementation(async (filter) => {
+      const query = filter as {
+        email?: string;
+        loginOtpChallengeId?: string;
+      };
+
+      if (query.loginOtpChallengeId === "lch_stale") {
+        return null as never;
+      }
+
+      return {
+        userId: "usr_test",
+        email: "admin@example.com",
+        loginOtpChallengeId: "lch_current",
+        loginOtpHash: createOtpHash("123456"),
+        loginOtpExpiresAt: new Date(Date.now() + 60_000),
+        status: "active",
+      } as never;
+    });
+
+    await expect(
+      verifyAdminLoginOtp({
+        email: "admin@example.com",
+        challengeId: "lch_stale",
+        otp: "123456",
+      }),
+    ).rejects.toMatchObject({
+      errorCode: "OTP_REPLACED",
+    } satisfies Partial<ApiError>);
   });
 });

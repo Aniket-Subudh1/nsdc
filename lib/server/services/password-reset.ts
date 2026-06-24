@@ -8,6 +8,7 @@ import { connectToDatabase } from "@/lib/server/mongodb";
 import { SessionModel } from "@/lib/server/models/session";
 import { UserModel } from "@/lib/server/models/user";
 import { writeAuditLog } from "@/lib/server/services/audit";
+import { getOtpExpiryTime } from "@/lib/server/services/login-otp";
 import { assertPortalAccess } from "@/lib/server/services/session";
 
 type PasswordResetPortal = "admin" | "training_partner";
@@ -33,7 +34,7 @@ function createOtpCode() {
 }
 
 function createOtpHash(otp: string) {
-  return createHash("sha256").update(otp).digest("hex");
+  return createHash("sha256").update(otp.trim()).digest("hex");
 }
 
 function getLoginPath(portal: PasswordResetPortal) {
@@ -125,30 +126,55 @@ export async function resetPasswordWithOtp(input: ResetPasswordWithOtpInput) {
   await connectToDatabase();
 
   const normalizedEmail = input.email.trim().toLowerCase();
+  const normalizedOtp = input.otp.trim();
   const user = await UserModel.findOne({ email: normalizedEmail });
 
   if (!user || user.status !== "active") {
-    throw new ApiError(400, "INVALID_OTP", "Invalid or expired OTP");
+    throw new ApiError(
+      400,
+      "OTP_CHALLENGE_INVALID",
+      "No active password reset request. Request a new OTP.",
+    );
   }
 
   try {
     assertPortalAccess(Array.from(user.roles), input.portal);
   } catch {
-    throw new ApiError(400, "INVALID_OTP", "Invalid or expired OTP");
+    throw new ApiError(
+      400,
+      "OTP_CHALLENGE_INVALID",
+      "No active password reset request. Request a new OTP.",
+    );
   }
 
-  const otpExpiry = user.passwordResetOtpExpiresAt;
+  if (!user.passwordResetOtpHash || user.passwordResetOtpPortal !== input.portal) {
+    throw new ApiError(
+      400,
+      "OTP_CHALLENGE_INVALID",
+      "No active password reset request. Request a new OTP.",
+    );
+  }
 
-  const isOtpValid =
-    Boolean(user.passwordResetOtpHash) &&
-    Boolean(otpExpiry) &&
-    user.passwordResetOtpPortal === input.portal &&
-    otpExpiry instanceof Date &&
-    otpExpiry > new Date() &&
-    user.passwordResetOtpHash === createOtpHash(input.otp);
+  const expiryTime = getOtpExpiryTime(user.passwordResetOtpExpiresAt);
 
-  if (!isOtpValid) {
-    throw new ApiError(400, "INVALID_OTP", "Invalid or expired OTP");
+  if (expiryTime === null) {
+    throw new ApiError(
+      400,
+      "OTP_CHALLENGE_INVALID",
+      "No active password reset request. Request a new OTP.",
+    );
+  }
+
+  if (expiryTime <= Date.now()) {
+    throw new ApiError(400, "OTP_EXPIRED", "This OTP has expired. Request a new one.");
+  }
+
+  if (user.passwordResetOtpHash !== createOtpHash(normalizedOtp)) {
+    throw new ApiError(
+      400,
+      "OTP_WRONG",
+      "The OTP you entered is incorrect. If you requested a new code, use the latest one.",
+    );
   }
 
   user.passwordHash = await hashPassword(input.newPassword);

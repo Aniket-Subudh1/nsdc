@@ -41,8 +41,7 @@ export default function ForgotPasswordForm({
     }
   }, [statusMessage]);
 
-  async function handleRequestOtp(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function requestPasswordResetOtp() {
     setIsPending(true);
     setErrorMessage(null);
     setStatusMessage(null);
@@ -62,15 +61,31 @@ export default function ForgotPasswordForm({
 
       if (!response.ok || !payload.success) {
         setErrorMessage(payload.message ?? "Unable to send OTP");
-        return;
+        return false;
       }
 
       setStep("reset");
       setStatusMessage(payload.message ?? "OTP sent to your email");
+      return true;
     } catch {
       setErrorMessage("Unable to send OTP. Please try again.");
+      return false;
     } finally {
       setIsPending(false);
+    }
+  }
+
+  async function handleRequestOtp(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await requestPasswordResetOtp();
+  }
+
+  async function handleResendOtp() {
+    const sent = await requestPasswordResetOtp();
+    if (sent) {
+      setOtp("");
+      setNewPassword("");
+      setConfirmPassword("");
     }
   }
 
@@ -102,6 +117,7 @@ export default function ForgotPasswordForm({
       const payload = (await response.json()) as {
         message?: string;
         success: boolean;
+        errorCode?: string;
         data?: { redirectPath?: string };
       };
 
@@ -236,16 +252,11 @@ export default function ForgotPasswordForm({
 
           <button
             type="button"
-            onClick={() => {
-              setStep("request");
-              setOtp("");
-              setNewPassword("");
-              setConfirmPassword("");
-              setErrorMessage(null);
-            }}
-            className="w-full h-11 rounded-xl border border-gray-200 bg-white text-sm font-medium text-slate-600 hover:border-[#1a56db] hover:text-[#1a56db] transition-colors"
+            onClick={() => void handleResendOtp()}
+            disabled={isPending}
+            className="w-full h-11 rounded-xl border border-gray-200 bg-white text-sm font-medium text-slate-600 hover:border-[#1a56db] hover:text-[#1a56db] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            Resend OTP
+            {isPending ? "Sending OTP..." : "Resend OTP"}
           </button>
         </form>
       ) : null}

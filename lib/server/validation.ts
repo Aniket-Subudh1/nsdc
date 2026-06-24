@@ -70,6 +70,12 @@ export const loginVerifyOtpSchema = z.object({
   portal: authPortalSchema.default("admin"),
 });
 
+export const loginResendOtpSchema = z.object({
+  email: z.string().trim().email(),
+  challengeId: z.string().trim().min(1),
+  portal: authPortalSchema.default("admin"),
+});
+
 export const forgotPasswordRequestSchema = z.object({
   email: z.string().trim().email(),
   portal: authPortalSchema,

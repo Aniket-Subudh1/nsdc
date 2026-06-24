@@ -7,6 +7,7 @@ export const CANDIDATE_PROGRAM_OPTIONS = [
   "SFS - Skill for Success",
   "ITI",
   "Diploma",
+  "Farmer",
 ] as const;
 
 export type CandidateNamePrefix = (typeof CANDIDATE_NAME_PREFIX_OPTIONS)[number];

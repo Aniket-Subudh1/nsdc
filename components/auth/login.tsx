@@ -167,6 +167,7 @@ export default function LoginPage({
       const payload = (await response.json()) as {
         message?: string;
         success: boolean;
+        errorCode?: string;
         data?: {
           redirectPath?: string;
         };
@@ -174,6 +175,14 @@ export default function LoginPage({
 
       if (!response.ok || !payload.success) {
         setErrorMessage(payload.message ?? "Invalid verification code");
+
+        if (payload.errorCode === "OTP_CHALLENGE_INVALID") {
+          setLoginStep("credentials");
+          setChallengeId(null);
+          setMaskedEmail(null);
+          setOtp("");
+        }
+
         return;
       }
 
@@ -187,20 +196,26 @@ export default function LoginPage({
   }
 
   async function handleResendOtp() {
+    if (!challengeId) {
+      setErrorMessage("Your verification session expired. Please sign in again.");
+      setLoginStep("credentials");
+      return;
+    }
+
     setIsPending(true);
     setErrorMessage(null);
     setStatusMessage(null);
 
     try {
-      const response = await fetch("/api/v1/auth/login", {
+      const response = await fetch("/api/v1/auth/login/resend-otp", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         credentials: "include",
         body: JSON.stringify({
-          email,
-          password,
+          email: email.trim().toLowerCase(),
+          challengeId: challengeId.trim(),
           portal,
         }),
       });
@@ -208,8 +223,8 @@ export default function LoginPage({
       const payload = (await response.json()) as {
         message?: string;
         success: boolean;
+        errorCode?: string;
         data?: {
-          requiresOtp?: boolean;
           challengeId?: string;
           maskedEmail?: string;
         };
@@ -217,6 +232,14 @@ export default function LoginPage({
 
       if (!response.ok || !payload.success || !payload.data?.challengeId) {
         setErrorMessage(payload.message ?? "Unable to resend verification code");
+
+        if (payload.errorCode === "OTP_CHALLENGE_INVALID") {
+          setLoginStep("credentials");
+          setChallengeId(null);
+          setMaskedEmail(null);
+          setOtp("");
+        }
+
         return;
       }
 

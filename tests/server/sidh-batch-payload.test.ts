@@ -100,10 +100,10 @@ describe("SIDH batch payload builder", () => {
     expect(calculateBatchEndDate("2026-06-11", 240, 8)).toBe("2026-07-10");
   });
 
-  it("defaults assessment date to 7 days after batch end date", () => {
-    expect(calculateMinimumAssessmentDate("2026-02-01")).toBe("2026-02-08");
-    expect(resolveAssessmentDate("2026-02-01")).toBe("2026-02-08");
-    expect(resolveAssessmentDate("2026-02-01", "2026-02-03")).toBe("2026-02-08");
+  it("defaults assessment date to the next day after batch end date", () => {
+    expect(calculateMinimumAssessmentDate("2026-02-01")).toBe("2026-02-02");
+    expect(resolveAssessmentDate("2026-02-01")).toBe("2026-02-02");
+    expect(resolveAssessmentDate("2026-02-01", "2026-02-01")).toBe("2026-02-02");
     expect(resolveAssessmentDate("2026-02-01", "2026-02-15")).toBe("2026-02-15");
   });
 

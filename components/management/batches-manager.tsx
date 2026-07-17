@@ -28,6 +28,7 @@ import { formatUserDateTime } from "@/lib/format-datetime";
 import { cn } from "@/lib/utils";
 import {
   BATCH_FEE_MIN_ERROR,
+  MIN_ASSESSMENT_DATE_ERROR,
   buildSidhBatchPayload,
   calculateBatchEndDate,
   calculateMinimumAssessmentDate,
@@ -1359,7 +1360,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
     }
 
     if (batchForm.endDate && batchForm.assessmentDate < minimumAssessmentDate) {
-      return `Assessment date must be at least 7 days after the batch end date (${minimumAssessmentDate})`;
+      return `${MIN_ASSESSMENT_DATE_ERROR} (${minimumAssessmentDate})`;
     }
 
     const batchFee = Number(batchForm.fee || selectedCourse?.price || 0);
@@ -1975,7 +1976,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
           />
           {minimumAssessmentDate ? (
             <p className="text-xs text-slate-500">
-              Defaults to 7 days after the batch end date. You can choose a later date, but not earlier than{" "}
+              Defaults to the next day after the batch end date. You can choose a later date, but not earlier than{" "}
               {minimumAssessmentDate}.
             </p>
           ) : (

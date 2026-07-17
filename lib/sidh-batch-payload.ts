@@ -37,7 +37,8 @@ export type SidhBatchPayloadSource = {
   tcId?: string | null;
 };
 
-export const MIN_ASSESSMENT_DAYS_AFTER_BATCH_END = 7;
+export const MIN_ASSESSMENT_DAYS_AFTER_BATCH_END = 1;
+export const MIN_ASSESSMENT_DATE_ERROR = "Assessment date must be at least 1 day after the batch end date";
 export const BATCH_FEE_MIN_ERROR = "Batch fee must be greater than 0";
 
 export function isValidBatchFee(fee?: number | null): fee is number {

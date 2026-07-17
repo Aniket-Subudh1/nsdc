@@ -17,7 +17,7 @@ import {
   resolveCandidateDistrict,
   resolveCandidateState,
 } from "@/lib/candidate-location-options";
-import { BATCH_FEE_MIN_ERROR, calculateMinimumAssessmentDate } from "@/lib/sidh-batch-payload";
+import { BATCH_FEE_MIN_ERROR, calculateMinimumAssessmentDate, MIN_ASSESSMENT_DATE_ERROR } from "@/lib/sidh-batch-payload";
 import { z } from "zod";
 
 import { ROLE_KEYS } from "@/lib/server/rbac";
@@ -917,7 +917,7 @@ export const createBatchSchema = z
     if (value.assessmentDate && value.endDate && value.assessmentDate < calculateMinimumAssessmentDate(value.endDate)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Assessment date must be at least 7 days after the batch end date",
+        message: MIN_ASSESSMENT_DATE_ERROR,
         path: ["assessmentDate"],
       });
     }
@@ -973,7 +973,7 @@ export const updateBatchSchema = z
     if (value.assessmentDate && value.endDate && value.assessmentDate < calculateMinimumAssessmentDate(value.endDate)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Assessment date must be at least 7 days after the batch end date",
+        message: MIN_ASSESSMENT_DATE_ERROR,
         path: ["assessmentDate"],
       });
     }

@@ -26,7 +26,7 @@ describe("batch validation", () => {
     ).toThrow("Batch size must never exceed 80 candidates");
   });
 
-  it("rejects assessment dates fewer than 7 days after the batch end date", () => {
+  it("rejects assessment dates on the batch end date", () => {
     expect(() =>
       createBatchSchema.parse({
         batchCode: "B-002",
@@ -36,13 +36,13 @@ describe("batch validation", () => {
         schemeId: "scheme_001",
         startDate: "2026-01-01",
         endDate: "2026-02-01",
-        assessmentDate: "2026-02-03",
+        assessmentDate: "2026-02-01",
         fee: 500,
       }),
-    ).toThrow("Assessment date must be at least 7 days after the batch end date");
+    ).toThrow("Assessment date must be at least 1 day after the batch end date");
   });
 
-  it("accepts assessment dates at least 7 days after the batch end date", () => {
+  it("accepts assessment dates from the next day after the batch end date", () => {
     expect(
       createBatchSchema.parse({
         batchCode: "B-003",
@@ -52,13 +52,22 @@ describe("batch validation", () => {
         schemeId: "scheme_001",
         startDate: "2026-01-01",
         endDate: "2026-02-01",
-        assessmentDate: "2026-02-15",
+        assessmentDate: "2026-02-02",
         fee: 500,
       }),
     ).toMatchObject({
       batchCode: "B-003",
-      assessmentDate: "2026-02-15",
+      assessmentDate: "2026-02-02",
     });
+  });
+
+  it("rejects update assessment dates on the batch end date", () => {
+    expect(() =>
+      updateBatchSchema.parse({
+        endDate: "2026-02-01",
+        assessmentDate: "2026-02-01",
+      }),
+    ).toThrow("Assessment date must be at least 1 day after the batch end date");
   });
 
   it("rejects inverted start and end dates on update", () => {

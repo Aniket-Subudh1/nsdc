@@ -291,6 +291,11 @@ const candidateSchema = new mongoose.Schema(
       trim: true,
       default: null,
     },
+    referenceSectorName: {
+      type: String,
+      trim: true,
+      default: null,
+    },
     duplicateHash: {
       type: String,
       required: true,

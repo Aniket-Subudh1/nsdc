@@ -869,6 +869,17 @@ export const candidateImportSchema = z.object({
   registrationMode: optionalRegistrationModeFormSchema,
 });
 
+export const candidateImportRowsQuerySchema = paginationQuerySchema.extend({
+  status: z.string().trim().optional(),
+  sectorName: z.string().trim().optional(),
+  courseName: z.string().trim().optional(),
+});
+
+export const commitCandidateImportSchema = z.object({
+  sectorName: z.string().trim().min(1).optional(),
+  courseName: z.string().trim().min(1).optional(),
+});
+
 export const bulkQueueCandidateSyncSchema = z.object({
   candidateIds: z.array(z.string().trim().min(1)).min(1).max(100),
 });
@@ -1104,6 +1115,8 @@ export type CandidateListQuery = z.infer<typeof candidateListQuerySchema>;
 export type CandidateExportQuery = z.infer<typeof candidateExportQuerySchema>;
 export type CourseExportQuery = z.infer<typeof courseExportQuerySchema>;
 export type CandidateImportInput = z.infer<typeof candidateImportSchema>;
+export type CandidateImportRowsQuery = z.infer<typeof candidateImportRowsQuerySchema>;
+export type CommitCandidateImportInput = z.infer<typeof commitCandidateImportSchema>;
 export type BulkQueueCandidateSyncInput = z.infer<typeof bulkQueueCandidateSyncSchema>;
 export type SyncJobsQuery = z.infer<typeof syncJobsQuerySchema>;
 export type ProcessSyncJobsInput = z.infer<typeof processSyncJobsSchema>;

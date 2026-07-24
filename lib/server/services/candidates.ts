@@ -60,6 +60,7 @@ type CandidateCreateOptions = {
   queueSync?: boolean;
   referenceCourseId?: string | null;
   referenceCourseName?: string | null;
+  referenceSectorName?: string | null;
   registrationField?: "phone" | "mobileNumber";
   requestId?: string;
   skipAudit?: boolean;
@@ -113,6 +114,7 @@ type CandidateLike = {
   programId: string;
   referenceCourseId?: string | null;
   referenceCourseName?: string | null;
+  referenceSectorName?: string | null;
   registrationMode: "internal_registration" | "existing_sidh_link";
   religion?: string | null;
   salutation?: string | null;
@@ -406,11 +408,11 @@ async function resolveReferenceCourseDetails(
   referenceDetails?: { courseId?: string; courseName?: string; sectorName?: string } | null,
 ) {
   if (referenceDetails === null) {
-    return { courseId: null, courseName: null };
+    return { courseId: null, courseName: null, sectorName: null };
   }
 
   if (!referenceDetails) {
-    return { courseId: null, courseName: null };
+    return { courseId: null, courseName: null, sectorName: null };
   }
 
   const courseId = normalizeWhitespace(referenceDetails.courseId);
@@ -418,7 +420,7 @@ async function resolveReferenceCourseDetails(
   const sectorNameInput = normalizeWhitespace(referenceDetails.sectorName);
 
   if (!courseId && !courseNameInput) {
-    return { courseId: null, courseName: null };
+    return { courseId: null, courseName: null, sectorName: null };
   }
 
   const referenceCourseSelect = {
@@ -449,7 +451,22 @@ async function resolveReferenceCourseDetails(
     };
   }
 
+  async function resolveSectorNameForCourse(courseSectorId?: string | null, preferredSectorName?: string) {
+    if (preferredSectorName) {
+      return preferredSectorName;
+    }
+
+    const sectorId = normalizeWhitespace(courseSectorId);
+    if (!sectorId) {
+      return null;
+    }
+
+    const sector = await SectorModel.findOne({ sectorId }).select({ name: 1 });
+    return normalizeWhitespace(sector?.name) || null;
+  }
+
   let sectorIdFilter: string | undefined;
+  let resolvedSectorName: string | null = sectorNameInput || null;
   if (sectorNameInput) {
     const sector = await SectorModel.findOne({
       name: { $regex: new RegExp(`^${escapeRegExp(sectorNameInput)}$`, "i") },
@@ -461,6 +478,7 @@ async function resolveReferenceCourseDetails(
     }
 
     sectorIdFilter = sector.sectorId;
+    resolvedSectorName = normalizeWhitespace(sector.name) || sectorNameInput;
   }
 
   if (courseId) {
@@ -479,7 +497,10 @@ async function resolveReferenceCourseDetails(
       );
     }
 
-    return assertReferenceCourseEligible(course);
+    return {
+      ...assertReferenceCourseEligible(course),
+      sectorName: await resolveSectorNameForCourse(course.sectorId, resolvedSectorName ?? undefined),
+    };
   }
 
   const matchingCourses = await CourseModel.find({
@@ -515,7 +536,10 @@ async function resolveReferenceCourseDetails(
     );
   }
 
-  return assertReferenceCourseEligible(matchingCourses[0]);
+  return {
+    ...assertReferenceCourseEligible(matchingCourses[0]),
+    sectorName: await resolveSectorNameForCourse(matchingCourses[0].sectorId, resolvedSectorName ?? undefined),
+  };
 }
 
 function expandCandidateRegistrationInput(
@@ -643,6 +667,7 @@ function serializeCandidate(candidate: CandidateLike) {
     referenceDetails: {
       courseId: candidate.referenceCourseId ?? null,
       courseName: candidate.referenceCourseName ?? null,
+      sectorName: candidate.referenceSectorName ?? null,
     },
     domicile: {
       state: candidate.domicileState ?? null,
@@ -714,6 +739,73 @@ function serializeImportRow(row: Record<string, unknown>) {
   };
 }
 
+type ImportRowReferenceFilters = {
+  courseName?: string;
+  sectorName?: string;
+};
+
+function getImportRowReference(row: Record<string, unknown>) {
+  const normalized =
+    row.normalized && typeof row.normalized === "object" ? (row.normalized as Record<string, unknown>) : {};
+  const reference =
+    normalized.referenceDetails && typeof normalized.referenceDetails === "object"
+      ? (normalized.referenceDetails as Record<string, unknown>)
+      : {};
+
+  return {
+    courseName: normalizeWhitespace(reference.courseName),
+    sectorName: normalizeWhitespace(reference.sectorName),
+  };
+}
+
+function importRowMatchesReferenceFilters(row: Record<string, unknown>, filters: ImportRowReferenceFilters = {}) {
+  const reference = getImportRowReference(row);
+  const sectorFilter = normalizeWhitespace(filters.sectorName);
+  const courseFilter = normalizeWhitespace(filters.courseName);
+
+  if (sectorFilter && reference.sectorName.toLowerCase() !== sectorFilter.toLowerCase()) {
+    return false;
+  }
+
+  if (courseFilter && reference.courseName.toLowerCase() !== courseFilter.toLowerCase()) {
+    return false;
+  }
+
+  return true;
+}
+
+function buildImportRowReferenceFilterOptions(rows: Array<Record<string, unknown>>) {
+  const coursesBySector: Record<string, string[]> = {};
+  const sectorNames = new Set<string>();
+
+  for (const row of rows) {
+    const reference = getImportRowReference(row);
+    if (!reference.sectorName) {
+      continue;
+    }
+
+    sectorNames.add(reference.sectorName);
+    if (!reference.courseName) {
+      continue;
+    }
+
+    const existing = coursesBySector[reference.sectorName] ?? [];
+    if (!existing.some((courseName) => courseName.toLowerCase() === reference.courseName.toLowerCase())) {
+      existing.push(reference.courseName);
+      coursesBySector[reference.sectorName] = existing;
+    }
+  }
+
+  for (const sectorName of Object.keys(coursesBySector)) {
+    coursesBySector[sectorName] = coursesBySector[sectorName].sort((left, right) => left.localeCompare(right));
+  }
+
+  return {
+    sectorNames: [...sectorNames].sort((left, right) => left.localeCompare(right)),
+    coursesBySector,
+  };
+}
+
 const IMPORT_ROW_BATCH_SIZE = 1000;
 
 async function persistImportRows(importJobId: string, rows: Array<Record<string, unknown>>) {
@@ -743,11 +835,16 @@ function listEmbeddedImportRows(
   page: number,
   pageSize: number,
   status?: string,
+  referenceFilters: ImportRowReferenceFilters = {},
 ) {
   let rows = Array.from(job.rows as unknown as Array<Record<string, unknown>>);
 
   if (status) {
     rows = rows.filter((row) => row.status === status);
+  }
+
+  if (referenceFilters.sectorName || referenceFilters.courseName) {
+    rows = rows.filter((row) => importRowMatchesReferenceFilters(row, referenceFilters));
   }
 
   const start = (page - 1) * pageSize;
@@ -758,6 +855,7 @@ function listEmbeddedImportRows(
     page,
     pageSize,
     total: rows.length,
+    filterOptions: buildImportRowReferenceFilterOptions(Array.from(job.rows as unknown as Array<Record<string, unknown>>)),
   };
 }
 
@@ -1066,6 +1164,7 @@ async function createCandidateRecord(actor: AuthSession, input: CreateCandidateI
     ...normalized,
     referenceCourseId: options.referenceCourseId?.trim() || null,
     referenceCourseName: options.referenceCourseName?.trim() || null,
+    referenceSectorName: options.referenceSectorName?.trim() || null,
     sidhCandidateId: null,
     syncState: {
       status: "not_queued",
@@ -1094,6 +1193,7 @@ async function createCandidateRecord(actor: AuthSession, input: CreateCandidateI
         programId: input.programId,
         referenceCourseId: options.referenceCourseId ?? null,
         referenceCourseName: options.referenceCourseName ?? null,
+        referenceSectorName: options.referenceSectorName ?? null,
         sourceImportJobId: options.sourceImportJobId ?? null,
         createdByUserId: actor.user.id,
       },
@@ -1243,6 +1343,7 @@ export async function createCandidate(actor: AuthSession, input: CreateCandidate
     ...options,
     referenceCourseId: referenceCourse.courseId,
     referenceCourseName: referenceCourse.courseName,
+    referenceSectorName: referenceCourse.sectorName,
     registrationField: "phone",
   });
 }
@@ -1268,6 +1369,7 @@ export async function updateCandidate(actor: AuthSession, candidateId: string, p
       : {
           courseId: candidate.referenceCourseId ?? null,
           courseName: candidate.referenceCourseName ?? null,
+          sectorName: candidate.referenceSectorName ?? null,
         };
 
   await Promise.all([ensureProgramExists(mergedInput.programId), ensureTrainingCenterExists(mergedInput.centerId)]);
@@ -1276,6 +1378,7 @@ export async function updateCandidate(actor: AuthSession, candidateId: string, p
   Object.assign(candidate, normalized, {
     referenceCourseId: referenceCourse.courseId,
     referenceCourseName: referenceCourse.courseName,
+    referenceSectorName: referenceCourse.sectorName,
     updatedByUserId: actor.user.id,
   });
   await candidate.save();
@@ -1290,6 +1393,7 @@ export async function updateCandidate(actor: AuthSession, candidateId: string, p
       centerId: candidate.centerId,
       referenceCourseId: candidate.referenceCourseId,
       referenceCourseName: candidate.referenceCourseName,
+      referenceSectorName: candidate.referenceSectorName,
       updatedByUserId: actor.user.id,
     },
     requestId,
@@ -1343,6 +1447,17 @@ export async function getCandidate(actor: AuthSession, candidateId: string) {
   }
 
   resolveScopedCenterFilter(actor, candidate.centerId);
+
+  // Backfill sector for older records that only stored a reference course.
+  if (!candidate.referenceSectorName && candidate.referenceCourseId) {
+    const course = await CourseModel.findOne({ courseId: candidate.referenceCourseId }).select({ sectorId: 1 });
+    if (course?.sectorId) {
+      const sector = await SectorModel.findOne({ sectorId: course.sectorId }).select({ name: 1 });
+      if (sector?.name) {
+        candidate.referenceSectorName = sector.name;
+      }
+    }
+  }
 
   return serializeCandidate(candidate);
 }
@@ -1788,6 +1903,7 @@ export async function listCandidateImportRows(
   page: number,
   pageSize: number,
   status?: string,
+  referenceFilters: ImportRowReferenceFilters = {},
 ) {
   await connectToDatabase();
   ensureCanReadCandidates(actor);
@@ -1806,10 +1922,20 @@ export async function listCandidateImportRows(
       filter.status = status;
     }
 
+    const sectorFilter = normalizeWhitespace(referenceFilters.sectorName);
+    const courseFilter = normalizeWhitespace(referenceFilters.courseName);
+    if (sectorFilter) {
+      filter["normalized.referenceDetails.sectorName"] = new RegExp(`^${escapeRegExp(sectorFilter)}$`, "i");
+    }
+    if (courseFilter) {
+      filter["normalized.referenceDetails.courseName"] = new RegExp(`^${escapeRegExp(courseFilter)}$`, "i");
+    }
+
     const start = (page - 1) * pageSize;
-    const [items, total] = await Promise.all([
+    const [items, total, filterSourceRows] = await Promise.all([
       CandidateImportRowModel.find(filter).sort({ rowNumber: 1 }).skip(start).limit(pageSize).lean(),
       CandidateImportRowModel.countDocuments(filter),
+      CandidateImportRowModel.find({ importJobId }).select({ normalized: 1 }).lean(),
     ]);
 
     return {
@@ -1817,13 +1943,19 @@ export async function listCandidateImportRows(
       page,
       pageSize,
       total,
+      filterOptions: buildImportRowReferenceFilterOptions(filterSourceRows as Array<Record<string, unknown>>),
     };
   }
 
-  return listEmbeddedImportRows(job, page, pageSize, status);
+  return listEmbeddedImportRows(job, page, pageSize, status, referenceFilters);
 }
 
-export async function commitCandidateImportJob(actor: AuthSession, importJobId: string, requestId?: string) {
+export async function commitCandidateImportJob(
+  actor: AuthSession,
+  importJobId: string,
+  requestId?: string,
+  referenceFilters: ImportRowReferenceFilters = {},
+) {
   await connectToDatabase();
   ensureCanWriteCandidates(actor);
 
@@ -1839,13 +1971,22 @@ export async function commitCandidateImportJob(actor: AuthSession, importJobId: 
     throw new ApiError(409, "IMPORT_ALREADY_COMMITTED", "This import job has already been committed");
   }
 
-  let committedRows = 0;
+  let committedInThisRun = 0;
+  const sectorFilter = normalizeWhitespace(referenceFilters.sectorName);
+  const courseFilter = normalizeWhitespace(referenceFilters.courseName);
 
   if (await importJobUsesExternalRows(importJobId)) {
     const COMMIT_BATCH_SIZE = 100;
+    const commitFilter: Record<string, unknown> = { importJobId, status: "valid" };
+    if (sectorFilter) {
+      commitFilter["normalized.referenceDetails.sectorName"] = new RegExp(`^${escapeRegExp(sectorFilter)}$`, "i");
+    }
+    if (courseFilter) {
+      commitFilter["normalized.referenceDetails.courseName"] = new RegExp(`^${escapeRegExp(courseFilter)}$`, "i");
+    }
 
     while (true) {
-      const batch = await CandidateImportRowModel.find({ importJobId, status: "valid" })
+      const batch = await CandidateImportRowModel.find(commitFilter)
         .sort({ rowNumber: 1 })
         .limit(COMMIT_BATCH_SIZE)
         .lean();
@@ -1864,7 +2005,7 @@ export async function commitCandidateImportJob(actor: AuthSession, importJobId: 
           });
           const referenceDetails =
             normalizedRow.referenceDetails && typeof normalizedRow.referenceDetails === "object"
-              ? (normalizedRow.referenceDetails as { courseId?: string; courseName?: string })
+              ? (normalizedRow.referenceDetails as { courseId?: string; courseName?: string; sectorName?: string })
               : null;
           const referenceCourse = await resolveReferenceCourseDetails(referenceDetails);
           const createdCandidate = await createCandidateRecord(actor, candidateInput, {
@@ -1874,9 +2015,10 @@ export async function commitCandidateImportJob(actor: AuthSession, importJobId: 
             sourceImportJobId: importJobId,
             referenceCourseId: referenceCourse.courseId,
             referenceCourseName: referenceCourse.courseName,
+            referenceSectorName: referenceCourse.sectorName,
           });
 
-          committedRows += 1;
+          committedInThisRun += 1;
           await CandidateImportRowModel.updateOne(
             { rowId: row.rowId },
             {
@@ -1908,7 +2050,7 @@ export async function commitCandidateImportJob(actor: AuthSession, importJobId: 
     const updatedRows: Array<Record<string, unknown>> = [];
 
     for (const row of Array.from(job.rows as unknown as Array<Record<string, unknown>>)) {
-      if (row.status !== "valid") {
+      if (row.status !== "valid" || !importRowMatchesReferenceFilters(row, referenceFilters)) {
         updatedRows.push(row);
         continue;
       }
@@ -1922,7 +2064,7 @@ export async function commitCandidateImportJob(actor: AuthSession, importJobId: 
         });
         const referenceDetails =
           normalizedRow.referenceDetails && typeof normalizedRow.referenceDetails === "object"
-            ? (normalizedRow.referenceDetails as { courseId?: string; courseName?: string })
+            ? (normalizedRow.referenceDetails as { courseId?: string; courseName?: string; sectorName?: string })
             : null;
         const referenceCourse = await resolveReferenceCourseDetails(referenceDetails);
         const createdCandidate = await createCandidateRecord(actor, candidateInput, {
@@ -1932,9 +2074,10 @@ export async function commitCandidateImportJob(actor: AuthSession, importJobId: 
           sourceImportJobId: importJobId,
           referenceCourseId: referenceCourse.courseId,
           referenceCourseName: referenceCourse.courseName,
+          referenceSectorName: referenceCourse.sectorName,
         });
 
-        committedRows += 1;
+        committedInThisRun += 1;
         updatedRows.push({
           ...row,
           status: "committed",
@@ -1957,9 +2100,26 @@ export async function commitCandidateImportJob(actor: AuthSession, importJobId: 
     job.rows = updatedRows as never;
   }
 
-  job.status = "committed";
-  job.committedRows = committedRows;
-  job.committedAt = new Date();
+  const remainingValidCount = (await importJobUsesExternalRows(importJobId))
+    ? await CandidateImportRowModel.countDocuments({ importJobId, status: "valid" })
+    : Array.from(job.rows as unknown as Array<Record<string, unknown>>).filter((row) => row.status === "valid").length;
+
+  if (committedInThisRun === 0 && (sectorFilter || courseFilter)) {
+    throw new ApiError(
+      400,
+      "IMPORT_FILTER_NO_ROWS",
+      "No ready-to-save rows match the selected sector/course filters",
+    );
+  }
+
+  job.committedRows = (job.committedRows ?? 0) + committedInThisRun;
+  job.validRows = remainingValidCount;
+
+  if (remainingValidCount === 0) {
+    job.status = "committed";
+    job.committedAt = new Date();
+  }
+
   await job.save();
 
   await writeAuditLog({
@@ -1967,7 +2127,12 @@ export async function commitCandidateImportJob(actor: AuthSession, importJobId: 
     actorUserId: actor.user.id,
     entityType: "candidate_import",
     entityId: importJobId,
-    metadata: { committedRows },
+    metadata: {
+      committedRows: committedInThisRun,
+      remainingValidRows: remainingValidCount,
+      sectorName: sectorFilter || null,
+      courseName: courseFilter || null,
+    },
     requestId,
   });
 

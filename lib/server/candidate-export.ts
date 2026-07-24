@@ -53,6 +53,7 @@ type CandidateExportSource = {
     state?: string | null;
   } | null;
   referenceCourseName?: string | null;
+  referenceSectorName?: string | null;
   salutation?: string | null;
 };
 
@@ -78,7 +79,7 @@ export function mapCandidateToExportRow(candidate: CandidateExportSource): Candi
     District: district,
     Program: getCandidateProgramLabel(candidate.programId) || "",
     "Center Name": candidate.centerName ?? "",
-    "Sector (reference only)": "",
+    "Sector (reference only)": candidate.referenceSectorName ?? "",
     "Course (reference only)": candidate.referenceCourseName ?? "",
   };
 }

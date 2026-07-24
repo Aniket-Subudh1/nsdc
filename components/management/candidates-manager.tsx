@@ -114,6 +114,7 @@ type CandidateRecord = {
   referenceDetails?: {
     courseId: string | null;
     courseName: string | null;
+    sectorName: string | null;
   };
   registrationMode: "internal_registration" | "existing_sidh_link";
   sidhCandidateId: string | null;
@@ -204,6 +205,10 @@ type ImportRowRecord = {
 };
 
 type PagedImportRows = {
+  filterOptions?: {
+    coursesBySector: Record<string, string[]>;
+    sectorNames: string[];
+  };
   items: ImportRowRecord[];
   page: number;
   pageSize: number;
@@ -211,6 +216,16 @@ type PagedImportRows = {
 };
 
 type ImportRowStatusFilter = "" | "duplicate" | "invalid" | "valid";
+
+type ImportReferenceFilters = {
+  courseName: string;
+  sectorName: string;
+};
+
+const initialImportReferenceFilters: ImportReferenceFilters = {
+  courseName: "",
+  sectorName: "",
+};
 
 type ImportRowPreview = {
   centerName: string;
@@ -226,6 +241,7 @@ type ImportRowPreview = {
   guardianName: string;
   mobile: string;
   namePrefix: string;
+  sectorName: string;
   state: string;
 };
 
@@ -259,6 +275,7 @@ function extractImportRowPreview(normalized: Record<string, unknown>): ImportRow
     guardianName: displayImportValue(String(personal.guardianName ?? personal.guardiansName ?? "")),
     mobile: displayImportValue(String(contact.phone ?? contact.mobileNumber ?? "")),
     namePrefix: displayImportValue(namePrefix),
+    sectorName: displayImportValue(String(reference.sectorName ?? "")),
     state: displayImportValue(String(location.state ?? "")),
   };
 }
@@ -278,6 +295,7 @@ const IMPORT_FIELD_LABELS: Record<string, string> = {
   "personalDetails.guardianName": "Guardian name",
   "personalDetails.namePrefix": "Name prefix",
   "referenceDetails.courseName": "Course (reference only)",
+  "referenceDetails.sectorName": "Sector (reference only)",
 };
 
 function formatImportError(error: { field?: string; message: string }) {
@@ -934,9 +952,21 @@ async function fetchSyncJobs(filters: SyncFilters) {
   return apiFetch<PagedSyncJobs>(`/api/v1/sync/jobs?${query}`);
 }
 
-async function fetchImportRows(jobId: string, page: number, pageSize: number, status?: ImportRowStatusFilter) {
+async function fetchImportRows(
+  jobId: string,
+  page: number,
+  pageSize: number,
+  status?: ImportRowStatusFilter,
+  referenceFilters: ImportReferenceFilters = initialImportReferenceFilters,
+) {
   return apiFetch<PagedImportRows>(
-    `/api/v1/candidates/imports/${jobId}/rows?${buildQueryString({ page, pageSize, status: status || undefined })}`,
+    `/api/v1/candidates/imports/${jobId}/rows?${buildQueryString({
+      page,
+      pageSize,
+      status: status || undefined,
+      sectorName: referenceFilters.sectorName || undefined,
+      courseName: referenceFilters.courseName || undefined,
+    })}`,
   );
 }
 
@@ -963,6 +993,11 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   const [importRows, setImportRows] = useState<ImportRowRecord[]>([]);
   const [importPagination, setImportPagination] = useState({ page: 1, pageSize: 50, total: 0 });
   const [importRowStatusFilter, setImportRowStatusFilter] = useState<ImportRowStatusFilter>("");
+  const [importReferenceFilters, setImportReferenceFilters] = useState(initialImportReferenceFilters);
+  const [importFilterOptions, setImportFilterOptions] = useState<{
+    coursesBySector: Record<string, string[]>;
+    sectorNames: string[];
+  }>({ coursesBySector: {}, sectorNames: [] });
   const [isLoadingImportRows, setIsLoadingImportRows] = useState(false);
   const [selectedImportRow, setSelectedImportRow] = useState<ImportRowRecord | null>(null);
   const [showImportRowModal, setShowImportRowModal] = useState(false);
@@ -1078,13 +1113,17 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
     page = importPagination.page,
     pageSize = importPagination.pageSize,
     status = importRowStatusFilter,
+    referenceFilters = importReferenceFilters,
   ) {
     setIsLoadingImportRows(true);
 
     try {
-      const rowData = await fetchImportRows(jobId, page, pageSize, status);
+      const rowData = await fetchImportRows(jobId, page, pageSize, status, referenceFilters);
       setImportRows(rowData.items);
       setImportPagination({ page: rowData.page, pageSize: rowData.pageSize, total: rowData.total });
+      if (rowData.filterOptions) {
+        setImportFilterOptions(rowData.filterOptions);
+      }
     } catch (error) {
       setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to load import rows");
     } finally {
@@ -1143,6 +1182,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
           importPagination.page,
           importPagination.pageSize,
           importRowStatusFilter,
+          importReferenceFilters,
         );
       }
 
@@ -1228,6 +1268,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
           importPagination.page,
           importPagination.pageSize,
           importRowStatusFilter,
+          importReferenceFilters,
         );
 
         if (!isMounted) {
@@ -1236,6 +1277,9 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
 
         setImportRows(rowData.items);
         setImportPagination({ page: rowData.page, pageSize: rowData.pageSize, total: rowData.total });
+        if (rowData.filterOptions) {
+          setImportFilterOptions(rowData.filterOptions);
+        }
       } catch (error) {
         if (isMounted) {
           setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to load import row review");
@@ -1252,7 +1296,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
     return () => {
       isMounted = false;
     };
-  }, [currentImportJob, importPagination.page, importPagination.pageSize, importRowStatusFilter]);
+  }, [currentImportJob, importPagination.page, importPagination.pageSize, importRowStatusFilter, importReferenceFilters]);
 
   async function handleImportUpload(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1269,6 +1313,8 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
       setCurrentImportJob(importJob);
       setImportPagination((current) => ({ ...current, page: 1 }));
       setImportRowStatusFilter("");
+      setImportReferenceFilters(initialImportReferenceFilters);
+      setImportFilterOptions({ coursesBySector: {}, sectorNames: [] });
       setSuccessMessage("File checked successfully");
     } catch (error) {
       setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to stage candidate import");
@@ -1395,12 +1441,26 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
     setSuccessMessage(null);
 
     try {
+      const hasReferenceFilter = Boolean(importReferenceFilters.sectorName || importReferenceFilters.courseName);
       const committedJob = await apiFetch<ImportJobRecord>(`/api/v1/candidates/imports/${currentImportJob.importJobId}/commit`, {
         method: "POST",
+        body: JSON.stringify({
+          sectorName: importReferenceFilters.sectorName || undefined,
+          courseName: importReferenceFilters.courseName || undefined,
+        }),
       });
       setCurrentImportJob(committedJob);
-      setSuccessMessage("Valid candidates saved. Select the records you want to send to Skill India.");
+      setSuccessMessage(
+        hasReferenceFilter
+          ? committedJob.status === "committed"
+            ? "Filtered learners saved. Go to All learners to send them to the NSDC_SIDH portal."
+            : "Filtered learners saved. Other sector/course rows are still ready if you want to save them next."
+          : "Valid candidates saved. Select the records you want to send to Skill India.",
+      );
       await refreshVisibleData();
+      if (committedJob.status !== "committed") {
+        await loadImportRows(committedJob.importJobId, 1, importPagination.pageSize, importRowStatusFilter, importReferenceFilters);
+      }
     } catch (error) {
       setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to commit candidate import");
     } finally {
@@ -2222,7 +2282,10 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                     <strong>Course (reference only)</strong> (courses unlock after sector is selected)
                   </li>
                   <li>Upload the file — we check every row and show errors in plain language</li>
-                  <li>Save valid rows, then send learners to the NSDC_SIDH portal from All learners</li>
+                  <li>
+                    Filter by <strong>Sector</strong> and <strong>Course</strong>, then save only the matching ready rows
+                  </li>
+                  <li>Send saved learners to the NSDC_SIDH portal from All learners</li>
                 </ol>
               </div>
 
@@ -2272,7 +2335,7 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                   {currentImportJob ? (
                     <button
                       type="button"
-                      disabled={isCommittingImport || currentImportJob.status === "committed"}
+                      disabled={isCommittingImport || currentImportJob.status === "committed" || currentImportJob.validRows === 0}
                       onClick={() => void handleCommitImport()}
                       className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 disabled:opacity-60"
                     >
@@ -2281,7 +2344,9 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                       ) : (
                         <IconCircleCheck className="h-4 w-4" />
                       )}
-                      Save valid rows
+                      {importReferenceFilters.sectorName || importReferenceFilters.courseName
+                        ? "Save filtered rows"
+                        : "Save valid rows"}
                     </button>
                   ) : null}
                 </div>
@@ -2339,6 +2404,78 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                 </div>
 
                 {currentImportJob ? (
+                  <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3 sm:flex-row sm:flex-wrap sm:items-end">
+                    <div className="min-w-[180px] flex-1 space-y-1.5">
+                      <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        Sector (reference only)
+                      </label>
+                      <select
+                        value={importReferenceFilters.sectorName}
+                        onChange={(event) => {
+                          const nextSector = event.target.value;
+                          setImportReferenceFilters({
+                            sectorName: nextSector,
+                            courseName: "",
+                          });
+                          setImportPagination((current) => ({ ...current, page: 1 }));
+                        }}
+                        className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-sky-300"
+                      >
+                        <option value="">All sectors</option>
+                        {importFilterOptions.sectorNames.map((sectorName) => (
+                          <option key={sectorName} value={sectorName}>
+                            {sectorName}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="min-w-[180px] flex-1 space-y-1.5">
+                      <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        Course (reference only)
+                      </label>
+                      <select
+                        value={importReferenceFilters.courseName}
+                        onChange={(event) => {
+                          setImportReferenceFilters((current) => ({
+                            ...current,
+                            courseName: event.target.value,
+                          }));
+                          setImportPagination((current) => ({ ...current, page: 1 }));
+                        }}
+                        className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-sky-300"
+                      >
+                        <option value="">
+                          {importReferenceFilters.sectorName ? "All courses in sector" : "All courses"}
+                        </option>
+                        {(importReferenceFilters.sectorName
+                          ? importFilterOptions.coursesBySector[importReferenceFilters.sectorName] ?? []
+                          : [...new Set(Object.values(importFilterOptions.coursesBySector).flat())].sort((a, b) =>
+                              a.localeCompare(b),
+                            )
+                        ).map((courseName) => (
+                          <option key={courseName} value={courseName}>
+                            {courseName}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    {importReferenceFilters.sectorName || importReferenceFilters.courseName ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setImportReferenceFilters(initialImportReferenceFilters);
+                          setImportPagination((current) => ({ ...current, page: 1 }));
+                        }}
+                        className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 hover:bg-slate-50"
+                      >
+                        <IconX className="h-4 w-4" />
+                        Clear filters
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {currentImportJob ? (
                   <div className="flex flex-wrap gap-1.5">
                     {(
                       [
@@ -2374,8 +2511,8 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                 ) : importRows.length === 0 ? (
                   <EmptyState
                     message={
-                      importRowStatusFilter
-                        ? "No rows match this filter. Try another filter or upload a new file."
+                      importRowStatusFilter || importReferenceFilters.sectorName || importReferenceFilters.courseName
+                        ? "No rows match these filters. Try another sector/course or clear filters."
                         : "This file has no rows to review."
                     }
                   />
@@ -2847,7 +2984,11 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                       }
                     />
                     <DetailMeta
-                      label="Course"
+                      label="Sector (reference)"
+                      value={detailCandidate.referenceDetails?.sectorName ?? "Not selected"}
+                    />
+                    <DetailMeta
+                      label="Course (reference)"
                       value={detailCandidate.referenceDetails?.courseName ?? "Not selected"}
                     />
                     <DetailMeta
@@ -3432,6 +3573,7 @@ function ImportRowViewModal({ onClose, row }: { onClose: () => void; row: Import
           <ImportDetailField label="District" value={details.district} />
           <ImportDetailField label="Program" value={details.program} />
           <ImportDetailField label="Training center" value={details.centerName} />
+          <ImportDetailField label="Sector (reference only)" value={details.sectorName} />
           <ImportDetailField label="Course (reference only)" value={details.courseName} />
         </ImportDetailSection>
 

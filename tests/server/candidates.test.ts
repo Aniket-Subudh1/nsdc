@@ -128,6 +128,7 @@ const sampleRegistrationProgram = "Fee-Based" as const;
 const activeReferenceCourse = {
   courseId: "cor_001",
   courseName: "Retail Sales Associate",
+  sectorId: "sec_001",
   status: "active",
   approvalStatus: "approved",
 } as const;
@@ -139,6 +140,7 @@ function mockActiveReferenceCourseLookup() {
       sort: vi.fn().mockResolvedValue([activeReferenceCourse]),
     }),
   });
+  mocks.sectorFindOne.mockReturnValue(createSelectQuery({ sectorId: "sec_001", name: "Retail" }));
 }
 
 describe("candidate services", () => {
@@ -404,12 +406,14 @@ describe("candidate services", () => {
       expect.objectContaining({
         referenceCourseId: "cor_001",
         referenceCourseName: "Retail Sales Associate",
+        referenceSectorName: "Retail",
       }),
     );
     expect(mocks.courseFindOne).toHaveBeenCalledWith({ courseId: "cor_001" });
     expect(result.referenceDetails).toEqual({
       courseId: "cor_001",
       courseName: "Retail Sales Associate",
+      sectorName: "Retail",
     });
   });
 
@@ -1026,8 +1030,139 @@ describe("candidate services", () => {
     const result = await commitCandidateImportJob(actor as never, "imp_001");
 
     expect(result.committedRows).toBe(1);
+    expect(result.status).toBe("committed");
     expect(save).toHaveBeenCalledTimes(1);
     expect(mocks.syncJobCreate).not.toHaveBeenCalled();
+  });
+
+  it("commits only import rows matching sector and course filters", async () => {
+    const save = vi.fn().mockResolvedValue(undefined);
+    mocks.importJobFindOne.mockResolvedValue({
+      importJobId: "imp_filter_001",
+      centerId: "tc_001",
+      status: "staged",
+      committedRows: 0,
+      validRows: 2,
+      rows: [
+        {
+          rowId: "impr_retail",
+          rowNumber: 2,
+          status: "valid",
+          normalized: {
+            programId: "prg_001",
+            centerId: "tc_001",
+            registrationMode: "internal_registration",
+            personalDetails: {
+              salutation: "Mr",
+              fullName: "Retail Learner",
+              gender: "Male",
+              dateOfBirth: "2005-06-10",
+              fathersName: "Father",
+              mothersName: "",
+              guardiansName: "",
+              religion: "",
+              category: "",
+              disability: false,
+              typeOfDisability: "",
+              educationLevel: "",
+              maritalStatus: "",
+            },
+            contactDetails: { email: "", countryCode: "91", mobileNumber: "9876543211" },
+            identity: { idType: "Alternate ID", typeOfAlternateId: "Voter ID Card", aadhaarReferenceNo: "", idNumber: "ABC1111111" },
+            domicile: { state: "ODISHA", district: "Khordha" },
+            permanentAddress: {
+              address: "Plot 1",
+              state: "ODISHA",
+              district: "Khordha",
+              pinCode: "751001",
+              city: "CUTTACK",
+              tehsil: "CUTTACK",
+              constituency: "Central",
+            },
+            communicationAddress: { sameAsPermanent: true },
+            experience: {
+              trainingStatus: "Fresher",
+              previousExperienceSector: "",
+              monthsOfPreviousExperience: null,
+              employed: "",
+              employmentStatus: "",
+              employmentDetails: "",
+              heardAboutUs: "Training Provider",
+            },
+            referenceDetails: { courseName: "Retail Sales Associate", sectorName: "Retail" },
+          },
+          errors: [],
+        },
+        {
+          rowId: "impr_yoga",
+          rowNumber: 3,
+          status: "valid",
+          normalized: {
+            programId: "prg_001",
+            centerId: "tc_001",
+            registrationMode: "internal_registration",
+            personalDetails: {
+              salutation: "Ms",
+              fullName: "Yoga Learner",
+              gender: "Female",
+              dateOfBirth: "2005-06-10",
+              fathersName: "Father",
+              mothersName: "",
+              guardiansName: "",
+              religion: "",
+              category: "",
+              disability: false,
+              typeOfDisability: "",
+              educationLevel: "",
+              maritalStatus: "",
+            },
+            contactDetails: { email: "", countryCode: "91", mobileNumber: "9876543212" },
+            identity: { idType: "Alternate ID", typeOfAlternateId: "Voter ID Card", aadhaarReferenceNo: "", idNumber: "ABC2222222" },
+            domicile: { state: "ODISHA", district: "Khordha" },
+            permanentAddress: {
+              address: "Plot 2",
+              state: "ODISHA",
+              district: "Khordha",
+              pinCode: "751001",
+              city: "CUTTACK",
+              tehsil: "CUTTACK",
+              constituency: "Central",
+            },
+            communicationAddress: { sameAsPermanent: true },
+            experience: {
+              trainingStatus: "Fresher",
+              previousExperienceSector: "",
+              monthsOfPreviousExperience: null,
+              employed: "",
+              employmentStatus: "",
+              employmentDetails: "",
+              heardAboutUs: "Training Provider",
+            },
+            referenceDetails: { courseName: "Yoga Instructor", sectorName: "Healthcare" },
+          },
+          errors: [],
+        },
+      ],
+      save,
+    });
+    mocks.candidateFindOne.mockReturnValue(createSelectQuery(null));
+    mocks.candidateCreate.mockImplementation(async (value: Record<string, unknown>) => value);
+    mockActiveReferenceCourseLookup();
+
+    const result = await commitCandidateImportJob(actor as never, "imp_filter_001", undefined, {
+      sectorName: "Retail",
+      courseName: "Retail Sales Associate",
+    });
+
+    expect(result.committedRows).toBe(1);
+    expect(result.validRows).toBe(1);
+    expect(result.status).toBe("staged");
+    expect(mocks.candidateCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.candidateCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fullName: "Retail Learner",
+      }),
+    );
   });
 
   it("queues selected candidates in bulk", async () => {

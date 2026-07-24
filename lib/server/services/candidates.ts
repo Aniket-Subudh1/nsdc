@@ -395,7 +395,8 @@ function assertLearnerMutableBeforeSidh(candidate: CandidateLike) {
     throw new ApiError(409, "CANDIDATE_SYNC_IN_PROGRESS", "Learner is already in the NSDC_SIDH sync queue");
   }
 
-  if (status === "synced" || status === "succeeded") {
+  // Only treat as fully synced when we actually stored a SIDH candidate ID.
+  if ((status === "synced" || status === "succeeded") && candidate.sidhCandidateId) {
     throw new ApiError(409, "CANDIDATE_ALREADY_SYNCED", "Learner is already registered on the NSDC_SIDH portal");
   }
 }

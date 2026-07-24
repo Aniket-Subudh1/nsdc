@@ -220,7 +220,16 @@ async function persistProcessingState(candidate: WorkerCandidate, job: WorkerSyn
 }
 
 async function finalizeSuccess(actor: SyncActor, candidate: WorkerCandidate, job: WorkerSyncJob, attemptId: string, now: Date, remoteCandidateId: string | null, requestId?: string) {
-  job.latestRemoteCandidateId = remoteCandidateId ?? job.latestRemoteCandidateId ?? null;
+  const resolvedCandidateId = remoteCandidateId?.trim() || candidate.sidhCandidateId?.trim() || null;
+  if (!resolvedCandidateId) {
+    throw new SidhConnectorError({
+      code: "SIDH_CANDIDATE_ID_MISSING",
+      manualReview: true,
+      message: "Cannot finalize candidate sync without a SIDH candidate ID",
+    });
+  }
+
+  job.latestRemoteCandidateId = resolvedCandidateId;
   job.lockId = null;
   job.lockedAt = null;
   job.nextRunAt = null;
@@ -230,14 +239,14 @@ async function finalizeSuccess(actor: SyncActor, candidate: WorkerCandidate, job
     failureCode: null,
     failureMessage: null,
     finishedAt: now,
-    remoteCandidateId,
+    remoteCandidateId: resolvedCandidateId,
     responseCode: 200,
     retryable: false,
     status: "succeeded",
   });
   await job.save?.();
 
-  candidate.sidhCandidateId = remoteCandidateId ?? candidate.sidhCandidateId ?? null;
+  candidate.sidhCandidateId = resolvedCandidateId;
   candidate.syncState = {
     ...(candidate.syncState ?? {}),
     lastAttemptAt: now,
@@ -258,7 +267,7 @@ async function finalizeSuccess(actor: SyncActor, candidate: WorkerCandidate, job
     metadata: {
       attemptId,
       candidateId: candidate.candidateId,
-      remoteCandidateId,
+      remoteCandidateId: resolvedCandidateId,
     },
     requestId,
   });

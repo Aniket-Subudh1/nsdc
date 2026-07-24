@@ -143,8 +143,10 @@ import {
   createAttendanceImport,
   createBatch,
   getBatchAttendanceSummary,
+  linkBatchToSidh,
   processQueuedBatchSyncJobs,
   processQueuedEnrollmentSyncJobs,
+  queueBatchSync,
   queueEnrollmentSync,
 } from "@/lib/server/services/batches";
 import { SidhConnectorError } from "@/lib/server/services/sidh-connector";
@@ -498,6 +500,159 @@ describe("batch services", () => {
           trainingHoursPerDay: 8,
           type: "Fee Based",
         }),
+      }),
+    );
+  });
+
+  it("reconciles SIDH conflict responses that include an existing numeric batch id", async () => {
+    const batch = createBatchDocument({ sidhBatchId: null, save: vi.fn().mockResolvedValue(undefined) });
+    const claimedState = createSyncState({
+      batchSync: {
+        attempts: [],
+        lastJobId: "bsjob_001",
+        retryCount: 0,
+        status: "processing",
+      },
+      sidhBatchId: null,
+    });
+
+    mocks.batchSyncStateFindOneAndUpdate.mockResolvedValueOnce(claimedState).mockResolvedValueOnce(null);
+    mocks.batchFindOne.mockResolvedValue(batch);
+    mocks.courseFindOne.mockReturnValue(
+      createSelectQuery({
+        approvalStatus: "approved",
+        associatedQpOrJobRole: "Retail Sales Associate",
+        courseId: "course_001",
+        courseName: "Retail Course",
+        minimumAge: 18,
+        nsqfLevel: 4,
+        programIds: ["prg_001"],
+        qpCode: "QP001",
+        schemeIds: ["scheme_001"],
+        sidhCourseId: "SIDH_COURSE_001",
+        status: "active",
+        trainingHours: 240,
+        validityEndDate: new Date("2026-12-31T00:00:00.000Z"),
+        validityStartDate: new Date("2025-01-01T00:00:00.000Z"),
+      }),
+    );
+    mocks.batchCandidateFind.mockReturnValueOnce(createSortQuery([]));
+
+    const connector = {
+      createBatch: vi.fn().mockRejectedValue(
+        new SidhConnectorError({
+          code: "SIDH_CONFLICT",
+          message: "Batch already exists",
+          remoteBatchId: "3873236",
+          status: 400,
+        }),
+      ),
+    };
+
+    const result = await processQueuedBatchSyncJobs(actor as never, { limit: 1 }, {
+      connector: connector as never,
+      now: () => new Date("2026-01-15T00:00:00.000Z"),
+    });
+
+    expect(result.succeededCount).toBe(1);
+    expect(batch.sidhBatchId).toBe("3873236");
+    expect(claimedState.batchSync.status).toBe("synced");
+    expect(claimedState.sidhBatchId).toBe("3873236");
+  });
+
+  it("re-queues push when status is synced but sidhBatchId is missing", async () => {
+    const batch = createBatchDocument({ sidhBatchId: null, save: vi.fn().mockResolvedValue(undefined) });
+    const syncState = createSyncState({
+      batchSync: {
+        attempts: [],
+        lastJobId: "bsjob_old",
+        retryCount: 2,
+        status: "synced",
+      },
+      sidhBatchId: null,
+    });
+
+    mocks.batchFindOne.mockResolvedValue(batch);
+    mocks.batchSyncStateFindOne.mockResolvedValue(syncState);
+    mocks.courseFindOne.mockReturnValue(
+      createSelectQuery({
+        approvalStatus: "approved",
+        associatedQpOrJobRole: "Retail Sales Associate",
+        courseId: "course_001",
+        courseName: "Retail Course",
+        minimumAge: 18,
+        nsqfLevel: 4,
+        programIds: ["prg_001"],
+        qpCode: "QP001",
+        schemeIds: ["scheme_001"],
+        sidhCourseId: "SIDH_COURSE_001",
+        status: "active",
+        trainingHours: 240,
+        validityEndDate: new Date("2026-12-31T00:00:00.000Z"),
+        validityStartDate: new Date("2025-01-01T00:00:00.000Z"),
+      }),
+    );
+    mocks.batchCandidateAggregate.mockResolvedValue([]);
+    // No queued job claimed — we only assert that incomplete synced state is re-queued.
+    mocks.batchSyncStateFindOneAndUpdate.mockResolvedValueOnce(null);
+
+    const result = await queueBatchSync(actor as never, "bat_001", { forceResync: false }, "req_resync");
+
+    expect(syncState.batchSync.status).toBe("queued");
+    expect(syncState.batchSync.retryCount).toBe(0);
+    expect(result.batchSync.status).toBe("queued");
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "batch.sync.queued",
+        metadata: expect.objectContaining({ previousStatus: "synced", previousSidhBatchId: null }),
+      }),
+    );
+  });
+
+  it("links an existing SIDH batch id without calling create", async () => {
+    const batch = createBatchDocument({ sidhBatchId: null, save: vi.fn().mockResolvedValue(undefined) });
+    const syncState = createSyncState({
+      batchSync: {
+        attempts: [],
+        lastJobId: "bsjob_001",
+        retryCount: 0,
+        status: "processing",
+      },
+      sidhBatchId: null,
+    });
+
+    mocks.batchFindOne.mockResolvedValue(batch);
+    mocks.batchSyncStateFindOne.mockResolvedValue(syncState);
+    mocks.courseFindOne.mockReturnValue(
+      createSelectQuery({
+        approvalStatus: "approved",
+        associatedQpOrJobRole: "Retail Sales Associate",
+        courseId: "course_001",
+        courseName: "Retail Course",
+        minimumAge: 18,
+        nsqfLevel: 4,
+        programIds: ["prg_001"],
+        qpCode: "QP001",
+        schemeIds: ["scheme_001"],
+        sidhCourseId: "SIDH_COURSE_001",
+        status: "active",
+        trainingHours: 240,
+        validityEndDate: new Date("2026-12-31T00:00:00.000Z"),
+        validityStartDate: new Date("2025-01-01T00:00:00.000Z"),
+      }),
+    );
+    mocks.batchCandidateAggregate.mockResolvedValue([]);
+
+    const result = await linkBatchToSidh(actor as never, "bat_001", { sidhBatchId: 3873236 }, "req_link");
+
+    expect(result.sidhBatchId).toBe("3873236");
+    expect(result.batchSync.status).toBe("synced");
+    expect(batch.sidhBatchId).toBe("3873236");
+    expect(syncState.batchSync.status).toBe("synced");
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "batch.sync.linked",
+        metadata: expect.objectContaining({ remoteBatchId: "3873236" }),
       }),
     );
   });

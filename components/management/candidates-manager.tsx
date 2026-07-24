@@ -666,7 +666,12 @@ function canModifyLearnerBeforeSidh(candidate: CandidateRecord) {
   }
 
   const status = candidate.syncState?.status ?? "not_queued";
-  return status === "not_queued" || status === "failed" || status === "manual_review";
+  // Incomplete "synced" without a SIDH candidate ID must remain editable.
+  if (status === "queued" || status === "processing") {
+    return false;
+  }
+
+  return true;
 }
 
 async function downloadCandidateImportTemplate() {

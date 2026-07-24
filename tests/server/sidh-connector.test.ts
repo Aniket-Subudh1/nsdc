@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createEnv } from "@/lib/server/env";
-import { createSidhConnector, extractRemoteCandidateId, SidhConnectorError } from "@/lib/server/services/sidh-connector";
+import {
+  createSidhConnector,
+  extractRemoteBatchId,
+  extractRemoteCandidateId,
+  extractRemoteEnrollmentId,
+  SidhConnectorError,
+} from "@/lib/server/services/sidh-connector";
 
 const mocks = vi.hoisted(() => ({
   createTransaction: vi.fn(),
@@ -117,6 +123,18 @@ describe("SIDH connector", () => {
     expect(mocks.createTransaction).toHaveBeenCalledTimes(5);
   });
 
+  it("extracts numeric SIDH batch ids from create responses", () => {
+    expect(extractRemoteBatchId({ Message: "Created", batchId: 3873236 })).toBe("3873236");
+    expect(extractRemoteBatchId({ batchId: "BATCH_REMOTE_001" })).toBe("BATCH_REMOTE_001");
+  });
+
+  it("extracts numeric candidate and enrollment ids", () => {
+    expect(extractRemoteCandidateId({ candidateId: 445566 })).toBe("445566");
+    expect(extractRemoteCandidateId({ candidateId: "CAN_445566" })).toBe("CAN_445566");
+    expect(extractRemoteEnrollmentId({ enrollmentId: 998877 })).toBe("998877");
+    expect(extractRemoteEnrollmentId({ candidateBatchId: "ENR_001" })).toBe("ENR_001");
+  });
+
   it("creates batches against the UAT SIDH endpoint and injects the TP ID", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
@@ -124,7 +142,7 @@ describe("SIDH connector", () => {
       .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "login-csrf-token" }, status: 200 }))
       .mockResolvedValueOnce(createJsonResponse({ publicKey: "test-public-key", secretKey: "test-secret" }))
       .mockResolvedValueOnce(createJsonResponse({ accessToken: "access-token" }))
-      .mockResolvedValueOnce(createJsonResponse({ batchId: "BATCH_REMOTE_001" }, { status: 201 }));
+      .mockResolvedValueOnce(createJsonResponse({ Message: "Created", batchId: 3873236 }, { status: 201 }));
 
     const connector = createSidhConnector({ env, fetchImpl });
     const result = await connector.createBatch({
@@ -158,7 +176,7 @@ describe("SIDH connector", () => {
     const createCall = fetchImpl.mock.calls[4];
     const createBody = JSON.parse(String(createCall?.[1]?.body));
 
-    expect(result.remoteBatchId).toBe("BATCH_REMOTE_001");
+    expect(result.remoteBatchId).toBe("3873236");
     expect(createCall?.[0]).toBe("https://backend.itrackglobal.com/api/batch/v1/create");
     expect(createBody).toMatchObject({
       batchName: "Retail Batch",
@@ -168,6 +186,53 @@ describe("SIDH connector", () => {
       schemeReferenceId: "Scheme_2",
       tcId: "SIDH_TC_001",
       tpId: "TP_UAT",
+    });
+  });
+
+  it("classifies duplicate batch create responses as reconciliable conflicts", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token" }, status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "login-csrf-token" }, status: 200 }))
+      .mockResolvedValueOnce(createJsonResponse({ publicKey: "test-public-key", secretKey: "test-secret" }))
+      .mockResolvedValueOnce(createJsonResponse({ accessToken: "access-token" }))
+      .mockResolvedValueOnce(
+        createJsonResponse({ message: "Batch already exists", batchId: 3873236 }, { status: 400 }),
+      );
+
+    const connector = createSidhConnector({ env, fetchImpl });
+
+    await expect(
+      connector.createBatch({
+        attemptId: "batatt_dup",
+        payload: {
+          assessmentEndDate: "2026-02-05",
+          assessmentMode: "Self",
+          assessmentStartDate: "2026-02-05",
+          batchEndDate: "2026-02-01",
+          batchEndTime: "17:00",
+          batchFee: { totalFees: 500 },
+          batchName: "Retail Batch",
+          batchStartDate: "2026-01-01",
+          batchStartTime: "09:00",
+          batchType: "Regular",
+          courseId: "SIDH_COURSE_001",
+          createdSource: "Created for NSDC Academy Partners",
+          feePaidBy: "Self-Paid",
+          schemeId: "Scheme_2",
+          schemeReferenceId: "Scheme_2",
+          schemeType: "feeBased",
+          size: 80,
+          skillingcategory: { id: 1, name: "NSDC Market led programme", scheme: "Fee Based" },
+          tcId: "SIDH_TC_001",
+          trainingHoursPerDay: 8,
+          type: "Fee Based",
+        },
+        syncJobId: "bsjob_dup",
+      }),
+    ).rejects.toMatchObject({
+      code: "SIDH_CONFLICT",
+      remoteBatchId: "3873236",
     });
   });
 

@@ -1280,6 +1280,12 @@ async function ensureBatchEditable(batch: ServiceBatch) {
 
   const syncState = await ensureBatchSyncState(batch.batchId);
   const syncStatus = syncState.batchSync?.status ?? "not_synced";
+  const effectiveSidhBatchId = batch.sidhBatchId ?? syncState.sidhBatchId ?? null;
+
+  // Incomplete "synced" without a SIDH ID must remain editable so operators can fix and re-push.
+  if (syncStatus === "synced" && !effectiveSidhBatchId) {
+    return;
+  }
 
   if (["synced", "queued", "processing"].includes(syncStatus)) {
     throw new ApiError(
@@ -1590,6 +1596,11 @@ async function ensureBatchDeletable(batch: ServiceBatch) {
 
   const syncState = await ensureBatchSyncState(batch.batchId);
   const syncStatus = syncState.batchSync?.status ?? "not_synced";
+  const effectiveSidhBatchId = batch.sidhBatchId ?? syncState.sidhBatchId ?? null;
+
+  if (syncStatus === "synced" && !effectiveSidhBatchId) {
+    return;
+  }
 
   if (["synced", "queued", "processing"].includes(syncStatus)) {
     throw new ApiError(
@@ -1725,11 +1736,17 @@ export async function queueBatchSync(actor: AuthSession, batchId: string, input:
   const batch = await loadBatchWithScope(actor, batchId);
   await validateBatchSyncEligibility(batch);
   const syncState = await ensureBatchSyncState(batch.batchId, actor.user.id);
+  const currentStatus = syncState.batchSync?.status ?? "not_synced";
+  const effectiveSidhBatchId = batch.sidhBatchId ?? syncState.sidhBatchId ?? null;
+  const isTrulySynced = currentStatus === "synced" && Boolean(effectiveSidhBatchId);
 
-  if (syncState.batchSync?.status === "synced" && !input.forceResync) {
+  // Only skip when we already have both synced status AND a remote SIDH batch ID.
+  // Incomplete "synced" rows (status set but id missing) must be allowed to push again.
+  if (isTrulySynced && !input.forceResync) {
     return getBatchStatus(actor, batch.batchId);
   }
 
+  // Reclaim stuck processing/queued locks so a retry can run after a hung SIDH create.
   syncState.batchSync = {
     ...(syncState.batchSync ?? {}),
     lastFailureCode: null,
@@ -1738,7 +1755,10 @@ export async function queueBatchSync(actor: AuthSession, batchId: string, input:
     lockId: null,
     lockedAt: null,
     nextRunAt: new Date(),
-    retryCount: input.forceResync ? 0 : syncState.batchSync?.retryCount ?? 0,
+    retryCount:
+      input.forceResync || currentStatus === "processing" || !effectiveSidhBatchId
+        ? 0
+        : syncState.batchSync?.retryCount ?? 0,
     status: "queued",
   };
   syncState.updatedByUserId = actor.user.id;
@@ -1749,11 +1769,72 @@ export async function queueBatchSync(actor: AuthSession, batchId: string, input:
     actorUserId: actor.user.id,
     entityId: batch.batchId,
     entityType: "batch",
-    metadata: { forceResync: input.forceResync, jobId: syncState.batchSync.lastJobId },
+    metadata: {
+      forceResync: input.forceResync,
+      jobId: syncState.batchSync.lastJobId,
+      previousStatus: currentStatus,
+      previousSidhBatchId: effectiveSidhBatchId,
+    },
     requestId,
   });
 
-  await processQueuedBatchSyncJobs(actor, { limit: 5, requestId }).catch(() => undefined);
+  try {
+    await processQueuedBatchSyncJobs(actor, { limit: 5, requestId });
+  } catch (error) {
+    console.error(`[SIDH batch sync] failed to process jobs for ${batch.batchId}`, error);
+  }
+
+  return getBatchStatus(actor, batch.batchId);
+}
+
+export async function linkBatchToSidh(
+  actor: AuthSession,
+  batchId: string,
+  input: { sidhBatchId: string | number },
+  requestId?: string,
+) {
+  await connectToDatabase();
+  ensureCanProcessBatchSync(actor);
+
+  const batch = await loadBatchWithScope(actor, batchId);
+  await validateBatchSyncEligibility(batch);
+
+  const remoteBatchId = String(input.sidhBatchId).trim();
+  if (!remoteBatchId) {
+    throw new ApiError(400, "SIDH_BATCH_ID_REQUIRED", "SIDH batch ID is required");
+  }
+
+  const syncState = await ensureBatchSyncState(batch.batchId, actor.user.id);
+  const now = new Date();
+
+  batch.sidhBatchId = remoteBatchId;
+  await (batch as never as { save: () => Promise<void> }).save();
+
+  syncState.sidhBatchId = remoteBatchId;
+  syncState.batchSync = {
+    ...(syncState.batchSync ?? {}),
+    lastAttemptAt: now,
+    lastFailureCode: null,
+    lastFailureMessage: null,
+    lastSuccessAt: now,
+    lockId: null,
+    lockedAt: null,
+    nextRunAt: null,
+    remoteStatus: "active",
+    retryCount: 0,
+    status: "synced",
+  };
+  syncState.updatedByUserId = actor.user.id;
+  await syncState.save?.();
+
+  await writeAuditLog({
+    action: "batch.sync.linked",
+    actorUserId: actor.user.id,
+    entityId: batch.batchId,
+    entityType: "batch",
+    metadata: { remoteBatchId, source: "manual_link" },
+    requestId,
+  });
 
   return getBatchStatus(actor, batch.batchId);
 }
@@ -1771,12 +1852,21 @@ export async function queueEnrollmentSync(actor: AuthSession, batchId: string, i
   }
 
   const { syncState } = await validateEnrollmentEligibility(batch, batchCandidates);
+  const candidateIds = batchCandidates.map((item) => item.candidateId);
 
+  // Re-queue incomplete enrollments (synced status without a remote enrollment id) as well.
   await BatchCandidateModel.updateMany(
     {
       batchId: batch.batchId,
-      candidateId: { $in: batchCandidates.map((item) => item.candidateId) },
-      ...(input.forceResync ? {} : { enrollmentStatus: { $nin: ["synced"] } }),
+      candidateId: { $in: candidateIds },
+      ...(input.forceResync
+        ? {}
+        : {
+            $or: [
+              { enrollmentStatus: { $nin: ["synced"] } },
+              { enrollmentStatus: "synced", sidhEnrollmentId: { $in: [null, ""] } },
+            ],
+          }),
     },
     {
       $set: {
@@ -1795,7 +1885,7 @@ export async function queueEnrollmentSync(actor: AuthSession, batchId: string, i
     lockId: null,
     lockedAt: null,
     nextRunAt: new Date(),
-    retryCount: input.forceResync ? 0 : syncState.enrollmentSync?.retryCount ?? 0,
+    retryCount: input.forceResync || syncState.enrollmentSync?.status === "processing" ? 0 : syncState.enrollmentSync?.retryCount ?? 0,
     status: "queued",
   };
   syncState.updatedByUserId = actor.user.id;
@@ -1806,11 +1896,15 @@ export async function queueEnrollmentSync(actor: AuthSession, batchId: string, i
     actorUserId: actor.user.id,
     entityId: batch.batchId,
     entityType: "batch",
-    metadata: { candidateIds: batchCandidates.map((item) => item.candidateId), forceResync: input.forceResync },
+    metadata: { candidateIds, forceResync: input.forceResync },
     requestId,
   });
 
-  await processQueuedEnrollmentSyncJobs(actor, { limit: 5, requestId }).catch(() => undefined);
+  try {
+    await processQueuedEnrollmentSyncJobs(actor, { limit: 5, requestId });
+  } catch (error) {
+    console.error(`[SIDH enrollment sync] failed to process jobs for ${batch.batchId}`, error);
+  }
 
   return getBatchStatus(actor, batch.batchId);
 }
@@ -2337,15 +2431,19 @@ export async function processQueuedBatchSyncJobs(actor: AuthSession, input: { li
       });
 
       if (roster.batchCandidates.length > 0) {
-        await queueEnrollmentSync(
-          actor,
-          batch.batchId,
-          {
-            candidateIds: roster.batchCandidates.map((membership) => membership.candidateId),
-            forceResync: false,
-          },
-          input.requestId,
-        ).catch(() => undefined);
+        try {
+          await queueEnrollmentSync(
+            actor,
+            batch.batchId,
+            {
+              candidateIds: roster.batchCandidates.map((membership) => membership.candidateId),
+              forceResync: false,
+            },
+            input.requestId,
+          );
+        } catch (error) {
+          console.error(`[SIDH enrollment sync] auto-queue failed for ${batch.batchId}`, error);
+        }
       }
 
       jobs.push({

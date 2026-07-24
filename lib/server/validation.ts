@@ -1026,6 +1026,10 @@ export const batchSyncRequestSchema = z.object({
   forceResync: z.boolean().default(false),
 });
 
+export const linkBatchToSidhSchema = z.object({
+  sidhBatchId: stringOrNumberIdSchema,
+});
+
 export const enrollmentSyncRequestSchema = z.object({
   candidateIds: z.array(z.string().trim().min(1)).optional(),
   forceResync: z.boolean().default(false),
@@ -1113,6 +1117,7 @@ export type BatchListQuery = z.infer<typeof batchListQuerySchema>;
 export type AddCandidatesToBatchInput = z.infer<typeof addCandidatesToBatchSchema>;
 export type CreateBatchEnrollmentJobInput = z.infer<typeof createBatchEnrollmentJobSchema>;
 export type BatchSyncRequestInput = z.infer<typeof batchSyncRequestSchema>;
+export type LinkBatchToSidhInput = z.infer<typeof linkBatchToSidhSchema>;
 export type EnrollmentSyncRequestInput = z.infer<typeof enrollmentSyncRequestSchema>;
 export type TrainingAssessmentSubmissionInput = z.infer<typeof trainingAssessmentSubmissionSchema>;
 export type CertificateGenerationRequestInput = z.infer<typeof certificateGenerationRequestSchema>;

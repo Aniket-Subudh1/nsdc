@@ -10,6 +10,7 @@ import {
   IconEdit,
   IconEye,
   IconFilter,
+  IconLink,
   IconLoader2,
   IconPlus,
   IconRefresh,
@@ -366,14 +367,39 @@ function removeBatchFromList(items: BatchListItem[], batchId: string) {
   return items.filter((batch) => batch.batchId !== batchId);
 }
 
+/** Synced flag set but no remote SIDH batch ID (e.g. numeric ID was dropped on create). */
+function hasIncompleteSidhLink(batch: Pick<BatchListItem, "sidhBatchId" | "syncState">) {
+  return !batch.sidhBatchId && batch.syncState.batchSync.status === "synced";
+}
+
+function getEffectiveSyncStatus(batch: Pick<BatchListItem, "sidhBatchId" | "syncState">) {
+  if (hasIncompleteSidhLink(batch)) {
+    return "manual_review";
+  }
+  return batch.syncState.batchSync.status;
+}
+
+function isTrulySynced(batch: Pick<BatchListItem, "sidhBatchId" | "syncState">) {
+  return Boolean(batch.sidhBatchId) && batch.syncState.batchSync.status === "synced";
+}
+
 function canEditBatch(batch: Pick<BatchListItem, "sidhBatchId" | "syncState">) {
-  const status = batch.syncState.batchSync.status;
+  const status = getEffectiveSyncStatus(batch);
   return !batch.sidhBatchId && !["synced", "queued", "processing"].includes(status);
 }
 
 function canPushBatch(batch: Pick<BatchListItem, "sidhBatchId" | "syncState">) {
-  const status = batch.syncState.batchSync.status;
-  return !batch.sidhBatchId && !["queued", "processing"].includes(status);
+  const status = getEffectiveSyncStatus(batch);
+  return !batch.sidhBatchId && !["queued", "processing", "synced"].includes(status);
+}
+
+function canRetryBatchSync(batch: Pick<BatchListItem, "sidhBatchId" | "syncState">) {
+  const status = getEffectiveSyncStatus(batch);
+  return !batch.sidhBatchId && ["queued", "processing", "failed", "manual_review"].includes(status);
+}
+
+function canLinkSidhBatch(batch: Pick<BatchListItem, "sidhBatchId" | "syncState">) {
+  return !batch.sidhBatchId;
 }
 
 function canRemoveCandidate(batch: Pick<BatchListItem, "sidhBatchId">, enrollmentStatus: string) {
@@ -991,22 +1017,22 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
   const batchStats = useMemo(
     () => ({
       total: batches.length,
-      synced: batches.filter((b) => b.syncState.batchSync.status === "synced").length,
-      pending: batches.filter((b) => ["queued", "processing", "not_queued", "not_synced"].includes(b.syncState.batchSync.status)).length,
-      attention: batches.filter((b) => ["failed", "manual_review"].includes(b.syncState.batchSync.status)).length,
+      synced: batches.filter((b) => isTrulySynced(b)).length,
+      pending: batches.filter((b) => ["queued", "processing", "not_queued", "not_synced"].includes(getEffectiveSyncStatus(b))).length,
+      attention: batches.filter((b) => ["failed", "manual_review"].includes(getEffectiveSyncStatus(b))).length,
     }),
     [batches],
   );
 
   const filteredBatches = useMemo(() => {
     if (syncFilter === "synced") {
-      return batches.filter((b) => b.syncState.batchSync.status === "synced");
+      return batches.filter((b) => isTrulySynced(b));
     }
     if (syncFilter === "pending") {
-      return batches.filter((b) => ["queued", "processing", "not_queued", "not_synced"].includes(b.syncState.batchSync.status));
+      return batches.filter((b) => ["queued", "processing", "not_queued", "not_synced"].includes(getEffectiveSyncStatus(b)));
     }
     if (syncFilter === "attention") {
-      return batches.filter((b) => ["failed", "manual_review"].includes(b.syncState.batchSync.status));
+      return batches.filter((b) => ["failed", "manual_review"].includes(getEffectiveSyncStatus(b)));
     }
     return batches;
   }, [batches, syncFilter]);
@@ -1489,7 +1515,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
 
   async function handlePushToSidh(batchId: string) {
     const batch = batches.find((item) => item.batchId === batchId) ?? selectedBatch;
-    if (batch && !canPushBatch(batch)) {
+    if (batch && !canPushBatch(batch) && !canRetryBatchSync(batch)) {
       toast.error("This batch is already synced or currently pushing to SIDH");
       return;
     }
@@ -1497,8 +1523,10 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
     setSyncingBatchId(batchId);
 
     try {
+      // Force resync when a prior push left status=synced without a SIDH batch ID.
+      const forceResync = Boolean(batch && (!batch.sidhBatchId || hasIncompleteSidhLink(batch)));
       await apiFetch(`/api/v1/batches/${batchId}/sync`, {
-        body: JSON.stringify({ forceResync: false }),
+        body: JSON.stringify({ forceResync }),
         method: "POST",
       });
       toast.success("Batch push to SIDH started");
@@ -1575,11 +1603,37 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
       });
       toast.success("SIDH retry queued");
       await refreshBatches();
+      await pollBatchSyncStatus(batchId);
       if (selectedBatch?.batchId === batchId) {
         await handleViewBatch(batchId, false);
       }
     } catch (error) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to queue SIDH retry");
+    } finally {
+      setSyncingBatchId(null);
+    }
+  }
+
+  async function handleLinkSidhBatch(batchId: string) {
+    const value = window.prompt("Enter the existing SIDH batch ID from Postman/SIDH (e.g. 3873236)");
+    if (!value?.trim()) {
+      return;
+    }
+
+    setSyncingBatchId(batchId);
+
+    try {
+      await apiFetch(`/api/v1/batches/${batchId}/link-sidh`, {
+        body: JSON.stringify({ sidhBatchId: value.trim() }),
+        method: "POST",
+      });
+      toast.success(`Batch linked to SIDH batch ID ${value.trim()}`);
+      await refreshBatches();
+      if (selectedBatch?.batchId === batchId) {
+        await handleViewBatch(batchId, false);
+      }
+    } catch (error) {
+      toast.error(error instanceof ClientApiError ? error.message : "Unable to link SIDH batch ID");
     } finally {
       setSyncingBatchId(null);
     }
@@ -1788,7 +1842,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
   }
 
   function getSyncTone(batch: BatchListItem) {
-    const status = batch.syncState.batchSync.status;
+    const status = getEffectiveSyncStatus(batch);
     if (status === "synced") {
       return "emerald" as const;
     }
@@ -1799,6 +1853,13 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
       return "amber" as const;
     }
     return "slate" as const;
+  }
+
+  function getSyncLabel(batch: BatchListItem) {
+    if (hasIncompleteSidhLink(batch)) {
+      return "missing sidh id";
+    }
+    return getEffectiveSyncStatus(batch);
   }
 
   if (loadState.isInitialLoading) {
@@ -2206,7 +2267,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                         </td>
                         <td className="px-4 py-3 text-slate-700">{batch.candidateCount}/{batch.batchSize}</td>
                         <td className="px-4 py-3">
-                          <StatusBadge tone={getSyncTone(batch)} value={batch.syncState.batchSync.status} />
+                          <StatusBadge tone={getSyncTone(batch)} value={getSyncLabel(batch)} />
                         </td>
                         <td className="px-4 py-3 align-top">
                           <BatchActionsBar className="justify-end">
@@ -2231,12 +2292,20 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                             {batch.sidhBatchId ? (
                               <BatchActionButton icon={<IconUserPlus className="h-3.5 w-3.5" />} label="Enroll" onClick={() => openAssignModal(batch.batchId)} />
                             ) : null}
-                            {["failed", "manual_review"].includes(batch.syncState.batchSync.status) ? (
+                            {canRetryBatchSync(batch) ? (
                               <BatchActionButton
                                 disabled={syncingBatchId === batch.batchId}
                                 icon={syncingBatchId === batch.batchId ? <IconLoader2 className="h-3.5 w-3.5 animate-spin" /> : <IconRotateClockwise className="h-3.5 w-3.5" />}
                                 label="Retry"
                                 onClick={() => void handleRetrySync(batch.batchId)}
+                              />
+                            ) : null}
+                            {canLinkSidhBatch(batch) ? (
+                              <BatchActionButton
+                                disabled={syncingBatchId === batch.batchId}
+                                icon={<IconLink className="h-3.5 w-3.5" />}
+                                label="Link SIDH"
+                                onClick={() => void handleLinkSidhBatch(batch.batchId)}
                               />
                             ) : null}
                             {canEditBatch(batch) ? (
@@ -2267,7 +2336,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                         <p className="truncate font-medium text-slate-900">{batch.batchName ?? batch.batchCode}</p>
                         <p className="truncate text-xs text-slate-500">{course?.courseName}</p>
                       </div>
-                      <StatusBadge tone={getSyncTone(batch)} value={batch.syncState.batchSync.status} />
+                      <StatusBadge tone={getSyncTone(batch)} value={getSyncLabel(batch)} />
                     </div>
                     <p className="mt-1 text-xs text-slate-500">
                       {formatDate(batch.startDate)} – {formatDate(batch.endDate)} · {batch.candidateCount} learners ·{" "}
@@ -2289,6 +2358,22 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                       ) : null}
                       {batch.sidhBatchId ? (
                         <BatchActionButton icon={<IconUserPlus className="h-3.5 w-3.5" />} label="Enroll" onClick={() => openAssignModal(batch.batchId)} />
+                      ) : null}
+                      {canRetryBatchSync(batch) ? (
+                        <BatchActionButton
+                          disabled={syncingBatchId === batch.batchId}
+                          icon={syncingBatchId === batch.batchId ? <IconLoader2 className="h-3.5 w-3.5 animate-spin" /> : <IconRotateClockwise className="h-3.5 w-3.5" />}
+                          label="Retry"
+                          onClick={() => void handleRetrySync(batch.batchId)}
+                        />
+                      ) : null}
+                      {canLinkSidhBatch(batch) ? (
+                        <BatchActionButton
+                          disabled={syncingBatchId === batch.batchId}
+                          icon={<IconLink className="h-3.5 w-3.5" />}
+                          label="Link SIDH"
+                          onClick={() => void handleLinkSidhBatch(batch.batchId)}
+                        />
                       ) : null}
                       {canEditBatch(batch) ? (
                         <BatchActionButton
@@ -2411,12 +2496,17 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">SIDH batch ID</p>
               {selectedBatch.sidhBatchId ? (
                 <p className="mt-1 break-all font-mono text-lg font-bold text-emerald-800">{selectedBatch.sidhBatchId}</p>
+              ) : hasIncompleteSidhLink(selectedBatch) ? (
+                <p className="mt-1 text-sm text-amber-700">
+                  Sync marked complete but no SIDH batch ID was saved. Use <span className="font-semibold">Link SIDH ID</span> and
+                  enter the ID from Postman (e.g. 3873236).
+                </p>
               ) : (
                 <p className="mt-1 text-sm text-amber-700">Not pushed yet. Edit the batch and push to SIDH to receive the NSDC_SIDH batch ID.</p>
               )}
             </div>
             <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-              <StatusBadge tone={getSyncTone(selectedBatch)} value={selectedBatch.syncState.batchSync.status} />
+              <StatusBadge tone={getSyncTone(selectedBatch)} value={getSyncLabel(selectedBatch)} />
               <BatchActionsBar className="sm:ml-auto sm:justify-end">
                 {canEditBatch(selectedBatch) ? (
                   <BatchActionButton
@@ -2448,12 +2538,20 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                     tone="primary"
                   />
                 ) : null}
-                {["failed", "manual_review"].includes(selectedBatch.syncState.batchSync.status) ? (
+                {canRetryBatchSync(selectedBatch) ? (
                   <BatchActionButton
                     disabled={syncingBatchId === selectedBatch.batchId}
                     icon={syncingBatchId === selectedBatch.batchId ? <IconLoader2 className="h-3.5 w-3.5 animate-spin" /> : <IconRotateClockwise className="h-3.5 w-3.5" />}
                     label="Retry push"
                     onClick={() => void handleRetrySync(selectedBatch.batchId)}
+                  />
+                ) : null}
+                {canLinkSidhBatch(selectedBatch) ? (
+                  <BatchActionButton
+                    disabled={syncingBatchId === selectedBatch.batchId}
+                    icon={<IconLink className="h-3.5 w-3.5" />}
+                    label="Link SIDH ID"
+                    onClick={() => void handleLinkSidhBatch(selectedBatch.batchId)}
                   />
                 ) : null}
                 {canEditBatch(selectedBatch) ? (

@@ -319,7 +319,19 @@ function extractErrorMessage(responseBody: unknown, fallbackMessage: string) {
     return responseBody.trim();
   }
 
-  return extractJsonValue<string>(responseBody, ["message", "error", "errorMessage"]) ?? fallbackMessage;
+  return (
+    extractJsonValue<string>(responseBody, ["message", "Message", "error", "errorMessage"]) ?? fallbackMessage
+  );
+}
+
+function looksLikeDuplicateConflict(message: string) {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("already") ||
+    normalized.includes("duplicate") ||
+    normalized.includes("exist") ||
+    normalized.includes("conflict")
+  );
 }
 
 function serializeRequestBody(body: RequestOptions["body"]) {
@@ -386,8 +398,20 @@ function extractFileName(contentDisposition: string | null) {
   return contentDisposition.match(/filename="?([^";]+)"?/i)?.[1] ?? null;
 }
 
+function coerceRemoteId(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(Math.trunc(value));
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+
+  return null;
+}
+
 export function extractRemoteCandidateId(payload: unknown) {
-  const value = extractJsonValue<string>(payload, [
+  const value = extractJsonValue<unknown>(payload, [
     "candidateId",
     "candidateID",
     "sidhCandidateId",
@@ -397,18 +421,22 @@ export function extractRemoteCandidateId(payload: unknown) {
     "referenceID",
   ]);
 
-  if (typeof value === "string" && value.trim()) {
-    return value.trim();
+  const coerced = coerceRemoteId(value);
+  if (coerced) {
+    return coerced;
   }
 
-  const message = typeof payload === "string" ? payload : extractJsonValue<string>(payload, ["message", "error", "errorMessage"]);
-  const candidateId = message?.match(/\bCAN_[A-Za-z0-9_-]+\b/)?.[0];
+  const message =
+    typeof payload === "string"
+      ? payload
+      : extractJsonValue<string>(payload, ["message", "Message", "error", "errorMessage"]);
+  const candidateId = typeof message === "string" ? message.match(/\bCAN_[A-Za-z0-9_-]+\b/)?.[0] : undefined;
 
   return candidateId ?? null;
 }
 
 export function extractRemoteBatchId(payload: unknown) {
-  const value = extractJsonValue<string>(payload, [
+  const value = extractJsonValue<unknown>(payload, [
     "batchId",
     "batchID",
     "sidhBatchId",
@@ -416,11 +444,28 @@ export function extractRemoteBatchId(payload: unknown) {
     "BatchID",
   ]);
 
-  return typeof value === "string" && value.trim() ? value.trim() : null;
+  const coerced = coerceRemoteId(value);
+  if (coerced) {
+    return coerced;
+  }
+
+  const message =
+    typeof payload === "string"
+      ? payload
+      : extractJsonValue<string>(payload, ["message", "Message", "error", "errorMessage"]);
+
+  if (typeof message === "string") {
+    const labeled = message.match(/batch(?:\s*id|Id|ID)?\s*[:=]?\s*([A-Za-z0-9_-]{3,})/i)?.[1];
+    if (labeled) {
+      return labeled;
+    }
+  }
+
+  return null;
 }
 
 export function extractRemoteEnrollmentId(payload: unknown) {
-  const value = extractJsonValue<string>(payload, [
+  const value = extractJsonValue<unknown>(payload, [
     "enrollmentId",
     "enrollmentID",
     "candidateBatchId",
@@ -428,7 +473,7 @@ export function extractRemoteEnrollmentId(payload: unknown) {
     "batchCandidateId",
   ]);
 
-  return typeof value === "string" && value.trim() ? value.trim() : null;
+  return coerceRemoteId(value);
 }
 
 function encryptPassword(password: string, publicKey: string, secretKey: string) {
@@ -480,6 +525,9 @@ async function logTransaction(input: {
 function classifyError(responseStatus: number, responseBody: unknown, fallbackMessage: string, operation?: string) {
   const remoteCandidateId = extractRemoteCandidateId(responseBody);
   const remoteBatchId = extractRemoteBatchId(responseBody);
+  const isDuplicateConflict =
+    responseStatus === 409 ||
+    ((responseStatus === 400 || responseStatus === 422) && looksLikeDuplicateConflict(fallbackMessage));
 
   if (responseStatus === 401) {
     return new SidhConnectorError({
@@ -505,7 +553,7 @@ function classifyError(responseStatus: number, responseBody: unknown, fallbackMe
     });
   }
 
-  if (responseStatus === 409) {
+  if (isDuplicateConflict) {
     return new SidhConnectorError({
       code: "SIDH_CONFLICT",
       manualReview: remoteCandidateId === null && remoteBatchId === null,
@@ -832,14 +880,38 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
       };
 
       try {
-        return await executeRegistration();
+        const result = await executeRegistration();
+        if (!result.remoteCandidateId) {
+          throw new SidhConnectorError({
+            code: "SIDH_CANDIDATE_ID_MISSING",
+            manualReview: true,
+            message: "SIDH candidate registration succeeded but did not return a candidateId",
+            responseBody: result.responseBody,
+            status: result.responseStatus,
+          });
+        }
+        return result;
       } catch (error) {
+        if (error instanceof SidhConnectorError && error.code === "SIDH_CANDIDATE_ID_MISSING") {
+          throw error;
+        }
+
         if (
           error instanceof SidhConnectorError &&
           (error.status === 401 || error.status === 412 || error.code === "SIDH_AUTH_FAILED")
         ) {
           cachedSession = null;
-          return executeRegistration(true);
+          const result = await executeRegistration(true);
+          if (!result.remoteCandidateId) {
+            throw new SidhConnectorError({
+              code: "SIDH_CANDIDATE_ID_MISSING",
+              manualReview: true,
+              message: "SIDH candidate registration succeeded but did not return a candidateId",
+              responseBody: result.responseBody,
+              status: result.responseStatus,
+            });
+          }
+          return result;
         }
 
         throw error;
@@ -875,14 +947,41 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
       };
 
       try {
-        return await executeCreateBatch();
+        const result = await executeCreateBatch();
+        if (!result.remoteBatchId) {
+          throw new SidhConnectorError({
+            code: "SIDH_BATCH_ID_MISSING",
+            manualReview: true,
+            message: "SIDH batch create succeeded but did not return a batchId",
+            responseBody: result.responseBody,
+            status: result.responseStatus,
+          });
+        }
+        return result;
       } catch (error) {
+        if (
+          error instanceof SidhConnectorError &&
+          error.code === "SIDH_BATCH_ID_MISSING"
+        ) {
+          throw error;
+        }
+
         if (
           error instanceof SidhConnectorError &&
           (error.status === 401 || error.status === 412 || error.code === "SIDH_AUTH_FAILED")
         ) {
           cachedSession = null;
-          return executeCreateBatch(true);
+          const result = await executeCreateBatch(true);
+          if (!result.remoteBatchId) {
+            throw new SidhConnectorError({
+              code: "SIDH_BATCH_ID_MISSING",
+              manualReview: true,
+              message: "SIDH batch create succeeded but did not return a batchId",
+              responseBody: result.responseBody,
+              status: result.responseStatus,
+            });
+          }
+          return result;
         }
 
         throw error;

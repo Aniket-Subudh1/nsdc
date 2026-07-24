@@ -18,6 +18,9 @@ function buildSampleImportRow(options: CandidateImportTemplateOptions) {
     ? "ODISHA"
     : (CANDIDATE_STATE_OPTIONS[0] ?? "ODISHA");
   const sampleDistrict = CANDIDATE_STATE_DISTRICT_MAP[sampleState]?.[0] ?? "CUTTACK";
+  const sampleSector = options.sectorNames[0] ?? "";
+  const sampleCourse =
+    (sampleSector ? options.coursesBySector[sampleSector]?.[0] : undefined) ?? options.courseNames[0] ?? "";
 
   return {
     "Name Prefix": "Mr",
@@ -33,7 +36,8 @@ function buildSampleImportRow(options: CandidateImportTemplateOptions) {
     District: sampleDistrict,
     Program: CANDIDATE_PROGRAM_OPTIONS[0] ?? "NSQF School",
     "Center Name": options.centerNames[0] ?? "Center One",
-    "Course (reference only)": options.courseNames[0] ?? "",
+    "Sector (reference only)": sampleSector,
+    "Course (reference only)": sampleCourse,
   } satisfies Partial<Record<(typeof CANDIDATE_IMPORT_TEMPLATE_HEADERS)[number], string>>;
 }
 

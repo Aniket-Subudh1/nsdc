@@ -2218,7 +2218,8 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                   <li>Download the template and fill in learner details</li>
                   <li>
                     Use the dropdowns for <strong>Name prefix</strong>, <strong>Gender</strong>, <strong>Program</strong>,{" "}
-                    <strong>Training center</strong>, and optional <strong>Course (reference only)</strong>
+                    <strong>Training center</strong>, optional <strong>Sector (reference only)</strong>, then{" "}
+                    <strong>Course (reference only)</strong> (courses unlock after sector is selected)
                   </li>
                   <li>Upload the file — we check every row and show errors in plain language</li>
                   <li>Save valid rows, then send learners to the NSDC_SIDH portal from All learners</li>

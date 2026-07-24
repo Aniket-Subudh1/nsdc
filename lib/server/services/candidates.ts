@@ -18,6 +18,7 @@ import { CandidateImportRowModel } from "@/lib/server/models/candidate-import-ro
 import { ImportJobModel } from "@/lib/server/models/import-job";
 import { OutboxEventModel } from "@/lib/server/models/outbox-event";
 import { ProgramModel } from "@/lib/server/models/program";
+import { SectorModel } from "@/lib/server/models/sector";
 import { SidhApiTransactionModel } from "@/lib/server/models/sidh-api-transaction";
 import { SyncJobModel } from "@/lib/server/models/sync-job";
 import { TrainingCenterModel } from "@/lib/server/models/training-center";
@@ -402,7 +403,7 @@ function assertLearnerMutableBeforeSidh(candidate: CandidateLike) {
 }
 
 async function resolveReferenceCourseDetails(
-  referenceDetails?: { courseId?: string; courseName?: string } | null,
+  referenceDetails?: { courseId?: string; courseName?: string; sectorName?: string } | null,
 ) {
   if (referenceDetails === null) {
     return { courseId: null, courseName: null };
@@ -414,6 +415,7 @@ async function resolveReferenceCourseDetails(
 
   const courseId = normalizeWhitespace(referenceDetails.courseId);
   const courseNameInput = normalizeWhitespace(referenceDetails.courseName);
+  const sectorNameInput = normalizeWhitespace(referenceDetails.sectorName);
 
   if (!courseId && !courseNameInput) {
     return { courseId: null, courseName: null };
@@ -422,11 +424,17 @@ async function resolveReferenceCourseDetails(
   const referenceCourseSelect = {
     courseId: 1,
     courseName: 1,
+    sectorId: 1,
     status: 1,
     approvalStatus: 1,
   } as const;
 
-  function assertReferenceCourseEligible(course: { courseId: string; courseName: string; status?: string; approvalStatus?: string }) {
+  function assertReferenceCourseEligible(course: {
+    courseId: string;
+    courseName: string;
+    status?: string;
+    approvalStatus?: string;
+  }) {
     if (course.status !== "active" || course.approvalStatus !== "approved") {
       throw new ApiError(
         400,
@@ -441,11 +449,34 @@ async function resolveReferenceCourseDetails(
     };
   }
 
+  let sectorIdFilter: string | undefined;
+  if (sectorNameInput) {
+    const sector = await SectorModel.findOne({
+      name: { $regex: new RegExp(`^${escapeRegExp(sectorNameInput)}$`, "i") },
+      status: "active",
+    }).select({ sectorId: 1, name: 1 });
+
+    if (!sector) {
+      throw new ApiError(400, "INVALID_REFERENCE_SECTOR", `Sector "${sectorNameInput}" could not be resolved`);
+    }
+
+    sectorIdFilter = sector.sectorId;
+  }
+
   if (courseId) {
-    const course = await CourseModel.findOne({ courseId }).select(referenceCourseSelect);
+    const course = await CourseModel.findOne({
+      courseId,
+      ...(sectorIdFilter ? { sectorId: sectorIdFilter } : {}),
+    }).select(referenceCourseSelect);
 
     if (!course) {
-      throw new ApiError(400, "INVALID_REFERENCE_COURSE", `Course "${courseId}" could not be resolved`);
+      throw new ApiError(
+        400,
+        "INVALID_REFERENCE_COURSE",
+        sectorIdFilter
+          ? `Course "${courseId}" could not be resolved for sector "${sectorNameInput}"`
+          : `Course "${courseId}" could not be resolved`,
+      );
     }
 
     return assertReferenceCourseEligible(course);
@@ -455,19 +486,26 @@ async function resolveReferenceCourseDetails(
     courseName: { $regex: new RegExp(`^${escapeRegExp(courseNameInput)}$`, "i") },
     status: "active",
     approvalStatus: "approved",
+    ...(sectorIdFilter ? { sectorId: sectorIdFilter } : {}),
   })
     .select(referenceCourseSelect)
     .sort({ courseName: 1, courseId: 1 });
 
   if (matchingCourses.length === 0) {
-    throw new ApiError(400, "INVALID_REFERENCE_COURSE", `Course "${courseNameInput}" could not be resolved`);
+    throw new ApiError(
+      400,
+      "INVALID_REFERENCE_COURSE",
+      sectorIdFilter
+        ? `Course "${courseNameInput}" could not be resolved for sector "${sectorNameInput}"`
+        : `Course "${courseNameInput}" could not be resolved`,
+    );
   }
 
   if (matchingCourses.length > 1) {
     throw new ApiError(
       400,
       "AMBIGUOUS_REFERENCE_COURSE",
-      `Multiple active approved courses match "${courseNameInput}". Use the course id instead.`,
+      `Multiple active approved courses match "${courseNameInput}". Select a sector or use the course id instead.`,
       [
         {
           field: "referenceDetails.courseName",
@@ -1152,6 +1190,9 @@ function mapImportRowToCandidateInput(row: Record<string, unknown>): CreateCandi
       "Reference Course",
     ]),
   ).trim();
+  const sectorName = String(
+    getCellValue(row, ["Sector (reference only)", "Sector", "Sector Name", "SectorName", "Reference Sector"]),
+  ).trim();
 
   return {
     program: normalizeCandidateProgram(getCellValue(row, ["Program"])) as CreateCandidateRegistrationInput["program"],
@@ -1182,6 +1223,7 @@ function mapImportRowToCandidateInput(row: Record<string, unknown>): CreateCandi
       ? {
           referenceDetails: {
             courseName,
+            ...(sectorName ? { sectorName } : {}),
           },
         }
       : {}),
@@ -1633,6 +1675,9 @@ export async function createCandidateImportJob(
             referenceDetails: {
               courseId: resolvedReferenceCourse.courseId,
               courseName: resolvedReferenceCourse.courseName,
+              ...(parsedRegistrationInput.referenceDetails?.sectorName
+                ? { sectorName: parsedRegistrationInput.referenceDetails.sectorName }
+                : {}),
             },
           }
         : parsedRegistrationInput;

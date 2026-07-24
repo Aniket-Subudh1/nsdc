@@ -664,6 +664,7 @@ const candidateRegistrationReferenceDetailsSchema = z
   .object({
     courseId: z.string().trim().min(1).optional(),
     courseName: z.string().trim().min(1).optional(),
+    sectorName: z.string().trim().min(1).optional(),
   })
   .refine((value) => Boolean(value.courseId || value.courseName), {
     message: "Course reference requires a course id or name",

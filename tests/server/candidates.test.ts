@@ -1,8 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { readFile } from "node:fs/promises";
-
-import { readWorkbookSheetsFromArrayBuffer, writeWorkbookToArrayBuffer } from "@/lib/spreadsheet/node";
+import { writeWorkbookToArrayBuffer } from "@/lib/spreadsheet/node";
 
 const mocks = vi.hoisted(() => ({
   connectToDatabase: vi.fn(),
@@ -21,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   courseFind: vi.fn(),
   outboxEventCreate: vi.fn(),
   programFindOne: vi.fn(),
+  sectorFindOne: vi.fn(),
   trainingCenterFindOne: vi.fn(),
   sidhApiTransactionFind: vi.fn(),
 }));
@@ -82,6 +81,12 @@ vi.mock("@/lib/server/models/outbox-event", () => ({
 vi.mock("@/lib/server/models/program", () => ({
   ProgramModel: {
     findOne: mocks.programFindOne,
+  },
+}));
+
+vi.mock("@/lib/server/models/sector", () => ({
+  SectorModel: {
+    findOne: mocks.sectorFindOne,
   },
 }));
 
@@ -552,23 +557,39 @@ describe("candidate services", () => {
     });
   });
 
-  it("reads the published candidate import template workbook", async () => {
-    const workbookBuffer = await readFile("public/candidate_details.xlsx");
-    const sheets = await readWorkbookSheetsFromArrayBuffer(workbookBuffer);
-
-    expect(sheets[0]?.rows.length).toBeGreaterThan(0);
-    expect(sheets[0]?.rows[0]).toMatchObject({
-      "Name Prefix": "Mr",
-      "Full Name": "Rohit Kumar",
-      Gender: "Male",
-      Program: "NSQF School",
-      "Center Name": "Center One",
+  it("builds a candidate import template with sector-dependent course columns", async () => {
+    const { buildCandidateImportTemplateBuffer } = await import("@/lib/candidate-import-template-excel");
+    const workbookBuffer = await buildCandidateImportTemplateBuffer({
+      centerNames: ["Center One"],
+      courseNames: ["Retail Sales Associate", "Yoga Instructor"],
+      sectorNames: ["Healthcare", "Retail"],
+      coursesBySector: {
+        Healthcare: ["Yoga Instructor"],
+        Retail: ["Retail Sales Associate"],
+      },
     });
+
+    const ExcelJS = (await import("exceljs")).default;
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(Buffer.from(new Uint8Array(workbookBuffer)));
+    const sheet = workbook.getWorksheet("Candidates") as
+      | (ExcelJS.Worksheet & { dataValidations?: { model?: Record<string, { formulae?: string[] }> } })
+      | undefined;
+    const headers = (sheet?.getRow(1).values as Array<string | null | undefined>).filter(Boolean);
+
+    expect(headers).toContain("Sector (reference only)");
+    expect(headers).toContain("Course (reference only)");
+    expect(headers.indexOf("Sector (reference only)")).toBeLessThan(headers.indexOf("Course (reference only)"));
+
+    const courseValidation = sheet?.dataValidations?.model?.O2;
+    expect(courseValidation?.formulae?.[0] ?? "").toContain("VLOOKUP($N2");
+    expect(courseValidation?.formulae?.[0] ?? "").toContain('IF($N2=""');
   });
 
   it("imports from the Candidates sheet even when Lists appears first", async () => {
     mocks.candidateFindOne.mockReturnValue(createSelectQuery(null));
     mockActiveReferenceCourseLookup();
+    mocks.sectorFindOne.mockReturnValue(createSelectQuery({ sectorId: "sec_retail", name: "Retail" }));
     mocks.importJobCreate.mockImplementation(async (value: Record<string, unknown>) => value);
     mocks.importRowInsertMany.mockResolvedValue([]);
 
@@ -601,7 +622,8 @@ describe("candidate services", () => {
             District: "GAJAPATI",
             Program: "Farmer",
             "Center Name": "GTET Skill Training Center Paralakhemundi",
-            "Course (reference only)": "Yoga Instructor",
+            "Sector (reference only)": "Retail",
+            "Course (reference only)": "Retail Sales Associate",
           },
         ],
       },
@@ -621,6 +643,7 @@ describe("candidate services", () => {
     expect(result.totalRows).toBe(1);
     expect(result.validRows).toBe(1);
     expect(result.invalidRows).toBe(0);
+    expect(mocks.sectorFindOne).toHaveBeenCalled();
     expect(mocks.importRowInsertMany).toHaveBeenCalledWith(
       expect.arrayContaining([
         expect.objectContaining({
@@ -629,6 +652,10 @@ describe("candidate services", () => {
             personalDetails: expect.objectContaining({ firstName: "Rupa Karji" }),
             contactDetails: expect.objectContaining({ phone: "8559681145" }),
             program: "Farmer",
+            referenceDetails: expect.objectContaining({
+              courseName: "Retail Sales Associate",
+              sectorName: "Retail",
+            }),
           }),
         }),
       ]),

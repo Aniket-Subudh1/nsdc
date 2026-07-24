@@ -29,6 +29,7 @@ export const CANDIDATE_IMPORT_EXPORT_HEADERS = [
   "District",
   "Program",
   "Center Name",
+  "Sector (reference only)",
   "Course (reference only)",
 ] as const;
 
@@ -77,6 +78,7 @@ export function mapCandidateToExportRow(candidate: CandidateExportSource): Candi
     District: district,
     Program: getCandidateProgramLabel(candidate.programId) || "",
     "Center Name": candidate.centerName ?? "",
+    "Sector (reference only)": "",
     "Course (reference only)": candidate.referenceCourseName ?? "",
   };
 }

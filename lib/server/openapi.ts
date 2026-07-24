@@ -989,7 +989,7 @@ export function getOpenApiDocument() {
         CandidateImportRequest: {
           type: "object",
           required: ["file"],
-          description: "Upload the Skill India candidate workbook. The current UI downloads public/candidate_details.xlsx; the accepted headers are Name Prefix, Full Name, Gender, DOB, Father's Name, Guardian's Name, Email, Phone, Country Code, State, District, Program, Center Name, and Course (reference only). Full Name maps to personalDetails.firstName (legacy First Name headers are still accepted). Name Prefix must be Mr, Mrs, Ms, or Mx. Gender must be Male, Female, or Transgender. Program must be one of the seven supported program categories. The template workbook includes Excel dropdowns for those columns.",
+          description: "Upload the Skill India candidate workbook. The current UI downloads a generated candidate_details.xlsx template; the accepted headers are Name Prefix, Full Name, Gender, DOB, Father's Name, Guardian's Name, Email, Phone, Country Code, State, District, Program, Center Name, Sector (reference only), and Course (reference only). Full Name maps to personalDetails.firstName (legacy First Name headers are still accepted). Name Prefix must be Mr, Mrs, Ms, or Mx. Gender must be Male, Female, or Transgender. Program must be one of the seven supported program categories. Sector and Course are reference-only fields; after choosing a sector, the course dropdown lists only courses for that sector.",
           properties: {
             file: { type: "string", format: "binary" },
             programId: { type: "string", description: "Optional internal program scope. Defaults to candidate_registration when omitted." },

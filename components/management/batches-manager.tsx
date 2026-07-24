@@ -2931,7 +2931,9 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
             ) : isLoadingCandidates && !currentEnrollmentJob ? (
               <div className="flex justify-center py-10 text-slate-400"><IconLoader2 className="h-6 w-6 animate-spin" /></div>
             ) : !currentEnrollmentJob && assignableCandidates.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-slate-200 py-10 text-center text-sm text-slate-500">No eligible learners found for this batch.</p>
+              <p className="rounded-xl border border-dashed border-slate-200 py-10 text-center text-sm text-slate-500">
+                No eligible learners found. Learners must be synced to SIDH and not already enrolled in this or an overlapping batch.
+              </p>
             ) : !currentEnrollmentJob ? (
               <div className="overflow-hidden rounded-xl border border-slate-200">
                 <table className="w-full table-fixed text-sm">

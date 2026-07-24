@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   candidateTrainingStatusDeleteMany: vi.fn(),
   candidateTrainingStatusFind: vi.fn(),
   candidateTrainingStatusInsertMany: vi.fn(),
+  candidateUpdateMany: vi.fn(),
   candidateUpdateOne: vi.fn(),
   connectToDatabase: vi.fn(),
   courseFindOne: vi.fn(),
@@ -111,6 +112,7 @@ vi.mock("@/lib/server/models/candidate-training-status-history", () => ({
 vi.mock("@/lib/server/models/candidate", () => ({
   CandidateModel: {
     find: mocks.candidateFind,
+    updateMany: mocks.candidateUpdateMany,
     updateOne: mocks.candidateUpdateOne,
   },
 }));
@@ -142,6 +144,7 @@ vi.mock("@/lib/server/models/training-center", () => ({
 import {
   createAttendanceImport,
   createBatch,
+  evaluateCandidateBatchAssignment,
   getBatchAttendanceSummary,
   linkBatchToSidh,
   processQueuedBatchSyncJobs,
@@ -790,6 +793,88 @@ describe("batch services", () => {
     expect(summary.totalSessions).toBe(2);
     expect(summary.candidates.find((candidate) => candidate.candidateId === "cand_001")?.attendancePercentage).toBe(50);
     expect(summary.candidates.find((candidate) => candidate.candidateId === "cand_002")?.attendancePercentage).toBe(100);
+  });
+});
+
+describe("evaluateCandidateBatchAssignment", () => {
+  const batch = {
+    allowCandidateOverlap: false,
+    batchId: "bat_001",
+    batchSize: 80,
+    centerId: "tc_001",
+    courseId: "course_001",
+    endDate: new Date("2026-02-01T00:00:00.000Z"),
+    startDate: new Date("2026-01-01T00:00:00.000Z"),
+  };
+  const course = { minimumAge: 18, programIds: ["prg_001"] };
+  const context = {
+    conflictingCandidateIds: new Set<string>(),
+    existingBatchCandidateIds: new Set<string>(),
+  };
+
+  it("accepts synced registration-center learners with SIDH program labels", () => {
+    const result = evaluateCandidateBatchAssignment(
+      batch,
+      course,
+      {
+        candidateId: "cand_reg",
+        centerId: "candidate_registration",
+        dateOfBirth: new Date("2000-01-01T00:00:00.000Z"),
+        fullName: "Rohit Kumar",
+        mobileNumber: "9876543210",
+        programId: "NSQF School",
+        registrationMode: "internal_registration",
+        sidhCandidateId: "CAN_40903126",
+        syncState: { status: "synced" },
+      },
+      context,
+    );
+
+    expect(result).toEqual({ status: "valid", errors: [] });
+  });
+
+  it("still rejects learners assigned to a different real training center", () => {
+    const result = evaluateCandidateBatchAssignment(
+      batch,
+      course,
+      {
+        candidateId: "cand_other",
+        centerId: "tc_999",
+        dateOfBirth: new Date("2000-01-01T00:00:00.000Z"),
+        fullName: "Other Center",
+        mobileNumber: "9876543211",
+        programId: "prg_001",
+        registrationMode: "internal_registration",
+        sidhCandidateId: "CAN_002",
+        syncState: { status: "synced" },
+      },
+      context,
+    );
+
+    expect(result.status).toBe("invalid");
+    expect(result.errors[0]?.field).toBe("centerId");
+  });
+
+  it("rejects internal program mismatches but ignores SIDH labels", () => {
+    const mismatched = evaluateCandidateBatchAssignment(
+      batch,
+      course,
+      {
+        candidateId: "cand_prg",
+        centerId: "tc_001",
+        dateOfBirth: new Date("2000-01-01T00:00:00.000Z"),
+        fullName: "Wrong Program",
+        mobileNumber: "9876543212",
+        programId: "prg_999",
+        registrationMode: "internal_registration",
+        sidhCandidateId: "CAN_003",
+        syncState: { status: "synced" },
+      },
+      context,
+    );
+
+    expect(mismatched.status).toBe("invalid");
+    expect(mismatched.errors[0]?.field).toBe("programId");
   });
 });
 

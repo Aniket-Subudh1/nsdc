@@ -566,6 +566,76 @@ describe("candidate services", () => {
     });
   });
 
+  it("imports from the Candidates sheet even when Lists appears first", async () => {
+    mocks.candidateFindOne.mockReturnValue(createSelectQuery(null));
+    mockActiveReferenceCourseLookup();
+    mocks.importJobCreate.mockImplementation(async (value: Record<string, unknown>) => value);
+    mocks.importRowInsertMany.mockResolvedValue([]);
+
+    const workbook = await writeWorkbookToArrayBuffer([
+      {
+        name: "Lists",
+        rows: [
+          {
+            Mr: "Mrs",
+            Male: "Female",
+            "NSQF School": "Fee-Based",
+            "Center One": "Center Two",
+          },
+        ],
+      },
+      {
+        name: "Candidates",
+        rows: [
+          {
+            "Name Prefix": "Mr",
+            "Full Name": "Rupa Karji",
+            Gender: "Female",
+            DOB: "28/06/1945",
+            "Father's Name": "K Barun",
+            "Guardian Name": "K Barun",
+            Email: "rkarji@gmail.com",
+            "Country Code": "91",
+            Phone: "8559681145",
+            State: "ODISHA",
+            District: "GAJAPATI",
+            Program: "Farmer",
+            "Center Name": "GTET Skill Training Center Paralakhemundi",
+            "Course (reference only)": "Yoga Instructor",
+          },
+        ],
+      },
+    ]);
+
+    const result = await createCandidateImportJob(
+      actor as never,
+      {
+        programId: "prg_001",
+        centerId: "tc_001",
+        registrationMode: "internal_registration",
+      },
+      "Test.xlsx",
+      workbook as ArrayBuffer,
+    );
+
+    expect(result.totalRows).toBe(1);
+    expect(result.validRows).toBe(1);
+    expect(result.invalidRows).toBe(0);
+    expect(mocks.importRowInsertMany).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "valid",
+          normalized: expect.objectContaining({
+            personalDetails: expect.objectContaining({ firstName: "Rupa Karji" }),
+            contactDetails: expect.objectContaining({ phone: "8559681145" }),
+            program: "Farmer",
+          }),
+        }),
+      ]),
+      { ordered: false },
+    );
+  });
+
   it("stages import rows with reference course names from the workbook", async () => {
     mocks.candidateFindOne.mockReturnValue(createSelectQuery(null));
     mockActiveReferenceCourseLookup();

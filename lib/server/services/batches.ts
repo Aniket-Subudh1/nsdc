@@ -277,6 +277,15 @@ type ProcessDependencies = {
 const ACTIVE_BATCH_STATUSES = ["draft", "ready", "active"];
 const UNASSIGNED_CENTER_ID = "unassigned";
 
+/** Registration-only center IDs used before a learner is attached to a real TC. */
+export function isSyntheticCandidateCenterId(centerId: string) {
+  return centerId === "candidate_registration" || centerId.startsWith("candidate_center_");
+}
+
+function isInternalProgramId(programId: string) {
+  return /^prg_[a-z0-9]+$/i.test(programId.trim());
+}
+
 function ensureCanReadBatches(actor: AuthSession) {
   if (!getPermissionsForRoles(actor.user.roles).includes("batches:read")) {
     throw new ApiError(403, "FORBIDDEN", "You do not have access to batches");
@@ -782,7 +791,11 @@ export function evaluateCandidateBatchAssignment(
     });
   }
 
-  if (batch.centerId !== UNASSIGNED_CENTER_ID && candidate.centerId !== batch.centerId) {
+  if (
+    batch.centerId !== UNASSIGNED_CENTER_ID &&
+    candidate.centerId !== batch.centerId &&
+    !isSyntheticCandidateCenterId(candidate.centerId)
+  ) {
     errors.push({
       field: "centerId",
       message: "Learner is assigned to a different training center",
@@ -797,7 +810,13 @@ export function evaluateCandidateBatchAssignment(
     });
   }
 
-  if ((course.programIds ?? []).length > 0 && !(course.programIds ?? []).includes(candidate.programId)) {
+  // Candidate.programId often stores SIDH registration labels (e.g. "NSQF School"),
+  // while course.programIds are internal program masters (prg_*). Only compare when both use internal IDs.
+  if (
+    (course.programIds ?? []).length > 0 &&
+    isInternalProgramId(candidate.programId) &&
+    !(course.programIds ?? []).includes(candidate.programId)
+  ) {
     errors.push({
       field: "programId",
       message: "Learner is not aligned to the batch course program mapping",
@@ -1536,6 +1555,19 @@ export async function addCandidatesToBatch(actor: AuthSession, batchId: string, 
   const incomingCandidates = candidates.filter((candidate) => !existingIds.has(candidate.candidateId));
 
   await insertBatchCandidates(batch.batchId, actor.user.id, incomingCandidates);
+
+  if (batch.centerId !== UNASSIGNED_CENTER_ID) {
+    const adoptableCandidateIds = incomingCandidates
+      .filter((candidate) => isSyntheticCandidateCenterId(candidate.centerId))
+      .map((candidate) => candidate.candidateId);
+
+    if (adoptableCandidateIds.length > 0) {
+      await CandidateModel.updateMany(
+        { candidateId: { $in: adoptableCandidateIds } },
+        { $set: { centerId: batch.centerId, updatedByUserId: actor.user.id } },
+      );
+    }
+  }
 
   batch.candidateCount = await refreshBatchCandidateCount(batch.batchId);
   batch.updatedByUserId = actor.user.id;

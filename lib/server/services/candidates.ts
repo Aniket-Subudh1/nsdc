@@ -1082,17 +1082,64 @@ function normalizeImportHeader(header: string) {
   return header.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+function coerceImportCellValue(value: unknown): unknown {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || value instanceof Date) {
+    return value;
+  }
+
+  if (typeof value === "object" && value !== null && "text" in value) {
+    return String((value as { text?: unknown }).text ?? "");
+  }
+
+  return String(value);
+}
+
 function getCellValue(row: Record<string, unknown>, keys: string[]) {
   const keyMap = new Map(Object.keys(row).map((key) => [normalizeImportHeader(key), row[key]]));
 
   for (const key of keys) {
     const value = keyMap.get(normalizeImportHeader(key));
-    if (value !== undefined) {
-      return value;
+    if (value !== undefined && value !== null && value !== "") {
+      return coerceImportCellValue(value);
     }
   }
 
   return "";
+}
+
+const CANDIDATE_IMPORT_SHEET_ALIASES = new Set(["candidates", "candidate import template"]);
+const CANDIDATE_IMPORT_SKIP_SHEETS = new Set(["lists", "districts"]);
+const CANDIDATE_IMPORT_HEADER_HINTS = ["fullname", "phone", "program", "gender", "dob"];
+
+function sheetHasCandidateImportHeaders(sheet: { rows: Array<Record<string, unknown>> }) {
+  const firstRow = sheet.rows[0];
+  if (!firstRow) {
+    return false;
+  }
+
+  const headers = new Set(Object.keys(firstRow).map((key) => normalizeImportHeader(key)));
+  return CANDIDATE_IMPORT_HEADER_HINTS.filter((hint) => headers.has(hint)).length >= 3;
+}
+
+function selectCandidateImportSheet<T extends { name: string; rows: Array<Record<string, unknown>> }>(sheets: T[]) {
+  const namedSheet = sheets.find((sheet) => CANDIDATE_IMPORT_SHEET_ALIASES.has(normalizeWhitespace(sheet.name).toLowerCase()));
+  if (namedSheet) {
+    return namedSheet;
+  }
+
+  const headerMatchedSheet = sheets.find((sheet) => {
+    const sheetName = normalizeWhitespace(sheet.name).toLowerCase();
+    return !CANDIDATE_IMPORT_SKIP_SHEETS.has(sheetName) && sheetHasCandidateImportHeaders(sheet);
+  });
+  if (headerMatchedSheet) {
+    return headerMatchedSheet;
+  }
+
+  return sheets.find((sheet) => !CANDIDATE_IMPORT_SKIP_SHEETS.has(normalizeWhitespace(sheet.name).toLowerCase())) ?? sheets[0];
 }
 
 function mapImportRowToCandidateInput(row: Record<string, unknown>): CreateCandidateRegistrationInput {
@@ -1549,13 +1596,21 @@ export async function createCandidateImportJob(
     );
   }
 
-  const firstSheet = workbookSheets.find((sheet) => normalizeWhitespace(sheet.name).toLowerCase() === "candidate import template") ?? workbookSheets[0];
+  const importSheet = selectCandidateImportSheet(workbookSheets);
 
-  if (!firstSheet) {
+  if (!importSheet) {
     throw new ApiError(400, "IMPORT_EMPTY_WORKBOOK", "Workbook does not contain any sheets");
   }
 
-  const rawRows = firstSheet.rows;
+  if (!sheetHasCandidateImportHeaders(importSheet)) {
+    throw new ApiError(
+      400,
+      "IMPORT_SHEET_INVALID",
+      'Could not find a Candidates sheet with the expected columns (Full Name, Phone, Program, …). Use the downloaded template and fill the "Candidates" tab.',
+    );
+  }
+
+  const rawRows = importSheet.rows;
   const seenMobileNumbers = new Set<string>();
   const rows: Array<Record<string, unknown>> = [];
   let validRows = 0;

@@ -185,18 +185,24 @@ export async function applyBatchEnrollmentEligibilityFilters(
   const preferredCenterId = options.userCenterId?.trim() || (batch.centerId !== UNASSIGNED_CENTER_ID ? batch.centerId : undefined);
   if (preferredCenterId) {
     const scopedCenterFilter = resolveScopedCenterFilter(actor, preferredCenterId);
-    if (typeof scopedCenterFilter === "string") {
-      filter.centerId = scopedCenterFilter;
-    } else if (Array.isArray(scopedCenterFilter)) {
-      filter.centerId = { $in: scopedCenterFilter };
-    } else {
-      filter.centerId = preferredCenterId;
-    }
+    const centerIds = typeof scopedCenterFilter === "string"
+      ? [scopedCenterFilter]
+      : Array.isArray(scopedCenterFilter)
+        ? scopedCenterFilter
+        : [preferredCenterId];
+
+    // Include direct-registration learners (synthetic centers) so they can be enrolled into a real TC batch.
+    andConditions.push({
+      $or: [
+        { centerId: { $in: centerIds } },
+        { centerId: "candidate_registration" },
+        { centerId: { $regex: "^candidate_center_" } },
+      ],
+    });
   }
 
-  if ((course.programIds ?? []).length > 0) {
-    filter.programId = { $in: course.programIds };
-  }
+  // Do not filter by course.programIds: candidate.programId stores SIDH registration labels
+  // (e.g. "NSQF School"), which are a different concept from internal program masters.
 
   if (course.minimumAge && batch.startDate) {
     const maxDateOfBirth = new Date(batch.startDate);

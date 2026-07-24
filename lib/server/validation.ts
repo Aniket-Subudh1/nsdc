@@ -291,6 +291,18 @@ export const createSchemeSchema = z
         path: ["sidhSchemeReferenceId"],
       });
     }
+
+    if (
+      value.sidhSchemeId &&
+      value.sidhSchemeReferenceId &&
+      value.sidhSchemeId !== value.sidhSchemeReferenceId
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "SIDH Scheme ID and Scheme Reference ID must be the same",
+        path: ["sidhSchemeReferenceId"],
+      });
+    }
   });
 
 export const updateSchemeSchema = z
@@ -314,6 +326,19 @@ export const updateSchemeSchema = z
   })
   .refine((value) => Object.values(value).some((entry) => entry !== undefined), {
     message: "At least one field is required",
+  })
+  .superRefine((value, ctx) => {
+    if (
+      value.sidhSchemeId &&
+      value.sidhSchemeReferenceId &&
+      value.sidhSchemeId !== value.sidhSchemeReferenceId
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "SIDH Scheme ID and Scheme Reference ID must be the same",
+        path: ["sidhSchemeReferenceId"],
+      });
+    }
   });
 
 export const createCourseSchema = z

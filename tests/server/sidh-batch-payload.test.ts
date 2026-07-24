@@ -6,6 +6,7 @@ import {
   calculateMinimumAssessmentDate,
   resolveAssessmentDate,
   resolveBatchSchemeId,
+  resolveSidhSchemeKey,
 } from "@/lib/sidh-batch-payload";
 
 describe("SIDH batch payload builder", () => {
@@ -29,8 +30,8 @@ describe("SIDH batch payload builder", () => {
       },
       scheme: {
         feePaidBy: "Self-Paid",
-        sidhSchemeId: "44644",
-        sidhSchemeReferenceId: "Scheme_1159",
+        sidhSchemeId: "Scheme_2",
+        sidhSchemeReferenceId: "Scheme_2",
         sidhSchemeType: "feeBased",
       },
       startDate: "2026-06-11",
@@ -58,8 +59,8 @@ describe("SIDH batch payload builder", () => {
       tcId: "TC164648",
       trainingHoursPerDay: 8,
       batchFee: { totalFees: 500 },
-      schemeId: "44644",
-      schemeReferenceId: "Scheme_1159",
+      schemeId: "Scheme_2",
+      schemeReferenceId: "Scheme_2",
       schemeType: "feeBased",
       feePaidBy: "Self-Paid",
       skillingcategory: {
@@ -69,6 +70,51 @@ describe("SIDH batch payload builder", () => {
       },
       tpId: "TP054997",
     });
+  });
+
+  it("emits equal schemeId and schemeReferenceId even when scheme fields differ", () => {
+    const payload = buildSidhBatchPayload({
+      assessmentDate: "2026-11-25",
+      batchName: "Retail Batch 2026-06-11",
+      batchSize: 25,
+      course: {
+        sidhCourseId: "FeeSchCor_48128",
+        trainingPerDayHours: 8,
+      },
+      endDate: "2026-11-25",
+      endTime: "17:00",
+      fee: 500,
+      scheme: {
+        sidhSchemeId: "44644",
+        sidhSchemeReferenceId: "Scheme_1159",
+        sidhSchemeType: "feeBased",
+      },
+      startDate: "2026-06-11",
+      startTime: "09:00",
+      tcId: "TC164648",
+      options: {
+        tpId: "TP054997",
+      },
+    });
+
+    expect(payload.schemeId).toBe("Scheme_1159");
+    expect(payload.schemeReferenceId).toBe("Scheme_1159");
+    expect(payload.schemeId).toBe(payload.schemeReferenceId);
+  });
+
+  it("resolves Scheme_* style keys preferentially", () => {
+    expect(
+      resolveSidhSchemeKey({
+        sidhSchemeId: "44644",
+        sidhSchemeReferenceId: "Scheme_2",
+      }),
+    ).toBe("Scheme_2");
+    expect(
+      resolveSidhSchemeKey({
+        sidhSchemeId: "Scheme_2",
+        sidhSchemeReferenceId: "",
+      }),
+    ).toBe("Scheme_2");
   });
 
   it("rejects zero batch fee when building the SIDH payload", () => {
@@ -85,8 +131,8 @@ describe("SIDH batch payload builder", () => {
         endTime: "17:00",
         fee: 0,
         scheme: {
-          sidhSchemeId: "44644",
-          sidhSchemeReferenceId: "Scheme_1159",
+          sidhSchemeId: "Scheme_2",
+          sidhSchemeReferenceId: "Scheme_2",
           sidhSchemeType: "feeBased",
         },
         startDate: "2026-06-11",
@@ -110,8 +156,8 @@ describe("SIDH batch payload builder", () => {
   it("prefers a course-linked SIDH-ready scheme", () => {
     expect(
       resolveBatchSchemeId(["sch_a"], [
-        { schemeId: "sch_a", sidhSchemeId: "44644", sidhSchemeReferenceId: "Scheme_1159", syncEnabled: true },
-        { schemeId: "sch_b", sidhSchemeId: "44645", sidhSchemeReferenceId: "Scheme_1160", syncEnabled: true },
+        { schemeId: "sch_a", sidhSchemeId: "Scheme_2", sidhSchemeReferenceId: "Scheme_2", syncEnabled: true },
+        { schemeId: "sch_b", sidhSchemeId: "Scheme_3", sidhSchemeReferenceId: "Scheme_3", syncEnabled: true },
       ]),
     ).toBe("sch_a");
   });

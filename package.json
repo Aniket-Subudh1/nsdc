@@ -21,7 +21,9 @@
     "sidh:env": "tsx scripts/sidh-env.ts",
     "sidh:env:uat": "tsx scripts/sidh-env.ts uat",
     "sidh:env:production": "tsx scripts/sidh-env.ts production",
-    "push:batch": "tsx scripts/create-and-push-batch.ts"
+    "push:batch": "tsx scripts/create-and-push-batch.ts",
+    "schemes:align-sidh-ids": "tsx scripts/align-scheme-sidh-ids.ts",
+    "postman:sidh": "tsx scripts/generate-sidh-postman-collection.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1057.0",

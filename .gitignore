@@ -33,6 +33,9 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# Postman env with local SIDH secrets (regenerate via npm run postman:sidh)
+postman/SIDH-Production.postman_environment.json
+
 # vercel
 .vercel
 

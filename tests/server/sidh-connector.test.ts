@@ -144,7 +144,7 @@ describe("SIDH connector", () => {
         createdSource: "Created for NSDC Academy Partners",
         feePaidBy: "Self-Paid",
         schemeId: "Scheme_2",
-        schemeReferenceId: "02R/2009-10/002IM",
+        schemeReferenceId: "Scheme_2",
         schemeType: "feeBased",
         size: 80,
         skillingcategory: { id: 1, name: "NSDC Market led programme", scheme: "Fee Based" },
@@ -164,7 +164,8 @@ describe("SIDH connector", () => {
       batchName: "Retail Batch",
       courseId: "SIDH_COURSE_001",
       feePaidBy: "Self-Paid",
-      schemeReferenceId: "02R/2009-10/002IM",
+      schemeId: "Scheme_2",
+      schemeReferenceId: "Scheme_2",
       tcId: "SIDH_TC_001",
       tpId: "TP_UAT",
     });

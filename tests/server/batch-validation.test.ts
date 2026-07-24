@@ -152,4 +152,24 @@ describe("scheme validation", () => {
       validTo: undefined,
     });
   });
+
+  it("rejects mismatched SIDH scheme id and reference id", () => {
+    expect(() =>
+      createSchemeSchema.parse({
+        code: "Scheme_2",
+        name: "Fee Based",
+        status: "active",
+        syncEnabled: true,
+        sidhSchemeId: "44644",
+        sidhSchemeReferenceId: "Scheme_2",
+      }),
+    ).toThrow(/must be the same/i);
+
+    expect(() =>
+      updateSchemeSchema.parse({
+        sidhSchemeId: "44644",
+        sidhSchemeReferenceId: "Scheme_2",
+      }),
+    ).toThrow(/must be the same/i);
+  });
 });

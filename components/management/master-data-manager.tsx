@@ -2754,17 +2754,23 @@ function SchemeModal({
           <FormField label="SIDH Scheme ID">
             <input
               value={form.sidhSchemeId}
-              onChange={(e) => setForm((f) => ({ ...f, sidhSchemeId: e.target.value }))}
+              onChange={(e) => {
+                const value = e.target.value;
+                setForm((f) => ({ ...f, sidhSchemeId: value, sidhSchemeReferenceId: value }));
+              }}
               className={inputCls}
-              placeholder="44644"
+              placeholder="Scheme_2"
             />
           </FormField>
           <FormField label="SIDH Scheme Reference ID">
             <input
               value={form.sidhSchemeReferenceId}
-              onChange={(e) => setForm((f) => ({ ...f, sidhSchemeReferenceId: e.target.value }))}
+              onChange={(e) => {
+                const value = e.target.value;
+                setForm((f) => ({ ...f, sidhSchemeId: value, sidhSchemeReferenceId: value }));
+              }}
               className={inputCls}
-              placeholder="Scheme_1159"
+              placeholder="Scheme_2"
             />
           </FormField>
           <FormField label="Scheme Type">

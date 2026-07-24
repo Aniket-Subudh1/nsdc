@@ -72,7 +72,7 @@ describe("SIDH outbound payload normalization", () => {
         createdSource: "Created for NSDC Academy Partners",
         feePaidBy: "Self-Paid",
         schemeId: "Scheme_2",
-        schemeReferenceId: "02R/2009-10/002IM",
+        schemeReferenceId: "Scheme_2",
         schemeType: "feeBased",
         size: 80,
         skillingcategory: { id: 1, name: "NSDC Market led programme", scheme: "Fee Based" },

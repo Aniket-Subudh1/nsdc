@@ -84,6 +84,37 @@ export function calculateBatchEndDate(startDate: string, totalHours: number, tra
   return start.toISOString().slice(0, 10);
 }
 
+function looksLikeSchemeReference(value: string) {
+  return value.startsWith("Scheme_");
+}
+
+/** Resolve a single SIDH scheme key for both schemeId and schemeReferenceId. */
+export function resolveSidhSchemeKey(scheme: {
+  sidhSchemeId?: string | null;
+  sidhSchemeReferenceId?: string | null;
+}): string | null {
+  const sidhSchemeId = scheme.sidhSchemeId?.trim() || "";
+  const sidhSchemeReferenceId = scheme.sidhSchemeReferenceId?.trim() || "";
+
+  if (sidhSchemeReferenceId && looksLikeSchemeReference(sidhSchemeReferenceId)) {
+    return sidhSchemeReferenceId;
+  }
+
+  if (sidhSchemeId && looksLikeSchemeReference(sidhSchemeId)) {
+    return sidhSchemeId;
+  }
+
+  if (sidhSchemeReferenceId) {
+    return sidhSchemeReferenceId;
+  }
+
+  if (sidhSchemeId) {
+    return sidhSchemeId;
+  }
+
+  return null;
+}
+
 export function buildSidhBatchPayload(source: SidhBatchPayloadSource) {
   assertValidBatchFee(source.fee);
 
@@ -114,6 +145,7 @@ export function buildSidhBatchPayload(source: SidhBatchPayloadSource) {
     source.program?.name?.trim() ||
     SIDH_BATCH_DEFAULTS.skillingCategoryName;
   const skillingCategoryScheme = source.program?.skillingCategoryScheme?.trim() || SIDH_BATCH_DEFAULTS.scheme;
+  const schemeKey = resolveSidhSchemeKey(source.scheme) ?? SIDH_BATCH_DEFAULTS.schemeId;
 
   return {
     batchName: source.batchName,
@@ -138,8 +170,8 @@ export function buildSidhBatchPayload(source: SidhBatchPayloadSource) {
       id: skillingCategoryId,
       scheme: skillingCategoryScheme,
     },
-    schemeId: source.scheme.sidhSchemeId ?? SIDH_BATCH_DEFAULTS.schemeId,
-    schemeReferenceId: source.scheme.sidhSchemeReferenceId ?? SIDH_BATCH_DEFAULTS.schemeReferenceId,
+    schemeId: schemeKey,
+    schemeReferenceId: schemeKey,
     schemeType: source.scheme.sidhSchemeType ?? SIDH_BATCH_DEFAULTS.schemeType,
     tcId: source.tcId?.trim() ?? "",
     tpId: fields.tpId,

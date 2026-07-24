@@ -1,0 +1,612 @@
+{
+  "info": {
+    "name": "SIDH Partner APIs (production)",
+    "description": "SIDH / Skill India partner APIs only (no NSDC portal routes).\n\nSeeded from MongoDB against SIDH_ENV=production.\nBase URL: https://adminservices.skillindiadigital.gov.in\nTP: TP38273\nBatch: Yoga B1 FY 26-27 (bat_015486ccb1d84928)\nCourse: FeeSchCor_67556\nScheme: Scheme_2 / Scheme_2\nTC: 1330\nCandidates: CAN_38830776, CAN_40450541, CAN_40450542\n\nSecrets: regenerate with `npm run postman:sidh` to load `sidhPassword` from `.env` into the local environment file.\nSelect environment `SIDH production (DB-seeded)`, then run Auth requests 1 → 2 → 3 before any business API.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "sidhBaseUrl",
+      "value": "https://adminservices.skillindiadigital.gov.in"
+    },
+    {
+      "key": "sidhUsername",
+      "value": "TP38273"
+    },
+    {
+      "key": "sidhTpId",
+      "value": "TP38273"
+    },
+    {
+      "key": "sidhPassword",
+      "value": ""
+    },
+    {
+      "key": "sidhEncryptedPassword",
+      "value": ""
+    },
+    {
+      "key": "sidhPublicKey",
+      "value": ""
+    },
+    {
+      "key": "sidhSecretKey",
+      "value": ""
+    },
+    {
+      "key": "sidhCsrfToken",
+      "value": ""
+    },
+    {
+      "key": "sidhCookie",
+      "value": ""
+    },
+    {
+      "key": "sidhAccessToken",
+      "value": ""
+    },
+    {
+      "key": "sidhBatchId",
+      "value": ""
+    },
+    {
+      "key": "sidhCandidateId",
+      "value": "CAN_38830776"
+    },
+    {
+      "key": "sidhCourseId",
+      "value": "FeeSchCor_67556"
+    },
+    {
+      "key": "sidhSchemeId",
+      "value": "Scheme_2"
+    },
+    {
+      "key": "sidhSchemeReferenceId",
+      "value": "Scheme_2"
+    },
+    {
+      "key": "sidhTcId",
+      "value": "1330"
+    },
+    {
+      "key": "batchStartDate",
+      "value": "2026-07-22"
+    },
+    {
+      "key": "batchEndDate",
+      "value": "2026-07-28"
+    },
+    {
+      "key": "assessmentDate",
+      "value": "2026-07-29"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Auth",
+      "description": "SIDH auth bootstrap matching the app connector: CSRF → getkey → RSA-OAEP login. Select the SIDH Production environment (includes sidhPassword from .env when regenerated), then run these in order.",
+      "item": [
+        {
+          "name": "1. Get CSRF bootstrap",
+          "request": {
+            "method": "HEAD",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": "{{sidhBaseUrl}}/api/user/v1",
+            "description": "Captures `x-csrf-token` and session cookie used by later SIDH calls."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const csrf = pm.response.headers.get('x-csrf-token');",
+                  "if (csrf) {",
+                  "  pm.collectionVariables.set('sidhCsrfToken', csrf);",
+                  "  pm.environment.set('sidhCsrfToken', csrf);",
+                  "}",
+                  "const setCookie = pm.response.headers.get('set-cookie');",
+                  "if (setCookie) {",
+                  "  const cookie = setCookie.split(';')[0];",
+                  "  pm.collectionVariables.set('sidhCookie', cookie);",
+                  "  pm.environment.set('sidhCookie', cookie);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "2. Get encryption key",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{sidhCookie}}",
+                "type": "text"
+              },
+              {
+                "key": "x-csrf-token",
+                "value": "{{sidhCsrfToken}}",
+                "type": "text"
+              }
+            ],
+            "url": "{{sidhBaseUrl}}/api/user/v1/getkey",
+            "description": "Returns `publicKey` + `secretKey` used to encrypt the SIDH password."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "const publicKey = body.publicKey || body.public_key || body.key;",
+                  "const secretKey = body.secretKey || body.secret_key || body.secret;",
+                  "if (publicKey) {",
+                  "  pm.collectionVariables.set('sidhPublicKey', publicKey);",
+                  "  pm.environment.set('sidhPublicKey', publicKey);",
+                  "}",
+                  "if (secretKey) {",
+                  "  pm.collectionVariables.set('sidhSecretKey', secretKey);",
+                  "  pm.environment.set('sidhSecretKey', secretKey);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "3. Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{sidhCookie}}",
+                "type": "text"
+              },
+              {
+                "key": "x-csrf-token",
+                "value": "{{sidhCsrfToken}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userName\": \"{{sidhUsername}}\",\n  \"password\": \"{{sidhEncryptedPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{sidhBaseUrl}}/api/user/v1/login",
+            "description": "Pre-request encrypts `sidhPassword` with RSA-OAEP SHA-256 and appends `sidhSecretKey`, matching the app connector."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const password =",
+                  "  pm.environment.get('sidhPassword') ||",
+                  "  pm.collectionVariables.get('sidhPassword') ||",
+                  "  pm.variables.get('sidhPassword');",
+                  "const publicKeyPem =",
+                  "  pm.environment.get('sidhPublicKey') ||",
+                  "  pm.collectionVariables.get('sidhPublicKey') ||",
+                  "  pm.variables.get('sidhPublicKey');",
+                  "const secretKey =",
+                  "  pm.environment.get('sidhSecretKey') ||",
+                  "  pm.collectionVariables.get('sidhSecretKey') ||",
+                  "  pm.variables.get('sidhSecretKey') ||",
+                  "  '';",
+                  "if (!password) {",
+                  "  throw new Error(",
+                  "    'sidhPassword is empty. In Postman top-right, select environment \"SIDH production (DB-seeded)\", then confirm sidhPassword is set under that environment. Re-import postman/SIDH-Production.postman_environment.json if needed.'",
+                  "  );",
+                  "}",
+                  "if (!publicKeyPem) { throw new Error('Run Auth request 2 (Get encryption key) first to populate sidhPublicKey.'); }",
+                  "",
+                  "function pemToArrayBuffer(pem) {",
+                  "  const b64 = String(pem)",
+                  "    .replace(/-----BEGIN PUBLIC KEY-----/, '')",
+                  "    .replace(/-----END PUBLIC KEY-----/, '')",
+                  "    .replace(/\\s+/g, '');",
+                  "  const binary = atob(b64);",
+                  "  const bytes = new Uint8Array(binary.length);",
+                  "  for (let i = 0; i < binary.length; i += 1) { bytes[i] = binary.charCodeAt(i); }",
+                  "  return bytes.buffer;",
+                  "}",
+                  "",
+                  "function bufferToBase64(buffer) {",
+                  "  const bytes = new Uint8Array(buffer);",
+                  "  let binary = '';",
+                  "  bytes.forEach((b) => { binary += String.fromCharCode(b); });",
+                  "  return btoa(binary);",
+                  "}",
+                  "",
+                  "function normalizePem(pem) {",
+                  "  if (String(pem).includes('BEGIN PUBLIC KEY')) { return String(pem); }",
+                  "  const compact = String(pem).replace(/\\s+/g, '');",
+                  "  const wrapped = compact.match(/.{1,64}/g).join('\\n');",
+                  "  return '-----BEGIN PUBLIC KEY-----\\n' + wrapped + '\\n-----END PUBLIC KEY-----';",
+                  "}",
+                  "",
+                  "const spki = pemToArrayBuffer(normalizePem(publicKeyPem));",
+                  "const key = await crypto.subtle.importKey(",
+                  "  'spki',",
+                  "  spki,",
+                  "  { name: 'RSA-OAEP', hash: 'SHA-256' },",
+                  "  false,",
+                  "  ['encrypt']",
+                  ");",
+                  "const encrypted = await crypto.subtle.encrypt(",
+                  "  { name: 'RSA-OAEP' },",
+                  "  key,",
+                  "  new TextEncoder().encode(password)",
+                  ");",
+                  "const encryptedPassword = bufferToBase64(encrypted) + secretKey;",
+                  "pm.collectionVariables.set('sidhEncryptedPassword', encryptedPassword);",
+                  "pm.environment.set('sidhEncryptedPassword', encryptedPassword);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "const token = body.accessToken || body.token || body.authToken || body.jwt;",
+                  "if (token) {",
+                  "  pm.collectionVariables.set('sidhAccessToken', token);",
+                  "  pm.environment.set('sidhAccessToken', token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "2. Candidate",
+      "item": [
+        {
+          "name": "Register candidate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "{{sidhAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{sidhCookie}}",
+                "type": "text"
+              },
+              {
+                "key": "x-csrf-token",
+                "value": "{{sidhCsrfToken}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"PersonalDetails\": {\n    \"DOB\": \"2004-06-06T00:00:00Z\",\n    \"FatherName\": \"Test Father\",\n    \"FirstName\": \"UAT Test Candidate\",\n    \"Gender\": \"Male\",\n    \"NamePrefix\": \"Mr\"\n  },\n  \"ContactDetails\": {\n    \"CountryCode\": \"+91\",\n    \"Email\": \"uat.test.9777019529@example.com\",\n    \"Phone\": \"9777019529\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{sidhBaseUrl}}/api/user/v1/register/Candidate/v1",
+            "description": "Payload rebuilt from synced MongoDB candidate `cand_13437a5f106944e3` / `CAN_38830776`. Re-registering an existing mobile may return conflict."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "try {",
+                  "  const body = pm.response.json();",
+                  "  const candidateId = body.candidateId || body.candidateID || (body.data && body.data.candidateId);",
+                  "  if (candidateId) {",
+                  "    pm.collectionVariables.set('sidhCandidateId', String(candidateId));",
+                  "    pm.environment.set('sidhCandidateId', String(candidateId));",
+                  "  }",
+                  "  const message = typeof body === 'string' ? body : (body.message || '');",
+                  "  const match = String(message).match(/\\bCAN_[A-Za-z0-9_-]+\\b/);",
+                  "  if (match) {",
+                  "    pm.collectionVariables.set('sidhCandidateId', match[0]);",
+                  "    pm.environment.set('sidhCandidateId', match[0]);",
+                  "  }",
+                  "} catch (error) {}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "3. Batch",
+      "item": [
+        {
+          "name": "Create batch",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "{{sidhAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{sidhCookie}}",
+                "type": "text"
+              },
+              {
+                "key": "x-csrf-token",
+                "value": "{{sidhCsrfToken}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batchName\": \"Yoga B1 FY 26-27\",\n  \"size\": 1,\n  \"batchStartDate\": \"2026-07-22T00:00:00Z\",\n  \"batchEndDate\": \"2026-07-28T00:00:00Z\",\n  \"courseId\": \"FeeSchCor_67556\",\n  \"trainingHoursPerDay\": 8,\n  \"batchStartTime\": \"2026-07-22T09:00:00Z\",\n  \"batchEndTime\": \"2026-07-28T17:00:00Z\",\n  \"batchFee\": {\n    \"totalFees\": 500\n  },\n  \"feePaidBy\": \"Self-Paid\",\n  \"assessmentStartDate\": \"2026-07-29T00:00:00Z\",\n  \"assessmentEndDate\": \"2026-07-29T00:00:00Z\",\n  \"assessmentMode\": \"Self\",\n  \"batchType\": \"Regular\",\n  \"type\": \"Fee Based\",\n  \"skillingcategory\": {\n    \"name\": \"NSDC Market led programme\",\n    \"id\": 1,\n    \"scheme\": \"Fee Based\"\n  },\n  \"schemeId\": \"Scheme_2\",\n  \"schemeReferenceId\": \"Scheme_2\",\n  \"schemeType\": \"feeBased\",\n  \"tcId\": \"1330\",\n  \"tpId\": \"TP38273\",\n  \"createdSource\": \"Created for NSDC Academy Partners\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{sidhBaseUrl}}/api/batch/v1/create",
+            "description": "Built via `buildSidhBatchPayload` from MongoDB batch `bat_015486ccb1d84928` (`Yoga B1 FY 26-27`). Production currently returns 403 if Batch Creation is not enabled for this TP."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "try {",
+                  "  const body = pm.response.json();",
+                  "  const batchId = body.batchId || body.batchID || (body.data && body.data.batchId);",
+                  "  if (batchId) {",
+                  "    pm.collectionVariables.set('sidhBatchId', String(batchId));",
+                  "    pm.environment.set('sidhBatchId', String(batchId));",
+                  "  }",
+                  "} catch (error) {}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Enroll candidates into batch",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "{{sidhAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{sidhCookie}}",
+                "type": "text"
+              },
+              {
+                "key": "x-csrf-token",
+                "value": "{{sidhCsrfToken}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batchId\": \"{{sidhBatchId}}\",\n  \"candidateIds\": [\n    \"CAN_38830776\",\n    \"CAN_40450541\",\n    \"CAN_40450542\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{sidhBaseUrl}}/api/thirdparty/v1/enroll/Candidate",
+            "description": "Uses real synced SIDH candidate IDs from MongoDB. Requires a valid remote `sidhBatchId`."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "4. Assessment + Certificate",
+      "item": [
+        {
+          "name": "Submit training + assessment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "{{sidhAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{sidhCookie}}",
+                "type": "text"
+              },
+              {
+                "key": "x-csrf-token",
+                "value": "{{sidhCsrfToken}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batchId\": \"{{sidhBatchId}}\",\n  \"candidates\": [\n    {\n      \"candidateID\": \"{{sidhCandidateId}}\",\n      \"trainingDetails\": {\n        \"attendance\": 90,\n        \"trainingStatus\": \"completed\"\n      },\n      \"assessmentDetails\": {\n        \"assessmentAgency\": \"Self\",\n        \"assessmentDataUploadedOn\": \"{{assessmentDate}}T00:00:00Z\",\n        \"assessmentPercentage\": 80,\n        \"assessmentStatus\": \"Pass\",\n        \"assessorID\": \"ASSR_001\",\n        \"assessorName\": \"Assessor One\",\n        \"grade\": \"A\"\n      },\n      \"certificationDetails\": {\n        \"certificationDate\": \"{{assessmentDate}}T00:00:00Z\",\n        \"certificationName\": \"Yoga Instructor\",\n        \"certifyingAgency\": \"Self\",\n        \"isCertified\": true\n      }\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{sidhBaseUrl}}/v1/candidates/candidate/pushBatchEachCandidate"
+          },
+          "response": []
+        },
+        {
+          "name": "Generate certificate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "{{sidhAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{sidhCookie}}",
+                "type": "text"
+              },
+              {
+                "key": "x-csrf-token",
+                "value": "{{sidhCsrfToken}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batchId\": \"{{sidhBatchId}}\",\n  \"userName\": \"{{sidhCandidateId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{sidhBaseUrl}}/api/v1/cert/certificate?for=trainingPartner"
+          },
+          "response": []
+        },
+        {
+          "name": "Download certificate",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/pdf,application/octet-stream,application/json",
+                "type": "text"
+              },
+              {
+                "key": "Authorization",
+                "value": "{{sidhAccessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{sidhCookie}}",
+                "type": "text"
+              },
+              {
+                "key": "x-csrf-token",
+                "value": "{{sidhCsrfToken}}",
+                "type": "text"
+              }
+            ],
+            "url": "{{sidhBaseUrl}}/api/v1/cert/uc/singledocdownload?batchId={{sidhBatchId}}&candidateId={{sidhCandidateId}}&type=externalcertificate"
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

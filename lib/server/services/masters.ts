@@ -4,6 +4,7 @@ import {
   type SidhBatchFieldKey,
   type SidhBatchFieldOptionsResponse,
 } from "@/lib/sidh-batch-field-options";
+import { resolveSidhSchemeKey } from "@/lib/sidh-batch-payload";
 import { ApiError } from "@/lib/server/http";
 import { getSidhBatchContext } from "@/lib/server/env";
 import { createPrefixedId } from "@/lib/server/ids";
@@ -424,20 +425,41 @@ async function ensureNoCourseValidityOverlap(input: {
   }
 }
 
+function normalizeSchemeSidhIds(input: {
+  sidhSchemeId?: string | null;
+  sidhSchemeReferenceId?: string | null;
+}) {
+  const hasAny = Boolean(input.sidhSchemeId?.trim() || input.sidhSchemeReferenceId?.trim());
+  if (!hasAny) {
+    return { sidhSchemeId: null as string | null, sidhSchemeReferenceId: null as string | null };
+  }
+
+  const schemeKey = resolveSidhSchemeKey(input);
+  if (!schemeKey) {
+    return { sidhSchemeId: null as string | null, sidhSchemeReferenceId: null as string | null };
+  }
+
+  return { sidhSchemeId: schemeKey, sidhSchemeReferenceId: schemeKey };
+}
+
 async function ensureSchemeSyncMetadata(
   input: Pick<SchemeInput, "sidhSchemeId" | "sidhSchemeReferenceId" | "syncEnabled" | "validFrom" | "validTo">,
 ) {
-  if (input.syncEnabled && !input.sidhSchemeId) {
-    throw new ApiError(400, "SCHEME_METADATA_INCOMPLETE", "Sync-enabled schemes require a SIDH Scheme ID");
-  }
+  const normalized = normalizeSchemeSidhIds(input);
 
-  if (input.syncEnabled && !input.sidhSchemeReferenceId) {
-    throw new ApiError(400, "SCHEME_METADATA_INCOMPLETE", "Sync-enabled schemes require a SIDH Scheme Reference ID");
+  if (input.syncEnabled && !normalized.sidhSchemeId) {
+    throw new ApiError(
+      400,
+      "SCHEME_METADATA_INCOMPLETE",
+      "Sync-enabled schemes require a SIDH Scheme ID (schemeId and schemeReferenceId must match)",
+    );
   }
 
   if (input.validFrom && input.validTo) {
     ensureDateRange(input.validFrom, input.validTo);
   }
+
+  return normalized;
 }
 
 async function createCourseVersion(
@@ -939,7 +961,7 @@ export async function listSchemes(
 export async function createScheme(actor: AuthSession, input: SchemeInput) {
   await connectToDatabase();
   ensureCanWriteCoreMasters(actor);
-  await ensureSchemeSyncMetadata(input);
+  const sidhIds = await ensureSchemeSyncMetadata(input);
 
   const existingScheme = await SchemeModel.findOne({
     $or: [{ code: normalizeString(input.code) }, { name: normalizeString(input.name) }],
@@ -959,8 +981,8 @@ export async function createScheme(actor: AuthSession, input: SchemeInput) {
     verifiedForSidh: false,
     verifiedAt: null,
     verifiedByUserId: null,
-    sidhSchemeId: input.sidhSchemeId?.trim() || null,
-    sidhSchemeReferenceId: input.sidhSchemeReferenceId?.trim() || null,
+    sidhSchemeId: sidhIds.sidhSchemeId,
+    sidhSchemeReferenceId: sidhIds.sidhSchemeReferenceId,
     sidhSchemeType: input.sidhSchemeType?.trim() || "feeBased",
     assessmentMode: input.assessmentMode?.trim() || "Self",
     batchType: input.batchType?.trim() || "Regular",
@@ -996,7 +1018,8 @@ export async function updateScheme(actor: AuthSession, schemeId: string, input: 
     throw new ApiError(404, "SCHEME_NOT_FOUND", "Scheme not found");
   }
 
-  await ensureSchemeSyncMetadata({
+  const sidhFieldsTouched = input.sidhSchemeId !== undefined || input.sidhSchemeReferenceId !== undefined;
+  const sidhIds = await ensureSchemeSyncMetadata({
     syncEnabled: input.syncEnabled ?? scheme.syncEnabled,
     sidhSchemeId: input.sidhSchemeId ?? scheme.sidhSchemeId ?? undefined,
     sidhSchemeReferenceId: input.sidhSchemeReferenceId ?? scheme.sidhSchemeReferenceId ?? undefined,
@@ -1019,11 +1042,9 @@ export async function updateScheme(actor: AuthSession, schemeId: string, input: 
   if (input.syncEnabled !== undefined) {
     scheme.syncEnabled = input.syncEnabled;
   }
-  if (input.sidhSchemeId !== undefined) {
-    scheme.sidhSchemeId = input.sidhSchemeId.trim() || null;
-  }
-  if (input.sidhSchemeReferenceId !== undefined) {
-    scheme.sidhSchemeReferenceId = input.sidhSchemeReferenceId.trim() || null;
+  if (sidhFieldsTouched) {
+    scheme.sidhSchemeId = sidhIds.sidhSchemeId;
+    scheme.sidhSchemeReferenceId = sidhIds.sidhSchemeReferenceId;
   }
   if (input.sidhSchemeType !== undefined) {
     scheme.sidhSchemeType = input.sidhSchemeType.trim() || "feeBased";

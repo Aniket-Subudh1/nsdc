@@ -16,6 +16,7 @@ export async function GET(request: Request) {
       programId: url.searchParams.get("programId") ?? undefined,
       centerId: url.searchParams.get("centerId") ?? undefined,
       referenceCourseId: url.searchParams.get("referenceCourseId") ?? undefined,
+      referenceSectorName: url.searchParams.get("referenceSectorName") ?? undefined,
       state: url.searchParams.get("state") ?? undefined,
       district: url.searchParams.get("district") ?? undefined,
       gender: url.searchParams.get("gender") ?? undefined,

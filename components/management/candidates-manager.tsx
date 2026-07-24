@@ -358,6 +358,7 @@ type CandidateFilters = {
   pageSize: number;
   programId: string;
   referenceCourseId: string;
+  referenceSectorName: string;
   registeredFrom: string;
   registeredTo: string;
   registrationMode: string;
@@ -369,7 +370,13 @@ type CandidateFilters = {
 type CourseOption = {
   courseId: string;
   courseName: string;
+  sectorId?: string | null;
   shortForm?: string | null;
+};
+
+type SectorOption = {
+  name: string;
+  sectorId: string;
 };
 
 type IndividualCandidateFormState = {
@@ -472,6 +479,7 @@ const initialCandidateFilters: CandidateFilters = {
   pageSize: 12,
   programId: "",
   referenceCourseId: "",
+  referenceSectorName: "",
   registeredFrom: "",
   registeredTo: "",
   registrationMode: "",
@@ -487,6 +495,7 @@ function countActiveCandidateFilters(filters: CandidateFilters) {
     filters.state,
     filters.district,
     filters.centerId,
+    filters.referenceSectorName,
     filters.referenceCourseId,
     filters.gender,
     filters.registrationMode,
@@ -705,6 +714,7 @@ function buildCandidateFilterQuery(filters: Pick<
   | "district"
   | "centerId"
   | "referenceCourseId"
+  | "referenceSectorName"
   | "gender"
   | "registrationMode"
   | "programId"
@@ -718,6 +728,7 @@ function buildCandidateFilterQuery(filters: Pick<
     district: filters.district || undefined,
     centerId: filters.centerId || undefined,
     referenceCourseId: filters.referenceCourseId || undefined,
+    referenceSectorName: filters.referenceSectorName || undefined,
     gender: filters.gender || undefined,
     registrationMode: filters.registrationMode || undefined,
     programId: filters.programId || undefined,
@@ -932,6 +943,7 @@ async function fetchCandidates(filters: CandidateFilters) {
     district: filters.district || undefined,
     centerId: filters.centerId || undefined,
     referenceCourseId: filters.referenceCourseId || undefined,
+    referenceSectorName: filters.referenceSectorName || undefined,
     gender: filters.gender || undefined,
     registrationMode: filters.registrationMode || undefined,
     programId: filters.programId || undefined,
@@ -1024,8 +1036,30 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   const [linkForm, setLinkForm] = useState(emptyLinkForm);
   const [centers, setCenters] = useState<CenterOption[]>([]);
   const [courses, setCourses] = useState<CourseOption[]>([]);
+  const [sectors, setSectors] = useState<SectorOption[]>([]);
   const [programs, setPrograms] = useState<ProgramOption[]>([]);
   const sortedCourses = useMemo(() => getSortedCourseOptions(courses), [courses]);
+  const sortedSectors = useMemo(
+    () => [...sectors].sort((left, right) => left.name.localeCompare(right.name)),
+    [sectors],
+  );
+  const sectorIdByName = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const sector of sectors) {
+      map.set(sector.name, sector.sectorId);
+    }
+    return map;
+  }, [sectors]);
+  const filterCourseOptions = useMemo(() => {
+    if (!candidateFilters.referenceSectorName) {
+      return sortedCourses;
+    }
+    const sectorId = sectorIdByName.get(candidateFilters.referenceSectorName);
+    if (!sectorId) {
+      return sortedCourses;
+    }
+    return sortedCourses.filter((course) => course.sectorId === sectorId);
+  }, [candidateFilters.referenceSectorName, sectorIdByName, sortedCourses]);
   const duplicateCourseNames = useMemo(() => getDuplicateCourseNames(courses), [courses]);
   const filterDistrictOptions = useMemo(
     () => listCandidateDistrictsForState(candidateFilters.state),
@@ -1153,14 +1187,16 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
 
   async function loadReferenceOptions() {
     try {
-      const [centerData, courseData, programData] = await Promise.all([
+      const [centerData, courseData, programData, sectorData] = await Promise.all([
         apiFetch<{ items: CenterOption[] }>("/api/v1/masters/training-centers?page=1&pageSize=100"),
         apiFetch<{ items: CourseOption[] }>("/api/v1/masters/courses?page=1&pageSize=100&status=active&approvalStatus=approved"),
         apiFetch<{ items: ProgramOption[] }>("/api/v1/masters/programs?page=1&pageSize=100"),
+        apiFetch<{ items: SectorOption[] }>("/api/v1/masters/sectors?page=1&pageSize=100"),
       ]);
       setCenters(centerData.items);
       setCourses(courseData.items);
       setPrograms(programData.items);
+      setSectors(sectorData.items);
     } catch {
       // Reference data is optional for the main list; link modal will show empty selects.
     }
@@ -1932,14 +1968,36 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
                         </select>
                       </FormField>
 
+                      <FormField label="Sector (reference)">
+                        <select
+                          value={candidateFilters.referenceSectorName}
+                          onChange={(event) =>
+                            updateCandidateFilters({
+                              referenceSectorName: event.target.value,
+                              referenceCourseId: "",
+                            })
+                          }
+                          className={inputClassName}
+                        >
+                          <option value="">All sectors</option>
+                          {sortedSectors.map((sector) => (
+                            <option key={sector.sectorId} value={sector.name}>
+                              {sector.name}
+                            </option>
+                          ))}
+                        </select>
+                      </FormField>
+
                       <FormField label="Course (reference)">
                         <select
                           value={candidateFilters.referenceCourseId}
                           onChange={(event) => updateCandidateFilters({ referenceCourseId: event.target.value })}
                           className={inputClassName}
                         >
-                          <option value="">All courses</option>
-                          {sortedCourses.map((course) => (
+                          <option value="">
+                            {candidateFilters.referenceSectorName ? "All courses in sector" : "All courses"}
+                          </option>
+                          {filterCourseOptions.map((course) => (
                             <option key={course.courseId} value={course.courseId}>
                               {formatCourseOptionLabel(course, duplicateCourseNames)}
                             </option>

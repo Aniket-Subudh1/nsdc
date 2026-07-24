@@ -178,6 +178,7 @@ type AssignCandidateFilters = {
   gender: string;
   programId: string;
   referenceCourseId: string;
+  referenceSectorName: string;
   registeredFrom: string;
   registeredTo: string;
   registrationMode: string;
@@ -220,6 +221,7 @@ const initialAssignCandidateFilters: AssignCandidateFilters = {
   gender: "",
   programId: "",
   referenceCourseId: "",
+  referenceSectorName: "",
   registeredFrom: "",
   registeredTo: "",
   registrationMode: "",
@@ -990,14 +992,35 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
   }, [batchForm, referenceData?.sidhBatchContext?.tpId, selectedCenter?.sidhTcId, selectedCourse, selectedProgram, selectedScheme]);
   const assignBatch = batches.find((batch) => batch.batchId === assignBatchId);
   const sortedAssignCourses = useMemo(() => getSortedCourseOptions(referenceData?.courses ?? []), [referenceData?.courses]);
+  const sortedAssignSectors = useMemo(
+    () => [...(referenceData?.sectors ?? [])].sort((left, right) => left.name.localeCompare(right.name)),
+    [referenceData?.sectors],
+  );
+  const assignSectorIdByName = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const sector of referenceData?.sectors ?? []) {
+      map.set(sector.name, sector.sectorId);
+    }
+    return map;
+  }, [referenceData?.sectors]);
+  const filteredAssignCourses = useMemo(() => {
+    if (!assignFilters.referenceSectorName) {
+      return sortedAssignCourses;
+    }
+    const sectorId = assignSectorIdByName.get(assignFilters.referenceSectorName);
+    if (!sectorId) {
+      return sortedAssignCourses;
+    }
+    return sortedAssignCourses.filter((course) => course.sectorId === sectorId);
+  }, [assignFilters.referenceSectorName, assignSectorIdByName, sortedAssignCourses]);
   const duplicateAssignCourseNames = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const course of sortedAssignCourses) {
+    for (const course of filteredAssignCourses) {
       counts.set(course.courseName, (counts.get(course.courseName) ?? 0) + 1);
     }
 
     return new Set([...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name));
-  }, [sortedAssignCourses]);
+  }, [filteredAssignCourses]);
   const assignFilterDistrictOptions = useMemo(
     () => listCandidateDistrictsForState(assignFilters.state),
     [assignFilters.state],
@@ -1226,6 +1249,9 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
       }
       if (filters.referenceCourseId) {
         params.set("referenceCourseId", filters.referenceCourseId);
+      }
+      if (filters.referenceSectorName) {
+        params.set("referenceSectorName", filters.referenceSectorName);
       }
       if (filters.gender) {
         params.set("gender", filters.gender);
@@ -2804,14 +2830,37 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                   </div>
 
                   <div className="space-y-2">
+                    <Label>Sector (reference)</Label>
+                    <select
+                      value={assignFilters.referenceSectorName}
+                      onChange={(event) =>
+                        updateAssignFilters({
+                          referenceSectorName: event.target.value,
+                          referenceCourseId: "",
+                        })
+                      }
+                      className={assignInputClassName}
+                    >
+                      <option value="">All sectors</option>
+                      {sortedAssignSectors.map((sector) => (
+                        <option key={sector.sectorId} value={sector.name}>
+                          {sector.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
                     <Label>Course (reference)</Label>
                     <select
                       value={assignFilters.referenceCourseId}
                       onChange={(event) => updateAssignFilters({ referenceCourseId: event.target.value })}
                       className={assignInputClassName}
                     >
-                      <option value="">All courses</option>
-                      {sortedAssignCourses.map((course) => (
+                      <option value="">
+                        {assignFilters.referenceSectorName ? "All courses in sector" : "All courses"}
+                      </option>
+                      {filteredAssignCourses.map((course) => (
                         <option key={course.courseId} value={course.courseId}>
                           {duplicateAssignCourseNames.has(course.courseName)
                             ? `${formatCourseOptionLabel(course)} · ${course.courseId}`

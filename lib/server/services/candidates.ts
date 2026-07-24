@@ -753,8 +753,8 @@ function getImportRowReference(row: Record<string, unknown>) {
       : {};
 
   return {
-    courseName: normalizeWhitespace(reference.courseName),
-    sectorName: normalizeWhitespace(reference.sectorName),
+    courseName: normalizeWhitespace(typeof reference.courseName === "string" ? reference.courseName : String(reference.courseName ?? "")),
+    sectorName: normalizeWhitespace(typeof reference.sectorName === "string" ? reference.sectorName : String(reference.sectorName ?? "")),
   };
 }
 
@@ -1528,6 +1528,27 @@ async function buildCandidateListFilter(actor: AuthSession, query: CandidateExpo
 
   if (query.referenceCourseId) {
     filter.referenceCourseId = query.referenceCourseId;
+  }
+
+  if (query.referenceSectorName) {
+    const sectorNameRegex = createExactMatchRegex(query.referenceSectorName);
+    const sector = await SectorModel.findOne({
+      name: sectorNameRegex ?? query.referenceSectorName,
+      status: "active",
+    }).select({ sectorId: 1, name: 1 });
+
+    const sectorCourseIds = sector
+      ? (
+          (await CourseModel.find({ sectorId: sector.sectorId }).select({ courseId: 1 })) as Array<{ courseId: string }>
+        ).map((course) => course.courseId)
+      : [];
+
+    appendFilterCondition(andConditions, {
+      $or: [
+        ...(sectorNameRegex ? [{ referenceSectorName: sectorNameRegex }] : [{ referenceSectorName: query.referenceSectorName }]),
+        ...(sectorCourseIds.length > 0 ? [{ referenceCourseId: { $in: sectorCourseIds } }] : []),
+      ],
+    });
   }
 
   if (query.gender) {

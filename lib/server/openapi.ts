@@ -2386,6 +2386,7 @@ export function getOpenApiDocument() {
             { name: "state", in: "query", schema: { type: "string" } },
             { name: "district", in: "query", schema: { type: "string" } },
             { name: "referenceCourseId", in: "query", schema: { type: "string" } },
+            { name: "referenceSectorName", in: "query", schema: { type: "string" }, description: "Filter learners by Sector (reference only)." },
             { name: "gender", in: "query", schema: { type: "string" } },
             { name: "eligibleForBatchId", in: "query", schema: { type: "string" }, description: "When set, returns only learners eligible for enrollment in the given batch." },
           ],

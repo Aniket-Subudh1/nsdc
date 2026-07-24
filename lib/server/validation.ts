@@ -818,6 +818,7 @@ const candidateFilterQueryFields = {
   programId: z.string().trim().optional(),
   centerId: z.string().trim().optional(),
   referenceCourseId: z.string().trim().optional(),
+  referenceSectorName: z.string().trim().optional(),
   state: z.string().trim().optional(),
   district: z.string().trim().optional(),
   gender: z.enum(CANDIDATE_GENDER_OPTIONS).optional(),

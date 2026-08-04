@@ -8,6 +8,14 @@ import type { ClaimAndProcess, QueueDriver, QueueWorkerHandle, QueueWorkerOption
 const TRIGGER_JOB_NAME = "trigger";
 const HEARTBEAT_JOB_NAME = "heartbeat";
 
+function toClusterQueueName(queueName: string): string {
+  if (queueName.includes("{") && queueName.includes("}")) {
+    return queueName;
+  }
+
+  return `{${queueName}}`;
+}
+
 export function createRedisQueueDriver(env: AppEnv): QueueDriver {
   const connection = getSharedRedisConnection(env);
   const prefix = `${resolveRedisKeyPrefix(env)}bullmq`;
@@ -18,7 +26,7 @@ export function createRedisQueueDriver(env: AppEnv): QueueDriver {
     let queue = queues.get(queueName);
 
     if (!queue) {
-      queue = new Queue(queueName, { connection: connection as unknown as Redis, prefix });
+      queue = new Queue(toClusterQueueName(queueName), { connection: connection as unknown as Redis, prefix });
       queues.set(queueName, queue);
     }
 
@@ -42,6 +50,7 @@ export function createRedisQueueDriver(env: AppEnv): QueueDriver {
       const queue = getQueue(queueName);
       const concurrency = Math.max(1, options.concurrency);
       const pollIntervalMs = Math.max(1_000, options.pollIntervalMs);
+      const clusterQueueName = toClusterQueueName(queueName);
 
       queue
         .upsertJobScheduler(
@@ -54,7 +63,7 @@ export function createRedisQueueDriver(env: AppEnv): QueueDriver {
         });
 
       const worker = new Worker(
-        queueName,
+        clusterQueueName,
         async () => {
           const didWork = await claimAndProcess();
 

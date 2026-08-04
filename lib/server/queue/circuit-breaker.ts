@@ -46,8 +46,8 @@ return 1
 `;
 
 export function createRedisCircuitBreaker(redis: Redis, keyPrefix: string, options: CircuitBreakerOptions): CircuitBreaker {
-  const counterKey = `${keyPrefix}sidh:circuit:counters`;
-  const openKey = `${keyPrefix}sidh:circuit:open`;
+  const counterKey = `${keyPrefix}{sidh:circuit}:counters`;
+  const openKey = `${keyPrefix}{sidh:circuit}:open`;
   const windowMs = options.windowMs ?? DEFAULT_WINDOW_MS;
   const thresholdPermille = Math.round(options.failureThreshold * 1000);
 

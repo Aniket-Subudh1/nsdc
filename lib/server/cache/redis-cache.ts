@@ -182,8 +182,9 @@ export async function invalidateCacheKeys(input: { keys?: string[]; prefixes?: s
       const redis = getSharedRedisConnection(env);
       const keyPrefix = resolveRedisKeyPrefix(env);
 
-      if (keys.length > 0) {
-        await redis.del(...keys);
+      // Delete one key at a time — multi-key DEL is CROSSSLOT on Redis Cluster.
+      for (const key of keys) {
+        await redis.del(key);
       }
 
       for (const logical of prefixes) {
@@ -192,8 +193,8 @@ export async function invalidateCacheKeys(input: { keys?: string[]; prefixes?: s
         do {
           const [nextCursor, found] = await redis.scan(cursor, "MATCH", match, "COUNT", 100);
           cursor = nextCursor;
-          if (found.length > 0) {
-            await redis.del(...found);
+          for (const key of found) {
+            await redis.del(key);
           }
         } while (cursor !== "0");
       }

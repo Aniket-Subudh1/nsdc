@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "db:migrate": "tsx scripts/migrate-mongo-db.ts",
     "seed:admin": "tsx scripts/seed-admin.ts",
     "import:course-master": "tsx scripts/import-course-master.ts",
     "extract:candidate-locations": "tsx scripts/extract-candidate-location-options.ts",

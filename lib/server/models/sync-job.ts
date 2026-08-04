@@ -106,7 +106,6 @@ const syncJobSchema = new mongoose.Schema(
     idempotencyKey: {
       type: String,
       default: null,
-      index: true,
     },
     attempts: {
       type: [syncAttemptSchema],

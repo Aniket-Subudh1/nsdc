@@ -58,7 +58,6 @@ const sidhApiTransactionSchema = new mongoose.Schema(
     expiresAt: {
       type: Date,
       default: () => new Date(Date.now() + DEFAULT_TXN_RETENTION_SECONDS * 1000),
-      index: true,
     },
   },
   {

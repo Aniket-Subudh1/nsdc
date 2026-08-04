@@ -1,3 +1,4 @@
+import { buildCacheKey, buildCacheScope, cachedJson, resolveCacheTtlSeconds } from "@/lib/server/cache/redis-cache";
 import { connectToDatabase } from "@/lib/server/mongodb";
 import { AuditLogModel } from "@/lib/server/models/audit-log";
 import { BatchCandidateModel } from "@/lib/server/models/batch-candidate";
@@ -762,6 +763,23 @@ export async function listDashboardCenterSection(
     status?: string;
   },
 ) {
+  return cachedJson(
+    buildCacheKey("dash:center-overview", buildCacheScope(actor), input),
+    resolveCacheTtlSeconds("dashboard"),
+    () => computeDashboardCenterSection(actor, input),
+  );
+}
+
+async function computeDashboardCenterSection(
+  actor: AuthSession,
+  input: {
+    section: DashboardCenterSection;
+    page: number;
+    pageSize: number;
+    search?: string;
+    status?: string;
+  },
+) {
   await connectToDatabase();
 
   const scopedCenterFilter = resolveScopedCenterFilter(actor);
@@ -1462,6 +1480,25 @@ export async function listDashboardPlatformSection(
     centerId?: string;
   },
 ) {
+  return cachedJson(
+    buildCacheKey("dash:platform-overview", buildCacheScope(actor), input),
+    resolveCacheTtlSeconds("dashboard"),
+    () => computeDashboardPlatformSection(actor, input),
+  );
+}
+
+async function computeDashboardPlatformSection(
+  actor: AuthSession,
+  input: {
+    section: DashboardPlatformSection;
+    page: number;
+    pageSize: number;
+    search?: string;
+    status?: string;
+    entityType?: string;
+    centerId?: string;
+  },
+) {
   await connectToDatabase();
   assertPlatformAdmin(actor);
 
@@ -1519,6 +1556,14 @@ export async function listDashboardPlatformSection(
 }
 
 export async function getDashboardSummary(actor: AuthSession): Promise<DashboardSummary> {
+  return cachedJson(
+    buildCacheKey("dash:summary", buildCacheScope(actor)),
+    resolveCacheTtlSeconds("dashboard"),
+    () => computeDashboardSummary(actor),
+  );
+}
+
+async function computeDashboardSummary(actor: AuthSession): Promise<DashboardSummary> {
   await connectToDatabase();
 
   const scopedCenterFilter = resolveScopedCenterFilter(actor);

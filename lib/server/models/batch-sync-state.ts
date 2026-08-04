@@ -71,7 +71,7 @@ const queuedStateSchema = new mongoose.Schema(
     },
     maxAttempts: {
       type: Number,
-      default: 3,
+      default: 6,
     },
     nextRunAt: {
       type: Date,

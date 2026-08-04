@@ -2,7 +2,6 @@
 
 import { startTransition, useEffect, useMemo, useState } from "react";
 
-import { useRefreshableLoad } from "@/lib/client/use-refreshable-load";
 import {
   IconBuildingCommunity,
   IconChevronDown,
@@ -22,6 +21,8 @@ import { Save } from "lucide-react";
 import { toast } from "sonner";
 
 import { apiFetch, ClientApiError } from "@/lib/client/api";
+import { swrKey, useApiSWR, usePortalMutate } from "@/lib/client/use-api-swr";
+import { PORTAL_OPTIONS_KEY, usePortalOptions } from "@/lib/client/use-portal-options";
 import { cn } from "@/lib/utils";
 
 type TrainingCentersManagerProps = {
@@ -105,13 +106,37 @@ const makeEmptyForm = () => ({
 });
 
 export default function TrainingCentersManager({ portal }: TrainingCentersManagerProps) {
-  const [centers, setCenters] = useState<CenterRecord[]>([]);
-  const [programs, setPrograms] = useState<ProgramRecord[]>([]);
+  const { programs: portalPrograms, mutate: mutatePortalOptions } = usePortalOptions();
+  const { revalidateKeys } = usePortalMutate();
+  const programs = useMemo(
+    () =>
+      portalPrograms.map((program) => ({
+        name: program.name,
+        programId: program.programId,
+        status: (program.status === "inactive" ? "inactive" : "active") as "active" | "inactive",
+      })),
+    [portalPrograms],
+  );
   const [selectedCenterId, setSelectedCenterId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(20);
-  const [total, setTotal] = useState(0);
-  const loadState = useRefreshableLoad();
+  const centersKey = useMemo(
+    () => swrKey("/api/v1/masters/training-centers", { page, pageSize }),
+    [page, pageSize],
+  );
+  const {
+    data: centersPage,
+    error: centersSwrError,
+    isLoading: centersLoading,
+    isValidating: centersValidating,
+    mutate: mutateCenters,
+  } = useApiSWR<PagedCenters>(centersKey);
+  const centers = centersPage?.items ?? [];
+  const total = centersPage?.total ?? 0;
+  const loadState = {
+    isInitialLoading: centersLoading && !centersPage,
+    isRefreshing: centersValidating && Boolean(centersPage),
+  };
   const [isSaving, setIsSaving] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -178,57 +203,33 @@ export default function TrainingCentersManager({ portal }: TrainingCentersManage
   }
 
   async function loadCenters(targetPage = page) {
-    loadState.begin();
+    if (targetPage !== page) {
+      setPage(targetPage);
+      return;
+    }
+
     try {
-      const [centerData, programData] = await Promise.all([
-        apiFetch<PagedCenters>(
-          `/api/v1/masters/training-centers?page=${targetPage}&pageSize=${pageSize}`,
-        ),
-        apiFetch<PagedPrograms>("/api/v1/masters/programs?page=1&pageSize=100"),
+      await Promise.all([
+        mutateCenters(),
+        mutatePortalOptions(),
+        revalidateKeys(PORTAL_OPTIONS_KEY, "/api/v1/dashboard/summary"),
       ]);
-      setCenters(centerData.items);
-      setPrograms(programData.items);
-      setTotal(centerData.total);
     } catch (error) {
       toast.error(
         error instanceof ClientApiError ? error.message : "Unable to load training centers",
       );
-    } finally {
-      loadState.end();
     }
   }
 
   useEffect(() => {
-    let mounted = true;
-
-    async function init() {
-      loadState.begin();
-      try {
-        const [centerData, programData] = await Promise.all([
-          apiFetch<PagedCenters>(
-            `/api/v1/masters/training-centers?page=${page}&pageSize=${pageSize}`,
-          ),
-          apiFetch<PagedPrograms>("/api/v1/masters/programs?page=1&pageSize=100"),
-        ]);
-        if (!mounted) return;
-        setCenters(centerData.items);
-        setPrograms(programData.items);
-        setTotal(centerData.total);
-      } catch (error) {
-        if (!mounted) return;
-        toast.error(
-          error instanceof ClientApiError ? error.message : "Unable to load training centers",
-        );
-      } finally {
-        if (mounted) loadState.end();
-      }
+    if (!centersSwrError) {
+      return;
     }
 
-    void init();
-    return () => {
-      mounted = false;
-    };
-  }, [page, pageSize]);
+    toast.error(
+      centersSwrError instanceof ClientApiError ? centersSwrError.message : "Unable to load training centers",
+    );
+  }, [centersSwrError]);
 
   async function handleSaveCenter(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();

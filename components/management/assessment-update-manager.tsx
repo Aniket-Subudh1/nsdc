@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { apiFetch, ClientApiError } from "@/lib/client/api";
+import { usePortalOptions } from "@/lib/client/use-portal-options";
 import { cn } from "@/lib/utils";
 
 type AssessmentUpdateManagerProps = {
@@ -188,7 +189,15 @@ function buildRowFromSummary(
 export default function AssessmentUpdateManager({ portal }: AssessmentUpdateManagerProps) {
   const content = portalContent[portal];
   const [batches, setBatches] = useState<BatchListItem[]>([]);
-  const [courses, setCourses] = useState<CourseOption[]>([]);
+  const { courses: portalCourses } = usePortalOptions();
+  const courses = useMemo(
+    () =>
+      portalCourses.map((course) => ({
+        courseId: course.courseId,
+        courseName: course.courseName,
+      })) as CourseOption[],
+    [portalCourses],
+  );
   const [selectedBatchId, setSelectedBatchId] = useState("");
   const [summary, setSummary] = useState<AttendanceSummary | null>(null);
   const [rows, setRows] = useState<CandidateAssessmentRow[]>([]);
@@ -224,12 +233,8 @@ export default function AssessmentUpdateManager({ portal }: AssessmentUpdateMana
     loadState.begin();
 
     try {
-      const [batchPage, coursePage] = await Promise.all([
-        apiFetch<PagedBatches>("/api/v1/batches?page=1&pageSize=100"),
-        apiFetch<PagedCourses>("/api/v1/masters/courses?page=1&pageSize=100&status=active&approvalStatus=approved"),
-      ]);
+      const batchPage = await apiFetch<PagedBatches>("/api/v1/batches?page=1&pageSize=100");
       setBatches(batchPage.items);
-      setCourses(coursePage.items);
     } catch (error) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to load batches");
     } finally {

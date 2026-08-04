@@ -6,22 +6,29 @@ const mocks = vi.hoisted(() => ({
   connectToDatabase: vi.fn(),
   writeAuditLog: vi.fn(),
   candidateFindOne: vi.fn(),
+  candidateFind: vi.fn(),
   candidateCreate: vi.fn(),
   candidateDeleteOne: vi.fn(),
   candidateUpdateOne: vi.fn(),
+  candidateBulkWrite: vi.fn(),
   importJobCreate: vi.fn(),
   importJobFindOne: vi.fn(),
   importRowInsertMany: vi.fn(),
   syncJobFindOne: vi.fn(),
+  syncJobFind: vi.fn(),
   syncJobCreate: vi.fn(),
+  syncJobInsertMany: vi.fn(),
   syncJobDeleteMany: vi.fn(),
   courseFindOne: vi.fn(),
   courseFind: vi.fn(),
   outboxEventCreate: vi.fn(),
+  outboxEventInsertMany: vi.fn(),
   programFindOne: vi.fn(),
   sectorFindOne: vi.fn(),
   trainingCenterFindOne: vi.fn(),
   sidhApiTransactionFind: vi.fn(),
+  notifyCandidateSyncQueue: vi.fn(),
+  writeSyncEvent: vi.fn(),
 }));
 
 vi.mock("@/lib/server/mongodb", () => ({
@@ -35,8 +42,10 @@ vi.mock("@/lib/server/services/audit", () => ({
 vi.mock("@/lib/server/models/candidate", () => ({
   CandidateModel: {
     findOne: mocks.candidateFindOne,
+    find: mocks.candidateFind,
     create: mocks.candidateCreate,
     updateOne: mocks.candidateUpdateOne,
+    bulkWrite: mocks.candidateBulkWrite,
   },
 }));
 
@@ -67,7 +76,9 @@ vi.mock("@/lib/server/models/candidate-import-row", () => ({
 vi.mock("@/lib/server/models/sync-job", () => ({
   SyncJobModel: {
     findOne: mocks.syncJobFindOne,
+    find: mocks.syncJobFind,
     create: mocks.syncJobCreate,
+    insertMany: mocks.syncJobInsertMany,
     deleteMany: mocks.syncJobDeleteMany,
   },
 }));
@@ -75,7 +86,16 @@ vi.mock("@/lib/server/models/sync-job", () => ({
 vi.mock("@/lib/server/models/outbox-event", () => ({
   OutboxEventModel: {
     create: mocks.outboxEventCreate,
+    insertMany: mocks.outboxEventInsertMany,
   },
+}));
+
+vi.mock("@/lib/server/services/candidate-sync-worker", () => ({
+  notifyCandidateSyncQueue: mocks.notifyCandidateSyncQueue,
+}));
+
+vi.mock("@/lib/server/services/sync-events", () => ({
+  writeSyncEvent: mocks.writeSyncEvent,
 }));
 
 vi.mock("@/lib/server/models/program", () => ({
@@ -167,6 +187,13 @@ describe("candidate services", () => {
     mocks.trainingCenterFindOne.mockReturnValue(createSelectQuery({ centerId: "tc_001", centerName: "Center One", status: "active" }));
     mocks.syncJobFindOne.mockReturnValue(createSelectQuery(null));
     mocks.sidhApiTransactionFind.mockReturnValue({ sort: vi.fn().mockResolvedValue([]) });
+    mocks.candidateFind.mockResolvedValue([]);
+    mocks.syncJobFind.mockReturnValue(createSelectQuery([]));
+    mocks.syncJobInsertMany.mockImplementation(async (docs: Array<Record<string, unknown>>) => docs);
+    mocks.outboxEventInsertMany.mockResolvedValue([]);
+    mocks.candidateBulkWrite.mockResolvedValue({});
+    mocks.notifyCandidateSyncQueue.mockResolvedValue(undefined);
+    mocks.writeSyncEvent.mockResolvedValue(undefined);
   });
 
   it("rejects candidate payloads without father or guardian name", () => {
@@ -1166,8 +1193,8 @@ describe("candidate services", () => {
   });
 
   it("queues selected candidates in bulk", async () => {
-    mocks.candidateFindOne
-      .mockResolvedValueOnce({
+    mocks.candidateFind.mockResolvedValue([
+      {
         candidateId: "cand_001",
         centerId: "tc_001",
         registrationMode: "internal_registration",
@@ -1182,14 +1209,14 @@ describe("candidate services", () => {
         permanentAddress: {},
         communicationAddress: { sameAsPermanent: true },
         syncState: { status: "not_queued", retryCount: 0 },
-      })
-      .mockResolvedValueOnce({
+      },
+      {
         candidateId: "cand_002",
         centerId: "tc_001",
         registrationMode: "existing_sidh_link",
         sidhCandidateId: "CAN_24883828",
-      });
-    mocks.syncJobCreate.mockImplementation(async (value: Record<string, unknown>) => value);
+      },
+    ]);
 
     const result = await queueCandidateSyncBulk(actor as never, {
       candidateIds: ["cand_001", "cand_002"],
@@ -1197,6 +1224,40 @@ describe("candidate services", () => {
 
     expect(result.queuedCount).toBe(1);
     expect(result.skippedCount).toBe(1);
-    expect(mocks.syncJobCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.syncJobInsertMany).toHaveBeenCalledTimes(1);
+    expect(mocks.outboxEventInsertMany).toHaveBeenCalledTimes(1);
+    expect(mocks.candidateBulkWrite).toHaveBeenCalledTimes(1);
+    expect(mocks.notifyCandidateSyncQueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips a candidate that already has a queued or processing sync job", async () => {
+    mocks.candidateFind.mockResolvedValue([
+      {
+        candidateId: "cand_001",
+        centerId: "tc_001",
+        registrationMode: "internal_registration",
+        programId: "prg_001",
+        fullName: "Rohit Kumar",
+        salutation: "Mr",
+        gender: "Male",
+        dateOfBirth: new Date("2005-06-10T00:00:00.000Z"),
+        disability: false,
+        idType: "UNSPECIFIED",
+        mobileNumber: "9876543210",
+        permanentAddress: {},
+        communicationAddress: { sameAsPermanent: true },
+        syncState: { status: "not_queued", retryCount: 0 },
+      },
+    ]);
+    mocks.syncJobFind.mockReturnValue(createSelectQuery([{ candidateId: "cand_001" }]));
+
+    const result = await queueCandidateSyncBulk(actor as never, {
+      candidateIds: ["cand_001"],
+    });
+
+    expect(result.queuedCount).toBe(0);
+    expect(result.skippedCount).toBe(1);
+    expect(result.items[0]).toMatchObject({ candidateId: "cand_001", status: "skipped" });
+    expect(mocks.syncJobInsertMany).not.toHaveBeenCalled();
   });
 });

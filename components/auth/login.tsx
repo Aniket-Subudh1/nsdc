@@ -176,7 +176,11 @@ export default function LoginPage({
       if (!response.ok || !payload.success) {
         setErrorMessage(payload.message ?? "Invalid verification code");
 
-        if (payload.errorCode === "OTP_CHALLENGE_INVALID") {
+        if (
+          payload.errorCode === "OTP_CHALLENGE_INVALID" ||
+          payload.errorCode === "OTP_REPLACED" ||
+          payload.errorCode === "OTP_EXPIRED"
+        ) {
           setLoginStep("credentials");
           setChallengeId(null);
           setMaskedEmail(null);

@@ -1,6 +1,5 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   IconAlertCircle,
@@ -16,7 +15,8 @@ import {
   IconUsers,
 } from "@tabler/icons-react";
 
-import { apiFetch, ClientApiError } from "@/lib/client/api";
+import { ClientApiError } from "@/lib/client/api";
+import { useApiSWR } from "@/lib/client/use-api-swr";
 import { cn } from "@/lib/utils";
 import AdminDashboardPanel from "@/components/management/admin-dashboard-panel";
 import TrainingPartnerDashboardPanel from "@/components/management/training-partner-dashboard-panel";
@@ -264,27 +264,26 @@ export default function DashboardOverview({ portal }: DashboardOverviewProps) {
   const content = portalContent[portal];
   const base = content.prefix;
 
-  const [stats, setStats] = useState<DashboardSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    data: stats,
+    error: swrError,
+    isLoading,
+    isValidating,
+    mutate,
+  } = useApiSWR<DashboardSummary>("/api/v1/dashboard/summary");
 
-  const loadStats = useCallback(async () => {
-    setLoading(true);
+  const loading = isLoading && !stats;
+  const refreshing = isValidating && Boolean(stats);
+  const error =
+    swrError instanceof ClientApiError
+      ? swrError.message
+      : swrError
+        ? "Unable to load dashboard"
+        : null;
 
-    try {
-      const data = await apiFetch<DashboardSummary>("/api/v1/dashboard/summary");
-      setStats(data);
-      setError(null);
-    } catch (fetchError) {
-      setError(fetchError instanceof ClientApiError ? fetchError.message : "Unable to load dashboard");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadStats();
-  }, [loadStats]);
+  async function loadStats() {
+    await mutate();
+  }
 
   const batchChartItems = Object.entries(BATCH_STATUS_LABELS).map(([key, label]) => ({
     label,
@@ -330,10 +329,10 @@ export default function DashboardOverview({ portal }: DashboardOverviewProps) {
         <button
           type="button"
           onClick={() => void loadStats()}
-          disabled={loading}
+          disabled={loading || refreshing}
           className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-50"
         >
-          <IconRefresh className={cn("h-4 w-4", loading && "animate-spin")} />
+          <IconRefresh className={cn("h-4 w-4", (loading || refreshing) && "animate-spin")} />
           Refresh
         </button>
       </div>

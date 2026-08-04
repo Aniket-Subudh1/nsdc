@@ -1,3 +1,4 @@
+import { buildCacheKey, buildCacheScope, cachedJson, resolveCacheTtlSeconds } from "@/lib/server/cache/redis-cache";
 import { connectToDatabase } from "@/lib/server/mongodb";
 import { BatchCandidateModel } from "@/lib/server/models/batch-candidate";
 import { BatchModel } from "@/lib/server/models/batch";
@@ -113,6 +114,17 @@ function isSyntheticCenter(centerId: string): boolean {
 }
 
 export async function getDashboardEnrollmentAnalytics(
+  actor: AuthSession,
+  filters: EnrollmentAnalyticsFilters,
+): Promise<EnrollmentAnalyticsData> {
+  return cachedJson(
+    buildCacheKey("dash:enrollment-analytics", buildCacheScope(actor), filters),
+    resolveCacheTtlSeconds("analytics"),
+    () => computeDashboardEnrollmentAnalytics(actor, filters),
+  );
+}
+
+async function computeDashboardEnrollmentAnalytics(
   actor: AuthSession,
   filters: EnrollmentAnalyticsFilters,
 ): Promise<EnrollmentAnalyticsData> {

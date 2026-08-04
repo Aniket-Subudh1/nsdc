@@ -1180,7 +1180,7 @@ export function getOpenApiDocument() {
         ProcessSyncJobsRequest: {
           type: "object",
           properties: {
-            limit: { type: "integer", minimum: 1, maximum: 25, default: 5 },
+            limit: { type: "integer", minimum: 1, maximum: 5000, default: 25 },
           },
         },
         ProcessSyncJobsResult: {
@@ -1193,6 +1193,78 @@ export function getOpenApiDocument() {
             manualReviewCount: { type: "integer", minimum: 0 },
             deadLetterCount: { type: "integer", minimum: 0 },
             jobs: { type: "array", items: ref("ProcessedSyncJob") },
+          },
+        },
+        SyncHealthData: {
+          type: "object",
+          required: [
+            "circuitOpen",
+            "concurrency",
+            "driver",
+            "errorRateLastMinute",
+            "inFlight",
+            "queueDepth",
+            "rateLimitPerSec",
+            "terminal",
+            "throughputPerMinute",
+          ],
+          properties: {
+            circuitOpen: { type: "boolean" },
+            concurrency: { type: "integer" },
+            driver: { type: "string", enum: ["redis", "mongo"] },
+            errorRateLastMinute: { type: "number" },
+            inFlight: {
+              type: "object",
+              required: ["batch", "candidate", "enrollment", "total"],
+              properties: {
+                batch: { type: "integer" },
+                candidate: { type: "integer" },
+                enrollment: { type: "integer" },
+                total: { type: "integer" },
+              },
+            },
+            queueDepth: {
+              type: "object",
+              required: ["batch", "candidate", "enrollment", "total"],
+              properties: {
+                batch: { type: "integer" },
+                candidate: { type: "integer" },
+                enrollment: { type: "integer" },
+                total: { type: "integer" },
+              },
+            },
+            rateLimitPerSec: { type: "integer" },
+            terminal: {
+              type: "object",
+              required: ["deadLetter", "manualReview"],
+              properties: {
+                deadLetter: { type: "integer" },
+                manualReview: { type: "integer" },
+              },
+            },
+            throughputPerMinute: {
+              type: "object",
+              required: ["failed", "succeeded"],
+              properties: {
+                failed: { type: "integer" },
+                succeeded: { type: "integer" },
+              },
+            },
+          },
+        },
+        ReplaySyncJobsRequest: {
+          type: "object",
+          properties: {
+            limit: { type: "integer", minimum: 1, maximum: 5000, default: 100 },
+            syncJobIds: { type: "array", items: { type: "string" }, maxItems: 5000 },
+          },
+        },
+        ReplaySyncJobsResult: {
+          type: "object",
+          required: ["replayedCount", "syncJobIds"],
+          properties: {
+            replayedCount: { type: "integer", minimum: 0 },
+            syncJobIds: { type: "array", items: { type: "string" } },
           },
         },
         BatchCandidate: {
@@ -2370,6 +2442,18 @@ export function getOpenApiDocument() {
           },
         },
       },
+      "/reference-data/portal-options": {
+        get: {
+          tags: ["Reference Data"],
+          summary: "Cached portal options bootstrap (programs, sectors, schemes, courses, centers, enums)",
+          security: [{ cookieAuth: [] }],
+          responses: {
+            200: successResponse("Portal options loaded", ref("CandidateReferenceData")),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+          },
+        },
+      },
       "/candidates": {
         get: {
           tags: ["Candidates"],
@@ -3000,6 +3084,18 @@ export function getOpenApiDocument() {
           },
         },
       },
+      "/sync/health": {
+        get: {
+          tags: ["Sync Jobs"],
+          summary: "Queue depth, throughput, and circuit-breaker health for SIDH push workers",
+          security: [{ cookieAuth: [] }],
+          responses: {
+            200: successResponse("Sync health", ref("SyncHealthData")),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+          },
+        },
+      },
       "/sync/jobs": {
         get: {
           tags: ["Sync Jobs"],
@@ -3013,6 +3109,23 @@ export function getOpenApiDocument() {
           ],
           responses: {
             200: successResponse("Sync jobs loaded", ref("SyncJobListData")),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+          },
+        },
+      },
+      "/sync/jobs/replay": {
+        post: {
+          tags: ["Sync Jobs"],
+          summary: "Replay dead-letter or failed candidate sync jobs",
+          security: [{ cookieAuth: [] }],
+          requestBody: {
+            required: false,
+            content: jsonContent(ref("ReplaySyncJobsRequest")),
+          },
+          responses: {
+            200: successResponse("Dead-letter sync jobs replayed", ref("ReplaySyncJobsResult")),
+            400: errorResponse("Validation failed"),
             401: errorResponse("Authentication required"),
             403: errorResponse("Forbidden"),
           },

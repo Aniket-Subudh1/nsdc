@@ -88,7 +88,7 @@ const syncJobSchema = new mongoose.Schema(
     },
     maxAttempts: {
       type: Number,
-      default: 3,
+      default: 6,
     },
     nextRunAt: {
       type: Date,
@@ -103,6 +103,11 @@ const syncJobSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    idempotencyKey: {
+      type: String,
+      default: null,
+      index: true,
+    },
     attempts: {
       type: [syncAttemptSchema],
       default: [],
@@ -114,6 +119,17 @@ const syncJobSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
+  },
+);
+
+syncJobSchema.index(
+  { idempotencyKey: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      idempotencyKey: { $type: "string" },
+      status: { $in: ["queued", "processing"] },
+    },
   },
 );
 

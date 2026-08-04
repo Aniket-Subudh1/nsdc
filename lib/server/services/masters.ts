@@ -5,6 +5,14 @@ import {
   type SidhBatchFieldOptionsResponse,
 } from "@/lib/sidh-batch-field-options";
 import { resolveSidhSchemeKey } from "@/lib/sidh-batch-payload";
+import { bustOptionsCaches } from "@/lib/server/cache/invalidation";
+import {
+  buildCacheKey,
+  buildCacheScope,
+  cachedJson,
+  invalidateOptionsCache,
+  resolveCacheTtlSeconds,
+} from "@/lib/server/cache/redis-cache";
 import { ApiError } from "@/lib/server/http";
 import { getSidhBatchContext } from "@/lib/server/env";
 import { createPrefixedId } from "@/lib/server/ids";
@@ -563,6 +571,7 @@ export async function createProgram(actor: AuthSession, input: ProgramInput) {
     requestId: input.requestId,
   });
 
+  await bustOptionsCaches();
   return serializeProgram(program);
 }
 
@@ -661,6 +670,7 @@ export async function updateProgram(
     requestId: input.requestId,
   });
 
+  await bustOptionsCaches();
   return serializeProgram(program);
 }
 
@@ -693,6 +703,7 @@ export async function verifyProgramForSidh(actor: AuthSession, programId: string
     requestId,
   });
 
+  await bustOptionsCaches();
   return serializeProgram(program);
 }
 
@@ -739,6 +750,7 @@ export async function deleteProgram(actor: AuthSession, programId: string, reque
     requestId,
   });
 
+  await bustOptionsCaches();
   return serializeProgram(program);
 }
 
@@ -775,6 +787,7 @@ export async function syncProgramToSidh(actor: AuthSession, programId: string, r
     requestId,
   });
 
+  await bustOptionsCaches();
   return serializeProgram(program);
 }
 
@@ -835,6 +848,7 @@ export async function createSector(actor: AuthSession, input: SectorInput) {
     requestId: input.requestId,
   });
 
+  await bustOptionsCaches();
   return serializeSector(sector);
 }
 
@@ -887,6 +901,7 @@ export async function updateSector(actor: AuthSession, sectorId: string, input: 
     requestId: input.requestId,
   });
 
+  await bustOptionsCaches();
   return serializeSector(sector);
 }
 
@@ -922,6 +937,7 @@ export async function deleteSector(actor: AuthSession, sectorId: string, request
     requestId,
   });
 
+  await bustOptionsCaches();
   return serializeSector(sector);
 }
 
@@ -1005,6 +1021,7 @@ export async function createScheme(actor: AuthSession, input: SchemeInput) {
     requestId: input.requestId,
   });
 
+  await bustOptionsCaches();
   return serializeScheme(scheme);
 }
 
@@ -1111,6 +1128,7 @@ export async function updateScheme(actor: AuthSession, schemeId: string, input: 
     requestId: input.requestId,
   });
 
+  await bustOptionsCaches();
   return serializeScheme(scheme);
 }
 
@@ -1143,6 +1161,7 @@ export async function verifySchemeForSidh(actor: AuthSession, schemeId: string, 
     requestId,
   });
 
+  await bustOptionsCaches();
   return serializeScheme(scheme);
 }
 
@@ -1189,6 +1208,7 @@ export async function deleteScheme(actor: AuthSession, schemeId: string, request
     requestId,
   });
 
+  await bustOptionsCaches();
   return serializeScheme(scheme);
 }
 
@@ -1233,6 +1253,7 @@ export async function syncSchemeToSidh(actor: AuthSession, schemeId: string, req
     requestId,
   });
 
+  await bustOptionsCaches();
   return serializeScheme(scheme);
 }
 
@@ -1399,6 +1420,7 @@ export async function createCourse(actor: AuthSession, input: CourseInput) {
     requestId: input.requestId,
   });
 
+  await bustOptionsCaches();
   return serializeCourse(course);
 }
 
@@ -1542,6 +1564,7 @@ export async function updateCourse(actor: AuthSession, courseId: string, input: 
     requestId: input.requestId,
   });
 
+  await bustOptionsCaches();
   return serializeCourse(course);
 }
 
@@ -1581,6 +1604,7 @@ export async function deleteCourse(actor: AuthSession, courseId: string, request
     requestId,
   });
 
+  await bustOptionsCaches();
   return serializeCourse(course);
 }
 
@@ -1592,7 +1616,20 @@ export async function listCourseVersions(actor: AuthSession, courseId: string) {
   return versions.map((item) => serializeCourseVersion(item));
 }
 
+export async function getPortalOptions(actor: AuthSession) {
+  return cachedJson(
+    buildCacheKey("options:portal", buildCacheScope(actor)),
+    resolveCacheTtlSeconds("options"),
+    () => computePortalOptions(actor),
+  );
+}
+
+/** Alias kept for existing routes; same cached payload as portal options. */
 export async function getCandidateReferenceData(actor: AuthSession) {
+  return getPortalOptions(actor);
+}
+
+async function computePortalOptions(actor: AuthSession) {
   await connectToDatabase();
   ensureCanReadReferenceData(actor);
 
@@ -1636,6 +1673,10 @@ export async function getCandidateReferenceData(actor: AuthSession) {
     courses: usableCourses.map((item) => serializeCourse(item)),
     enums: groupedReferenceValues,
   };
+}
+
+export async function bustPortalOptionsCache() {
+  await invalidateOptionsCache();
 }
 
 const SIDH_BATCH_FIELD_KEYS = Object.keys(SIDH_BATCH_ENUM_CATEGORIES) as SidhBatchFieldKey[];
@@ -1731,6 +1772,7 @@ export async function createSidhBatchFieldOption(
     requestId,
   });
 
+  await bustOptionsCaches();
   return serializeSidhBatchReferenceOption(referenceValue);
 }
 
@@ -1792,6 +1834,7 @@ export async function updateSidhBatchFieldOption(
     requestId,
   });
 
+  await bustOptionsCaches();
   return serializeSidhBatchReferenceOption(referenceValue);
 }
 

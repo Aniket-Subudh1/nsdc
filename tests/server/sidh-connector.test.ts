@@ -17,6 +17,7 @@ vi.mock("@/lib/server/models/sidh-api-transaction", () => ({
   SidhApiTransactionModel: {
     create: mocks.createTransaction,
   },
+  truncateTransactionPayload: (value: unknown) => value,
 }));
 
 function createJsonResponse(body: unknown, init: ResponseInit = {}) {

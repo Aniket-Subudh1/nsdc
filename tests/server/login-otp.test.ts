@@ -240,7 +240,51 @@ describe("login otp", () => {
     } satisfies Partial<ApiError>);
   });
 
-  it("returns a replaced OTP error for stale challenges", async () => {
+  it("accepts the current OTP even when the browser challenge id is stale", async () => {
+    vi.spyOn(UserModel, "findOne").mockImplementation(async (filter) => {
+      const query = filter as {
+        email?: string;
+        loginOtpChallengeId?: string;
+      };
+
+      if (query.loginOtpChallengeId === "lch_stale") {
+        return null as never;
+      }
+
+      return {
+        userId: "usr_test",
+        email: "admin@example.com",
+        loginOtpChallengeId: "lch_current",
+        loginOtpHash: createOtpHash("123456"),
+        loginOtpExpiresAt: new Date(Date.now() + 60_000),
+        status: "active",
+      } as never;
+    });
+    vi.spyOn(UserModel, "findOneAndUpdate").mockResolvedValue({
+      userId: "usr_test",
+      email: "admin@example.com",
+      status: "active",
+      roles: ["platform_admin"],
+    } as never);
+
+    const verifiedUser = await verifyAdminLoginOtp({
+      email: "admin@example.com",
+      challengeId: "lch_stale",
+      otp: "123456",
+    });
+
+    expect(verifiedUser.email).toBe("admin@example.com");
+    expect(UserModel.findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        loginOtpChallengeId: "lch_current",
+        loginOtpHash: createOtpHash("123456"),
+      }),
+      expect.any(Object),
+      expect.any(Object),
+    );
+  });
+
+  it("returns a replaced OTP error for stale challenges with the wrong code", async () => {
     vi.spyOn(UserModel, "findOne").mockImplementation(async (filter) => {
       const query = filter as {
         email?: string;
@@ -265,7 +309,7 @@ describe("login otp", () => {
       verifyAdminLoginOtp({
         email: "admin@example.com",
         challengeId: "lch_stale",
-        otp: "123456",
+        otp: "000000",
       }),
     ).rejects.toMatchObject({
       errorCode: "OTP_REPLACED",

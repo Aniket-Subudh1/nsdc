@@ -1,9 +1,11 @@
 import { constants, publicEncrypt } from "node:crypto";
 
+import { Agent, fetch as undiciFetch } from "undici";
+
 import { type AppEnv, getEnv, getSidhCredentials } from "@/lib/server/env";
 import { ApiError } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
-import { SidhApiTransactionModel } from "@/lib/server/models/sidh-api-transaction";
+import { SidhApiTransactionModel, truncateTransactionPayload } from "@/lib/server/models/sidh-api-transaction";
 import {
   normalizeBatchCreationPayload,
   normalizeCandidateRegistrationPayload,
@@ -206,7 +208,7 @@ export function toApiErrorFromSidh(error: SidhConnectorError) {
   return new ApiError(status, error.code, error.message);
 }
 
-type ConnectorSession = {
+export type ConnectorSession = {
   accessToken: string | null;
   cookie: string | null;
   csrfToken: string;
@@ -222,10 +224,71 @@ type RequestOptions = {
   syncJobId: string;
 };
 
+/**
+ * Abstracts where the shared SIDH auth session (cookie + CSRF + access token) is cached.
+ * The in-memory implementation below is used in dev/single-process mode. A Redis-backed
+ * implementation (see lib/server/queue/sidh-session-store.ts) is injected in production so
+ * every concurrent worker reuses one login instead of each bootstrapping its own session.
+ */
+export interface SidhSessionStore {
+  getCached(): Promise<ConnectorSession | null>;
+  /** Forces a fresh session. Concurrent callers must be deduped so only one refresh runs at a time. */
+  refresh(bootstrap: () => Promise<ConnectorSession>): Promise<ConnectorSession>;
+  clear(): Promise<void>;
+}
+
+export function createInMemorySidhSessionStore(): SidhSessionStore {
+  let cached: ConnectorSession | null = null;
+  let inFlight: Promise<ConnectorSession> | null = null;
+
+  return {
+    async getCached() {
+      return cached;
+    },
+    async refresh(bootstrap) {
+      if (!inFlight) {
+        inFlight = bootstrap()
+          .then((session) => {
+            cached = session;
+            return session;
+          })
+          .finally(() => {
+            inFlight = null;
+          });
+      }
+
+      return inFlight;
+    },
+    async clear() {
+      cached = null;
+    },
+  };
+}
+
 type ConnectorDependencies = {
   env?: AppEnv;
   fetchImpl?: typeof fetch;
+  requestTimeoutMs?: number;
+  sessionStore?: SidhSessionStore;
 };
+
+/**
+ * Keep-alive HTTP agent shared across every SIDH request in this process. Without this,
+ * each of the 50k candidate pushes would pay a fresh TCP+TLS handshake.
+ */
+const sidhKeepAliveAgent = new Agent({
+  connections: 128,
+  keepAliveMaxTimeout: 60_000,
+  keepAliveTimeout: 30_000,
+  pipelining: 1,
+});
+
+const defaultSidhFetch = ((url: string | URL, init: RequestInit = {}) =>
+  undiciFetch(url as never, { ...(init as Record<string, unknown>), dispatcher: sidhKeepAliveAgent } as never)) as unknown as typeof fetch;
+
+function isAbortError(error: unknown) {
+  return error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
+}
 
 function normalizePublicKey(publicKey: string) {
   const trimmed = publicKey.trim();
@@ -507,14 +570,22 @@ async function logTransaction(input: {
   success: boolean;
   syncJobId: string;
 }) {
+  let retentionDays = 90;
+  try {
+    retentionDays = Math.max(1, getEnv().SIDH_TXN_RETENTION_DAYS);
+  } catch {
+    // Tests and early boot may call the connector before env is fully wired.
+  }
+
   await SidhApiTransactionModel.create({
     attemptId: input.attemptId,
     endpoint: input.endpoint,
+    expiresAt: new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000),
     operation: input.operation,
-    requestHeaders: redactValue(input.requestHeaders),
-    requestPayload: redactValue(input.requestPayload),
-    responseHeaders: redactValue(input.responseHeaders),
-    responsePayload: redactValue(input.responsePayload),
+    requestHeaders: truncateTransactionPayload(redactValue(input.requestHeaders)),
+    requestPayload: truncateTransactionPayload(redactValue(input.requestPayload)),
+    responseHeaders: truncateTransactionPayload(redactValue(input.responseHeaders)),
+    responsePayload: truncateTransactionPayload(redactValue(input.responsePayload)),
     responseStatus: input.responseStatus,
     success: input.success,
     syncJobId: input.syncJobId,
@@ -606,17 +677,43 @@ function classifyError(responseStatus: number, responseBody: unknown, fallbackMe
 
 export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
   const env = dependencies.env ?? getEnv();
-  const fetchImpl = dependencies.fetchImpl ?? fetch;
+  const fetchImpl = dependencies.fetchImpl ?? defaultSidhFetch;
+  const requestTimeoutMs = dependencies.requestTimeoutMs ?? env.SIDH_REQUEST_TIMEOUT_MS;
+  const sessionStore = dependencies.sessionStore ?? createInMemorySidhSessionStore();
   const credentials = getSidhCredentials(env);
-  let cachedSession: ConnectorSession | null = null;
 
   async function fetchCsrfSession(syncJobId: string, attemptId: string, operation: string) {
-    const csrfResponse = await fetchImpl(new URL("/api/user/v1", credentials.baseUrl).toString(), {
-      headers: {
-        Accept: "application/json",
-      },
-      method: "HEAD",
-    });
+    let csrfResponse: Response;
+
+    try {
+      csrfResponse = await fetchImpl(new URL("/api/user/v1", credentials.baseUrl).toString(), {
+        headers: {
+          Accept: "application/json",
+        },
+        method: "HEAD",
+        signal: AbortSignal.timeout(requestTimeoutMs),
+      });
+    } catch (error) {
+      await logTransaction({
+        attemptId,
+        endpoint: "/api/user/v1",
+        operation,
+        requestHeaders: { Accept: "application/json" },
+        requestPayload: {},
+        responseHeaders: {},
+        responsePayload: { message: error instanceof Error ? error.message : "Unknown network error" },
+        responseStatus: null,
+        success: false,
+        syncJobId,
+      });
+
+      throw new SidhConnectorError({
+        code: isAbortError(error) ? "SIDH_TIMEOUT" : "SIDH_NETWORK_ERROR",
+        message: isAbortError(error) ? `SIDH ${operation} timed out after ${requestTimeoutMs}ms` : error instanceof Error ? error.message : "Unable to reach SIDH",
+        retryable: true,
+      });
+    }
+
     const csrfHeaders = Object.fromEntries(csrfResponse.headers.entries());
 
     await logTransaction({
@@ -668,6 +765,7 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
         body: serializedBody.payload,
         headers: requestHeaders,
         method: options.headers?.["x-http-method"] ?? (options.body ? "POST" : "GET"),
+        signal: AbortSignal.timeout(requestTimeoutMs),
       });
       const responseHeaders = Object.fromEntries(response.headers.entries());
       const text = await response.text();
@@ -687,7 +785,9 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
       });
 
       if (!response.ok) {
-        cachedSession = null;
+        if (response.status === 401 || response.status === 412) {
+          await sessionStore.clear();
+        }
         const message = extractErrorMessage(payload, `SIDH ${options.operation} failed`);
         throw classifyError(response.status, payload, message, options.operation);
       }
@@ -716,8 +816,8 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
       });
 
       throw new SidhConnectorError({
-        code: "SIDH_NETWORK_ERROR",
-        message: error instanceof Error ? error.message : "Unable to reach SIDH",
+        code: isAbortError(error) ? "SIDH_TIMEOUT" : "SIDH_NETWORK_ERROR",
+        message: isAbortError(error) ? `SIDH ${options.operation} timed out after ${requestTimeoutMs}ms` : error instanceof Error ? error.message : "Unable to reach SIDH",
         retryable: true,
       });
     }
@@ -738,6 +838,7 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
         body: serializedBody.payload,
         headers: requestHeaders,
         method: options.headers?.["x-http-method"] ?? (options.body ? "POST" : "GET"),
+        signal: AbortSignal.timeout(requestTimeoutMs),
       });
       const responseHeaders = Object.fromEntries(response.headers.entries());
       const contentType = response.headers.get("content-type");
@@ -760,7 +861,9 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
       });
 
       if (!response.ok) {
-        cachedSession = null;
+        if (response.status === 401 || response.status === 412) {
+          await sessionStore.clear();
+        }
         const message = extractErrorMessage(responsePayload, `SIDH ${options.operation} failed`);
         throw classifyError(response.status, responsePayload, message, options.operation);
       }
@@ -789,8 +892,8 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
       });
 
       throw new SidhConnectorError({
-        code: "SIDH_NETWORK_ERROR",
-        message: error instanceof Error ? error.message : "Unable to reach SIDH",
+        code: isAbortError(error) ? "SIDH_TIMEOUT" : "SIDH_NETWORK_ERROR",
+        message: isAbortError(error) ? `SIDH ${options.operation} timed out after ${requestTimeoutMs}ms` : error instanceof Error ? error.message : "Unable to reach SIDH",
         retryable: true,
       });
     }
@@ -836,21 +939,22 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
     });
     const accessToken = extractJsonValue<string>(loginResponse.payload, ["accessToken", "token", "authToken", "jwt"]);
 
-    cachedSession = {
+    return {
       accessToken: accessToken?.trim() || null,
       cookie: apiSession.cookie,
       csrfToken: apiSession.csrfToken,
-    };
-
-    return cachedSession;
+    } satisfies ConnectorSession;
   }
 
   async function ensureSession(syncJobId: string, attemptId: string, forceRefresh = false) {
-    if (!cachedSession || forceRefresh) {
-      return bootstrapAuth(syncJobId, attemptId);
+    if (!forceRefresh) {
+      const cached = await sessionStore.getCached();
+      if (cached) {
+        return cached;
+      }
     }
 
-    return cachedSession;
+    return sessionStore.refresh(() => bootstrapAuth(syncJobId, attemptId));
   }
 
   return {
@@ -900,7 +1004,7 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
           error instanceof SidhConnectorError &&
           (error.status === 401 || error.status === 412 || error.code === "SIDH_AUTH_FAILED")
         ) {
-          cachedSession = null;
+          await sessionStore.clear();
           const result = await executeRegistration(true);
           if (!result.remoteCandidateId) {
             throw new SidhConnectorError({
@@ -970,7 +1074,7 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
           error instanceof SidhConnectorError &&
           (error.status === 401 || error.status === 412 || error.code === "SIDH_AUTH_FAILED")
         ) {
-          cachedSession = null;
+          await sessionStore.clear();
           const result = await executeCreateBatch(true);
           if (!result.remoteBatchId) {
             throw new SidhConnectorError({
@@ -1040,7 +1144,7 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
           error instanceof SidhConnectorError &&
           (error.status === 401 || error.status === 412 || error.code === "SIDH_AUTH_FAILED")
         ) {
-          cachedSession = null;
+          await sessionStore.clear();
           return executeEnrollment(true);
         }
 
@@ -1079,7 +1183,7 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
           error instanceof SidhConnectorError &&
           (error.status === 401 || error.status === 412 || error.code === "SIDH_AUTH_FAILED")
         ) {
-          cachedSession = null;
+          await sessionStore.clear();
           return executeSubmission(true);
         }
 
@@ -1116,7 +1220,7 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
           error instanceof SidhConnectorError &&
           (error.status === 401 || error.status === 412 || error.code === "SIDH_AUTH_FAILED")
         ) {
-          cachedSession = null;
+          await sessionStore.clear();
           return executeGeneration(true);
         }
 
@@ -1159,7 +1263,7 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
           error instanceof SidhConnectorError &&
           (error.status === 401 || error.status === 412 || error.code === "SIDH_AUTH_FAILED")
         ) {
-          cachedSession = null;
+          await sessionStore.clear();
           return executeDownload(true);
         }
 

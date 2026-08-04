@@ -2,7 +2,6 @@
 
 import { startTransition, useEffect, useMemo, useState } from "react";
 
-import { useRefreshableLoad } from "@/lib/client/use-refreshable-load";
 import {
   IconBuildingCommunity,
   IconChevronLeft,
@@ -28,6 +27,8 @@ import {
 import { toast } from "sonner";
 
 import { apiFetch, ClientApiError } from "@/lib/client/api";
+import { swrKey, useApiSWR } from "@/lib/client/use-api-swr";
+import { usePortalOptions } from "@/lib/client/use-portal-options";
 import { cn } from "@/lib/utils";
 
 type UsersManagerProps = {
@@ -184,13 +185,36 @@ const EMPTY_EDIT_FORM = {
 };
 
 export default function UsersManager({ portal }: UsersManagerProps) {
-  const [users, setUsers] = useState<UserRecord[]>([]);
-  const [centers, setCenters] = useState<CenterRecord[]>([]);
+  const { trainingCenters: portalCenters } = usePortalOptions();
+  const centers = useMemo(
+    () =>
+      portalCenters.map((center) => ({
+        centerCode: center.centerCode ?? "",
+        centerId: center.centerId,
+        centerName: center.centerName,
+      })) as CenterRecord[],
+    [portalCenters],
+  );
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(20);
-  const [total, setTotal] = useState(0);
-  const loadState = useRefreshableLoad();
+  const usersKey = useMemo(
+    () => swrKey("/api/v1/admin/users", { page, pageSize }),
+    [page, pageSize],
+  );
+  const {
+    data: usersPage,
+    error: usersSwrError,
+    isLoading: usersLoading,
+    isValidating: usersValidating,
+    mutate: mutateUsers,
+  } = useApiSWR<PagedUsers>(usersKey);
+  const users = usersPage?.items ?? [];
+  const total = usersPage?.total ?? 0;
+  const loadState = {
+    isInitialLoading: usersLoading && !usersPage,
+    isRefreshing: usersValidating && Boolean(usersPage),
+  };
   const [isSaving, setIsSaving] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -257,45 +281,25 @@ export default function UsersManager({ portal }: UsersManagerProps) {
   }
 
   async function loadData(targetPage = page) {
-    loadState.begin();
+    if (targetPage !== page) {
+      setPage(targetPage);
+      return;
+    }
+
     try {
-      const [usersData, centerData] = await Promise.all([
-        apiFetch<PagedUsers>(`/api/v1/admin/users?page=${targetPage}&pageSize=${pageSize}`),
-        apiFetch<PagedCenters>("/api/v1/masters/training-centers?page=1&pageSize=100"),
-      ]);
-      setUsers(usersData.items);
-      setTotal(usersData.total);
-      setCenters(centerData.items);
+      await mutateUsers();
     } catch (error) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to load users");
-    } finally {
-      loadState.end();
     }
   }
 
   useEffect(() => {
-    let mounted = true;
-    async function init() {
-      loadState.begin();
-      try {
-        const [usersData, centerData] = await Promise.all([
-          apiFetch<PagedUsers>(`/api/v1/admin/users?page=${page}&pageSize=${pageSize}`),
-          apiFetch<PagedCenters>("/api/v1/masters/training-centers?page=1&pageSize=100"),
-        ]);
-        if (!mounted) return;
-        setUsers(usersData.items);
-        setTotal(usersData.total);
-        setCenters(centerData.items);
-      } catch (error) {
-        if (!mounted) return;
-        toast.error(error instanceof ClientApiError ? error.message : "Unable to load users");
-      } finally {
-        if (mounted) loadState.end();
-      }
+    if (!usersSwrError) {
+      return;
     }
-    void init();
-    return () => { mounted = false; };
-  }, [page, pageSize]);
+
+    toast.error(usersSwrError instanceof ClientApiError ? usersSwrError.message : "Unable to load users");
+  }, [usersSwrError]);
 
   async function handleCreateUser(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();

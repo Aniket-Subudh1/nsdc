@@ -408,7 +408,7 @@ async function main() {
   console.log(`Created local batch: ${batch.batchId} (${batch.batchCode})`);
   console.log("Queueing SIDH batch sync...");
 
-  const syncResult = await queueBatchSync(actor, batch.batchId, { forceResync: false }, requestId);
+  const syncResult = await queueBatchSync(actor, batch.batchId, { forceResync: false }, requestId, { immediate: true });
 
   console.log("");
   console.log("Result");

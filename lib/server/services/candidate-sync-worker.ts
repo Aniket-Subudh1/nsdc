@@ -1,15 +1,34 @@
+import { bustDashboardCaches } from "@/lib/server/cache/invalidation";
+import { getEnv } from "@/lib/server/env";
 import { ApiError } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
 import { connectToDatabase } from "@/lib/server/mongodb";
 import { CandidateModel } from "@/lib/server/models/candidate";
+import { SidhApiTransactionModel } from "@/lib/server/models/sidh-api-transaction";
 import { SyncJobModel } from "@/lib/server/models/sync-job";
 import { canManageSync } from "@/lib/server/rbac";
-import { createSidhConnector, type CandidateRegistrationPayload, SidhConnectorError } from "@/lib/server/services/sidh-connector";
+import { calculateNextRunAt } from "@/lib/server/queue/backoff";
+import { createInMemoryCircuitBreaker, type CircuitBreaker } from "@/lib/server/queue/circuit-breaker";
+import { runConcurrentPool } from "@/lib/server/queue/concurrency";
+import { getQueueDriver } from "@/lib/server/queue";
+import { createInMemoryRateLimiter, type RateLimiter } from "@/lib/server/queue/rate-limiter";
+import { getSidhRuntime } from "@/lib/server/queue/sidh-runtime";
+import { createSidhConnector, extractRemoteCandidateId, type CandidateRegistrationPayload, SidhConnectorError } from "@/lib/server/services/sidh-connector";
 import { parseUserDateInput, toSidhDate } from "@/lib/server/sidh-payload";
 import { writeAuditLog } from "@/lib/server/services/audit";
+import { writeSyncEvent } from "@/lib/server/services/sync-events";
 import { type AuthSession } from "@/lib/server/services/session";
 
 type SyncActor = AuthSession;
+
+export const CANDIDATE_SYNC_QUEUE = "candidate-sync";
+
+const DEFAULT_MAX_ATTEMPTS = 6;
+const DEFAULT_BATCH_LIMIT = 5;
+const DEFAULT_CONCURRENCY = 5;
+/** Safe env-independent fallbacks used only when a caller does not inject a shared runtime. */
+const FALLBACK_RATE_LIMITER_PER_SEC = 10;
+const FALLBACK_CIRCUIT_BREAKER_OPTIONS = { cooldownMs: 30_000, failureThreshold: 0.5, minSamples: 10 };
 
 type WorkerCandidate = {
   candidateId: string;
@@ -71,8 +90,11 @@ type WorkerSyncJob = {
 };
 
 type ProcessDependencies = {
+  circuitBreaker?: CircuitBreaker;
+  concurrency?: number;
   connector?: ReturnType<typeof createSidhConnector>;
   now?: () => Date;
+  rateLimiter?: RateLimiter;
 };
 
 export type ProcessSyncJobsResult = {
@@ -152,11 +174,6 @@ function buildRegistrationPayload(candidate: WorkerCandidate): CandidateRegistra
 
 function classifyMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unknown sync failure";
-}
-
-function calculateNextRunAt(retryCount: number, now: Date) {
-  const delaySeconds = Math.min(5 * 2 ** Math.max(retryCount - 1, 0), 30);
-  return new Date(now.getTime() + delaySeconds * 1000);
 }
 
 async function claimNextSyncJob(now: Date) {
@@ -271,6 +288,8 @@ async function finalizeSuccess(actor: SyncActor, candidate: WorkerCandidate, job
     },
     requestId,
   });
+
+  await bustDashboardCaches();
 }
 
 async function finalizeRetry(actor: SyncActor, candidate: WorkerCandidate, job: WorkerSyncJob, attemptId: string, now: Date, error: SidhConnectorError, requestId?: string) {
@@ -358,12 +377,41 @@ async function finalizeManualReview(actor: SyncActor, candidate: WorkerCandidate
   });
 }
 
-async function processClaimedJob(actor: SyncActor, job: WorkerSyncJob, connector: ReturnType<typeof createSidhConnector>, now: Date, requestId?: string) {
+async function recoverRemoteCandidateIdFromTransactions(syncJobId: string) {
+  const successTxn = await SidhApiTransactionModel.findOne({
+    operation: "candidate.register",
+    success: true,
+    syncJobId,
+  }).sort({ createdAt: -1 });
+
+  if (!successTxn) {
+    return null;
+  }
+
+  return extractRemoteCandidateId(successTxn.responsePayload);
+}
+
+async function processClaimedJob(
+  actor: SyncActor,
+  job: WorkerSyncJob,
+  connector: ReturnType<typeof createSidhConnector>,
+  now: Date,
+  requestId: string | undefined,
+  circuitBreaker: CircuitBreaker,
+) {
   const attemptId = createPrefixedId("syncatt");
   setAttempt(job, {
     attemptId,
     startedAt: now,
     status: "processing",
+  });
+
+  await writeSyncEvent({
+    entityId: job.candidateId,
+    entityType: "candidate",
+    eventType: "claimed",
+    requestId,
+    syncJobId: job.syncJobId,
   });
 
   const { candidate } = await loadCandidateContext(job.candidateId);
@@ -375,6 +423,14 @@ async function processClaimedJob(actor: SyncActor, job: WorkerSyncJob, connector
       message: "Candidate not found for sync job",
     });
     await finalizeManualReview(actor, null, job, attemptId, now, error, requestId, "dead_letter");
+    await writeSyncEvent({
+      entityId: job.candidateId,
+      entityType: "candidate",
+      eventType: "dead_lettered",
+      metadata: { failureCode: error.code },
+      requestId,
+      syncJobId: job.syncJobId,
+    });
     return {
       candidateId: job.candidateId,
       message: error.message,
@@ -400,7 +456,57 @@ async function processClaimedJob(actor: SyncActor, job: WorkerSyncJob, connector
     };
   }
 
+  // Pre-flight idempotency: never re-register a candidate that already has a SIDH id.
+  if (candidate.sidhCandidateId?.trim()) {
+    await finalizeSuccess(actor, candidate, job, attemptId, now, candidate.sidhCandidateId.trim(), requestId);
+    await writeSyncEvent({
+      entityId: candidate.candidateId,
+      entityType: "candidate",
+      eventType: "succeeded",
+      metadata: { recoveredFrom: "existing_sidh_candidate_id", remoteCandidateId: candidate.sidhCandidateId },
+      requestId,
+      syncJobId: job.syncJobId,
+    });
+    return {
+      candidateId: candidate.candidateId,
+      message: "Candidate already linked with Skill India",
+      remoteCandidateId: candidate.sidhCandidateId,
+      status: "succeeded",
+      syncJobId: job.syncJobId,
+    };
+  }
+
+  // Outcome verification: if a prior attempt already succeeded on SIDH but the worker crashed,
+  // recover the remote id from SidhApiTransaction instead of creating a duplicate.
+  const recoveredRemoteId = await recoverRemoteCandidateIdFromTransactions(job.syncJobId);
+  if (recoveredRemoteId) {
+    await finalizeSuccess(actor, candidate, job, attemptId, now, recoveredRemoteId, requestId);
+    await writeSyncEvent({
+      entityId: candidate.candidateId,
+      entityType: "candidate",
+      eventType: "succeeded",
+      metadata: { recoveredFrom: "sidh_api_transaction", remoteCandidateId: recoveredRemoteId },
+      requestId,
+      syncJobId: job.syncJobId,
+    });
+    return {
+      candidateId: candidate.candidateId,
+      message: "Candidate recovered from prior SIDH transaction",
+      remoteCandidateId: recoveredRemoteId,
+      status: "succeeded",
+      syncJobId: job.syncJobId,
+    };
+  }
+
   await persistProcessingState(candidate, job, now);
+  await writeSyncEvent({
+    entityId: candidate.candidateId,
+    entityType: "candidate",
+    eventType: "attempt_started",
+    metadata: { attemptId },
+    requestId,
+    syncJobId: job.syncJobId,
+  });
 
   const payload = buildRegistrationPayload(candidate);
   job.payloadSnapshot = {
@@ -414,7 +520,16 @@ async function processClaimedJob(actor: SyncActor, job: WorkerSyncJob, connector
       payload,
       syncJobId: job.syncJobId,
     });
+    await circuitBreaker.recordSuccess();
     await finalizeSuccess(actor, candidate, job, attemptId, new Date(), result.remoteCandidateId, requestId);
+    await writeSyncEvent({
+      entityId: candidate.candidateId,
+      entityType: "candidate",
+      eventType: "succeeded",
+      metadata: { attemptId, remoteCandidateId: result.remoteCandidateId },
+      requestId,
+      syncJobId: job.syncJobId,
+    });
 
     return {
       candidateId: candidate.candidateId,
@@ -433,8 +548,22 @@ async function processClaimedJob(actor: SyncActor, job: WorkerSyncJob, connector
             retryable: true,
           });
 
+    if (connectorError.retryable) {
+      await circuitBreaker.recordFailure();
+    } else {
+      await circuitBreaker.recordSuccess();
+    }
+
     if (connectorError.code === "SIDH_CONFLICT" && connectorError.remoteCandidateId) {
       await finalizeSuccess(actor, candidate, job, attemptId, new Date(), connectorError.remoteCandidateId, requestId);
+      await writeSyncEvent({
+        entityId: candidate.candidateId,
+        entityType: "candidate",
+        eventType: "succeeded",
+        metadata: { attemptId, recoveredFrom: "sidh_conflict", remoteCandidateId: connectorError.remoteCandidateId },
+        requestId,
+        syncJobId: job.syncJobId,
+      });
 
       return {
         candidateId: candidate.candidateId,
@@ -446,11 +575,19 @@ async function processClaimedJob(actor: SyncActor, job: WorkerSyncJob, connector
     }
 
     const currentRetryCount = job.retryCount ?? 0;
-    const maxAttempts = Math.max(1, Math.min(job.maxAttempts ?? 3, 3));
+    const maxAttempts = Math.max(1, job.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
     job.maxAttempts = maxAttempts;
 
     if (connectorError.retryable && currentRetryCount + 1 < maxAttempts) {
       await finalizeRetry(actor, candidate, job, attemptId, new Date(), connectorError, requestId);
+      await writeSyncEvent({
+        entityId: candidate.candidateId,
+        entityType: "candidate",
+        eventType: "attempt_failed",
+        metadata: { attemptId, failureCode: connectorError.code, retryScheduled: true },
+        requestId,
+        syncJobId: job.syncJobId,
+      });
       return {
         candidateId: candidate.candidateId,
         message: connectorError.message,
@@ -460,6 +597,7 @@ async function processClaimedJob(actor: SyncActor, job: WorkerSyncJob, connector
       };
     }
 
+    const terminalStatus = connectorError.retryable ? "dead_letter" : "manual_review";
     await finalizeManualReview(
       actor,
       candidate,
@@ -468,17 +606,65 @@ async function processClaimedJob(actor: SyncActor, job: WorkerSyncJob, connector
       new Date(),
       connectorError,
       requestId,
-      connectorError.retryable ? "dead_letter" : "manual_review",
+      terminalStatus,
     );
+    await writeSyncEvent({
+      entityId: candidate.candidateId,
+      entityType: "candidate",
+      eventType: terminalStatus === "dead_letter" ? "dead_lettered" : "attempt_failed",
+      metadata: { attemptId, failureCode: connectorError.code },
+      requestId,
+      syncJobId: job.syncJobId,
+    });
 
     return {
       candidateId: candidate.candidateId,
       message: connectorError.message,
       remoteCandidateId: connectorError.remoteCandidateId,
-      status: connectorError.retryable ? "dead_letter" : "manual_review",
+      status: terminalStatus,
       syncJobId: job.syncJobId,
     };
   }
+}
+
+const DEFERRED_CLAIM_DELAY_MS = 5_000;
+
+async function deferClaimedSyncJob(job: WorkerSyncJob, now: Date) {
+  job.lockId = null;
+  job.lockedAt = null;
+  job.status = "queued";
+  job.nextRunAt = new Date(now.getTime() + DEFERRED_CLAIM_DELAY_MS);
+  await job.save?.();
+}
+
+/**
+ * Claims exactly one queued candidate sync job and fully processes it. Returns `null` when
+ * there is nothing left to claim, or when the SIDH circuit breaker is currently open (in
+ * which case the claimed job is released back to `queued` without penalty so it is retried
+ * once SIDH recovers, instead of burning one of its limited retry attempts).
+ */
+async function claimAndProcessNextSyncJob(
+  actor: SyncActor,
+  connector: ReturnType<typeof createSidhConnector>,
+  rateLimiter: RateLimiter,
+  circuitBreaker: CircuitBreaker,
+  now: () => Date,
+  requestId?: string,
+): Promise<ProcessSyncJobsResult["jobs"][number] | null> {
+  const claimedJob = (await claimNextSyncJob(now())) as WorkerSyncJob | null;
+
+  if (!claimedJob) {
+    return null;
+  }
+
+  if (await circuitBreaker.isOpen()) {
+    await deferClaimedSyncJob(claimedJob, now());
+    return null;
+  }
+
+  await rateLimiter.acquire();
+
+  return processClaimedJob(actor, claimedJob, connector, now(), requestId, circuitBreaker);
 }
 
 export async function processQueuedSyncJobs(actor: SyncActor, input: { limit?: number; requestId?: string } = {}, dependencies: ProcessDependencies = {}): Promise<ProcessSyncJobsResult> {
@@ -486,19 +672,15 @@ export async function processQueuedSyncJobs(actor: SyncActor, input: { limit?: n
   ensureCanProcessSyncJobs(actor);
 
   const connector = dependencies.connector ?? createSidhConnector();
+  const rateLimiter = dependencies.rateLimiter ?? createInMemoryRateLimiter(FALLBACK_RATE_LIMITER_PER_SEC);
+  const circuitBreaker = dependencies.circuitBreaker ?? createInMemoryCircuitBreaker(FALLBACK_CIRCUIT_BREAKER_OPTIONS);
   const now = dependencies.now ?? (() => new Date());
-  const limit = Math.max(1, Math.min(input.limit ?? 5, 25));
-  const jobs: ProcessSyncJobsResult["jobs"] = [];
+  const limit = Math.max(1, Math.min(input.limit ?? DEFAULT_BATCH_LIMIT, 5_000));
+  const concurrency = Math.max(1, Math.min(dependencies.concurrency ?? DEFAULT_CONCURRENCY, limit));
 
-  for (let index = 0; index < limit; index += 1) {
-    const claimedJob = (await claimNextSyncJob(now())) as WorkerSyncJob | null;
-
-    if (!claimedJob) {
-      break;
-    }
-
-    jobs.push(await processClaimedJob(actor, claimedJob, connector, now(), input.requestId));
-  }
+  const jobs = await runConcurrentPool(limit, concurrency, () =>
+    claimAndProcessNextSyncJob(actor, connector, rateLimiter, circuitBreaker, now, input.requestId),
+  );
 
   return {
     deadLetterCount: jobs.filter((job) => job.status === "dead_letter").length,
@@ -508,4 +690,39 @@ export async function processQueuedSyncJobs(actor: SyncActor, input: { limit?: n
     retryScheduledCount: jobs.filter((job) => job.status === "queued").length,
     succeededCount: jobs.filter((job) => job.status === "succeeded").length,
   };
+}
+
+/**
+ * Starts the always-on candidate sync worker for this process, driven by the active queue
+ * driver (Redis/BullMQ in production, polling loops in dev). Used by scripts/worker.ts.
+ */
+export function startCandidateSyncWorker(actor: SyncActor, options: { concurrency?: number; requestIdPrefix?: string } = {}) {
+  const env = getEnv();
+  const runtime = getSidhRuntime();
+  const driver = getQueueDriver();
+  const concurrency = Math.max(1, options.concurrency ?? env.SIDH_PUSH_CONCURRENCY);
+
+  return driver.runWorker(
+    CANDIDATE_SYNC_QUEUE,
+    async () => {
+      const result = await claimAndProcessNextSyncJob(
+        actor,
+        runtime.connector,
+        runtime.rateLimiter,
+        runtime.circuitBreaker,
+        () => new Date(),
+        options.requestIdPrefix ? `${options.requestIdPrefix}-${createPrefixedId("cswrun")}` : undefined,
+      );
+      return result !== null;
+    },
+    {
+      concurrency,
+      pollIntervalMs: env.WORKER_POLL_INTERVAL_MS,
+    },
+  );
+}
+
+/** Wakes up the candidate sync worker immediately instead of waiting for the next poll tick. */
+export async function notifyCandidateSyncQueue() {
+  await getQueueDriver().notify(CANDIDATE_SYNC_QUEUE);
 }

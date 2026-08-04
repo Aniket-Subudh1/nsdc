@@ -882,7 +882,7 @@ export const commitCandidateImportSchema = z.object({
 });
 
 export const bulkQueueCandidateSyncSchema = z.object({
-  candidateIds: z.array(z.string().trim().min(1)).min(1).max(100),
+  candidateIds: z.array(z.string().trim().min(1)).min(1).max(5000),
 });
 
 export const syncJobsQuerySchema = paginationQuerySchema.extend({
@@ -891,7 +891,12 @@ export const syncJobsQuerySchema = paginationQuerySchema.extend({
 });
 
 export const processSyncJobsSchema = z.object({
-  limit: z.coerce.number().int().positive().max(25).default(5),
+  limit: z.coerce.number().int().positive().max(5000).default(25),
+});
+
+export const replaySyncJobsSchema = z.object({
+  limit: z.coerce.number().int().positive().max(5000).default(100),
+  syncJobIds: z.array(z.string().trim().min(1)).max(5000).optional(),
 });
 
 const batchCandidateIdsSchema = z

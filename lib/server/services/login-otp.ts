@@ -239,6 +239,7 @@ export async function verifyAdminLoginOtp(input: VerifyAdminLoginOtpInput) {
   const normalizedEmail = input.email.trim().toLowerCase();
   const normalizedOtp = input.otp.trim();
   const normalizedChallengeId = input.challengeId.trim();
+  const otpHash = createOtpHash(normalizedOtp);
   const challenge = await findLoginOtpChallenge(normalizedEmail, normalizedChallengeId);
 
   if (challenge.match === "not_found" || challenge.match === "no_challenge") {
@@ -249,19 +250,13 @@ export async function verifyAdminLoginOtp(input: VerifyAdminLoginOtpInput) {
     );
   }
 
-  if (challenge.match === "replaced") {
-    throw new ApiError(
-      400,
-      "OTP_REPLACED",
-      "This verification code was replaced by a newer one. Use the latest code from your email.",
-    );
-  }
-
   const user = challenge.user;
   const expiryTime = challenge.expiryTime;
+  const activeChallengeId =
+    typeof user.loginOtpChallengeId === "string" ? user.loginOtpChallengeId.trim() : "";
   const hasOtpHash = Boolean(user.loginOtpHash);
 
-  if (!hasOtpHash || expiryTime === null) {
+  if (!hasOtpHash || expiryTime === null || !activeChallengeId) {
     throw new ApiError(
       400,
       "OTP_CHALLENGE_INVALID",
@@ -290,7 +285,7 @@ export async function verifyAdminLoginOtp(input: VerifyAdminLoginOtpInput) {
     );
   }
 
-  if (user.loginOtpHash !== createOtpHash(normalizedOtp)) {
+  if (user.loginOtpHash !== otpHash) {
     await writeAuditLog({
       action: "auth.login.otp_failed",
       actorUserId: user.userId,
@@ -300,18 +295,31 @@ export async function verifyAdminLoginOtp(input: VerifyAdminLoginOtpInput) {
       metadata: {
         email: normalizedEmail,
         challengeId: normalizedChallengeId,
-        reason: "wrong_code",
+        reason: challenge.match === "replaced" ? "stale_challenge_wrong_code" : "wrong_code",
       },
       requestId: input.requestId,
     });
+
+    // Stale browser challenge + wrong/old code is the common "I used the latest code" failure mode
+    // after a second login/resend. Point the user at sign-in again rather than implying the code is fine.
+    if (challenge.match === "replaced") {
+      throw new ApiError(
+        400,
+        "OTP_REPLACED",
+        "A newer login attempt replaced this verification session. Sign in again and use the newest code from your email.",
+      );
+    }
+
     throw new ApiError(400, "OTP_WRONG", "The verification code you entered is incorrect.");
   }
 
+  // Accept a matching current OTP even if the browser still holds a previous challengeId
+  // (e.g. double login, page refresh + re-login, or HMR remount with stale state).
   const clearedUser = await UserModel.findOneAndUpdate(
     {
       userId: user.userId,
-      loginOtpChallengeId: normalizedChallengeId,
-      loginOtpHash: createOtpHash(normalizedOtp),
+      loginOtpChallengeId: activeChallengeId,
+      loginOtpHash: otpHash,
     },
     {
       $set: {
@@ -328,7 +336,7 @@ export async function verifyAdminLoginOtp(input: VerifyAdminLoginOtpInput) {
     throw new ApiError(
       400,
       "OTP_REPLACED",
-      "This verification code was replaced by a newer one. Use the latest code from your email.",
+      "A newer login attempt replaced this verification session. Sign in again and use the newest code from your email.",
     );
   }
 

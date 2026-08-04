@@ -1,9 +1,16 @@
 import { createHash } from "node:crypto";
 
-import { getSidhBatchContext } from "@/lib/server/env";
+import { bustDashboardCaches } from "@/lib/server/cache/invalidation";
+import { getEnv, getSidhBatchContext } from "@/lib/server/env";
 import { ApiError } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
 import { connectToDatabase } from "@/lib/server/mongodb";
+import { calculateNextRunAt } from "@/lib/server/queue/backoff";
+import { createInMemoryCircuitBreaker, type CircuitBreaker } from "@/lib/server/queue/circuit-breaker";
+import { runConcurrentPool } from "@/lib/server/queue/concurrency";
+import { getQueueDriver } from "@/lib/server/queue";
+import { createInMemoryRateLimiter, type RateLimiter } from "@/lib/server/queue/rate-limiter";
+import { getSidhRuntime } from "@/lib/server/queue/sidh-runtime";
 import { readWorkbookSheetsFromArrayBuffer } from "@/lib/spreadsheet/node";
 import { excelSerialToDate } from "@/lib/spreadsheet/shared";
 import { parseUserDateInput } from "@/lib/server/sidh-payload";
@@ -270,9 +277,22 @@ type ProcessEnrollmentSyncJobsResult = {
 };
 
 type ProcessDependencies = {
+  circuitBreaker?: CircuitBreaker;
+  concurrency?: number;
   connector?: ReturnType<typeof createSidhConnector>;
   now?: () => Date;
+  rateLimiter?: RateLimiter;
 };
+
+export const BATCH_SYNC_QUEUE = "batch-sync";
+export const ENROLLMENT_SYNC_QUEUE = "enrollment-sync";
+
+const DEFAULT_MAX_ATTEMPTS = 6;
+const DEFAULT_BATCH_LIMIT = 5;
+const DEFAULT_CONCURRENCY = 5;
+/** Safe env-independent fallbacks used only when a caller does not inject a shared runtime. */
+const FALLBACK_RATE_LIMITER_PER_SEC = 10;
+const FALLBACK_CIRCUIT_BREAKER_OPTIONS = { cooldownMs: 30_000, failureThreshold: 0.5, minSamples: 10 };
 
 const ACTIVE_BATCH_STATUSES = ["draft", "ready", "active"];
 const UNASSIGNED_CENTER_ID = "unassigned";
@@ -1083,11 +1103,6 @@ function updateLastAttempt(state: QueuedSyncState, patch: Partial<SyncAttempt>) 
   state.attempts = attempts;
 }
 
-function calculateNextRunAt(retryCount: number, now: Date) {
-  const delaySeconds = Math.min(5 * 2 ** Math.max(retryCount - 1, 0), 30);
-  return new Date(now.getTime() + delaySeconds * 1000);
-}
-
 async function validateBatchSyncEligibility(batch: ServiceBatch) {
   ensureCenterAssignedForSync(batch.centerId, batch.syncEnabled);
 
@@ -1289,6 +1304,8 @@ export async function createBatch(actor: AuthSession, input: CreateBatchInput, r
     requestId,
   });
 
+  await bustDashboardCaches();
+
   return getBatch(actor, batch.batchId);
 }
 
@@ -1475,6 +1492,7 @@ export async function updateBatch(actor: AuthSession, batchId: string, input: Up
     requestId,
   });
 
+  await bustDashboardCaches();
   return getBatch(actor, batch.batchId);
 }
 
@@ -1671,6 +1689,7 @@ export async function deleteBatch(actor: AuthSession, batchId: string, requestId
     requestId,
   });
 
+  await bustDashboardCaches();
   return { batchId: batch.batchId, deleted: true };
 }
 
@@ -1761,7 +1780,7 @@ export async function removeAllCandidatesFromBatch(actor: AuthSession, batchId: 
   return getBatch(actor, batch.batchId);
 }
 
-export async function queueBatchSync(actor: AuthSession, batchId: string, input: BatchSyncRequestInput, requestId?: string) {
+export async function queueBatchSync(actor: AuthSession, batchId: string, input: BatchSyncRequestInput, requestId?: string, options: { immediate?: boolean } = {}) {
   await connectToDatabase();
   ensureCanProcessBatchSync(actor);
 
@@ -1810,10 +1829,16 @@ export async function queueBatchSync(actor: AuthSession, batchId: string, input:
     requestId,
   });
 
-  try {
-    await processQueuedBatchSyncJobs(actor, { limit: 5, requestId });
-  } catch (error) {
-    console.error(`[SIDH batch sync] failed to process jobs for ${batch.batchId}`, error);
+  if (options.immediate) {
+    try {
+      await processQueuedBatchSyncJobs(actor, { limit: 1, requestId });
+    } catch (error) {
+      console.error(`[SIDH batch sync] failed to process jobs for ${batch.batchId}`, error);
+    }
+  } else {
+    await notifyBatchSyncQueue().catch((error) => {
+      console.error(`[SIDH batch sync] failed to notify worker for ${batch.batchId}`, error);
+    });
   }
 
   return getBatchStatus(actor, batch.batchId);
@@ -1871,7 +1896,7 @@ export async function linkBatchToSidh(
   return getBatchStatus(actor, batch.batchId);
 }
 
-export async function queueEnrollmentSync(actor: AuthSession, batchId: string, input: EnrollmentSyncRequestInput, requestId?: string) {
+export async function queueEnrollmentSync(actor: AuthSession, batchId: string, input: EnrollmentSyncRequestInput, requestId?: string, options: { immediate?: boolean } = {}) {
   await connectToDatabase();
   ensureCanProcessBatchSync(actor);
 
@@ -1932,10 +1957,20 @@ export async function queueEnrollmentSync(actor: AuthSession, batchId: string, i
     requestId,
   });
 
+  if (options.immediate) {
+    try {
+      await processQueuedEnrollmentSyncJobs(actor, { limit: batchCandidates.length, requestId });
+    } catch (error) {
+      console.error(`[SIDH enrollment sync] failed to process jobs for ${batch.batchId}`, error);
+    }
+
+    return getBatchStatus(actor, batch.batchId);
+  }
+
   try {
-    await processQueuedEnrollmentSyncJobs(actor, { limit: 5, requestId });
+    await notifyEnrollmentSyncQueue();
   } catch (error) {
-    console.error(`[SIDH enrollment sync] failed to process jobs for ${batch.batchId}`, error);
+    console.error(`[SIDH enrollment sync] failed to notify worker for ${batch.batchId}`, error);
   }
 
   return getBatchStatus(actor, batch.batchId);
@@ -2355,81 +2390,189 @@ async function claimNextBatchSyncState(now: Date, key: "batchSync" | "enrollment
   );
 }
 
-export async function processQueuedBatchSyncJobs(actor: AuthSession, input: { limit?: number; requestId?: string } = {}, dependencies: ProcessDependencies = {}): Promise<ProcessBatchSyncJobsResult> {
-  await connectToDatabase();
-  ensureCanProcessBatchSync(actor);
+const DEFERRED_BATCH_CLAIM_DELAY_MS = 5_000;
 
-  const connector = dependencies.connector ?? createSidhConnector();
-  const now = dependencies.now ?? (() => new Date());
-  const limit = Math.max(1, Math.min(input.limit ?? 5, 25));
-  const jobs: ProcessBatchSyncJobsResult["jobs"] = [];
+async function deferClaimedBatchSyncState(claimedState: ServiceBatchSyncState, key: "batchSync" | "enrollmentSync", state: QueuedSyncState, now: Date) {
+  state.lockId = null;
+  state.lockedAt = null;
+  state.status = "queued";
+  state.nextRunAt = new Date(now.getTime() + DEFERRED_BATCH_CLAIM_DELAY_MS);
 
-  for (let index = 0; index < limit; index += 1) {
-    const claimedState = (await claimNextBatchSyncState(now(), "batchSync")) as ServiceBatchSyncState | null;
+  if (key === "batchSync") {
+    claimedState.batchSync = state;
+  } else {
+    claimedState.enrollmentSync = state;
+  }
 
-    if (!claimedState) {
-      break;
-    }
+  await claimedState.save?.();
+}
 
-    const state = getSyncStateValue(claimedState.batchSync);
-    const attemptId = createPrefixedId("batatt");
-    state.status = "processing";
-    setAttempt(state, {
-      attemptId,
-      operation: "batch_sync",
-      startedAt: now(),
-      status: "processing",
+
+async function claimAndProcessNextBatchSync(
+  actor: AuthSession,
+  connector: ReturnType<typeof createSidhConnector>,
+  rateLimiter: RateLimiter,
+  circuitBreaker: CircuitBreaker,
+  now: () => Date,
+  requestId?: string,
+): Promise<ProcessBatchSyncJobsResult["jobs"][number] | null> {
+  const claimedState = (await claimNextBatchSyncState(now(), "batchSync")) as ServiceBatchSyncState | null;
+
+  if (!claimedState) {
+    return null;
+  }
+
+  const state = getSyncStateValue(claimedState.batchSync);
+
+  if (await circuitBreaker.isOpen()) {
+    await deferClaimedBatchSyncState(claimedState, "batchSync", state, now());
+    return null;
+  }
+
+  const attemptId = createPrefixedId("batatt");
+  state.status = "processing";
+  setAttempt(state, {
+    attemptId,
+    operation: "batch_sync",
+    startedAt: now(),
+    status: "processing",
+  });
+  claimedState.batchSync = state;
+
+  const batch = (await BatchModel.findOne({ batchId: claimedState.batchId })) as ServiceBatch | null;
+
+  if (!batch) {
+    state.lockId = null;
+    state.lockedAt = null;
+    state.lastFailureCode = "BATCH_NOT_FOUND";
+    state.lastFailureMessage = "Batch not found for sync processing";
+    state.status = "manual_review";
+    updateLastAttempt(state, {
+      failureCode: "BATCH_NOT_FOUND",
+      failureMessage: "Batch not found for sync processing",
+      finishedAt: now(),
+      retryable: false,
+      status: "manual_review",
     });
     claimedState.batchSync = state;
+    await claimedState.save?.();
+    return {
+      batchId: claimedState.batchId,
+      message: "Batch not found for sync processing",
+      remoteBatchId: null,
+      status: "manual_review",
+      syncStateId: claimedState.batchSyncStateId,
+    };
+  }
 
-    const batch = (await BatchModel.findOne({ batchId: claimedState.batchId })) as ServiceBatch | null;
+  try {
+    const [{ center, course, program, scheme }, roster] = await Promise.all([
+      validateBatchSyncEligibility(batch),
+      loadBatchRoster(batch.batchId),
+    ]);
+    const payload = buildBatchPayload(batch, center, course, scheme, program, roster.batchCandidates.length);
+    console.log(`[SIDH batch push] batchId=${batch.batchId}`);
+    console.log(JSON.stringify(payload, null, 2));
+    const fingerprint = computeFingerprint(payload);
+    state.requestFingerprint = fingerprint;
+    claimedState.batchSync = state;
 
-    if (!batch) {
-      state.lockId = null;
-      state.lockedAt = null;
-      state.lastFailureCode = "BATCH_NOT_FOUND";
-      state.lastFailureMessage = "Batch not found for sync processing";
-      state.status = "manual_review";
-      updateLastAttempt(state, {
-        failureCode: "BATCH_NOT_FOUND",
-        failureMessage: "Batch not found for sync processing",
-        finishedAt: now(),
-        retryable: false,
-        status: "manual_review",
-      });
-      claimedState.batchSync = state;
-      await claimedState.save?.();
-      jobs.push({
-        batchId: claimedState.batchId,
-        message: "Batch not found for sync processing",
-        remoteBatchId: null,
-        status: "manual_review",
-        syncStateId: claimedState.batchSyncStateId,
-      });
-      continue;
+    await rateLimiter.acquire();
+    const result = await connector.createBatch({
+      attemptId,
+      payload,
+      syncJobId: claimedState.batchSync.lastJobId ?? claimedState.batchSyncStateId,
+    });
+    await circuitBreaker.recordSuccess();
+
+    batch.sidhBatchId = result.remoteBatchId;
+    await (batch as never as { save: () => Promise<void> }).save();
+    claimedState.sidhBatchId = result.remoteBatchId;
+    state.lastAttemptAt = now();
+    state.lastFailureCode = null;
+    state.lastFailureMessage = null;
+    state.lastSuccessAt = now();
+    state.lockId = null;
+    state.lockedAt = null;
+    state.nextRunAt = null;
+    state.remoteStatus = "active";
+    state.retryCount = state.retryCount ?? 0;
+    state.status = "synced";
+    updateLastAttempt(state, {
+      failureCode: null,
+      failureMessage: null,
+      finishedAt: now(),
+      remoteId: result.remoteBatchId,
+      requestFingerprint: fingerprint,
+      responseCode: result.responseStatus,
+      retryable: false,
+      status: "succeeded",
+    });
+    claimedState.batchSync = state;
+    await claimedState.save?.();
+
+    await writeAuditLog({
+      action: "batch.sync.succeeded",
+      actorUserId: actor.user.id,
+      entityId: batch.batchId,
+      entityType: "batch",
+      metadata: { attemptId, remoteBatchId: result.remoteBatchId },
+      requestId,
+    });
+
+    await bustDashboardCaches();
+
+    if (roster.batchCandidates.length > 0) {
+      try {
+        await queueEnrollmentSync(
+          actor,
+          batch.batchId,
+          {
+            candidateIds: roster.batchCandidates.map((membership) => membership.candidateId),
+            forceResync: false,
+          },
+          requestId,
+        );
+      } catch (error) {
+        console.error(`[SIDH enrollment sync] auto-queue failed for ${batch.batchId}`, error);
+      }
     }
 
-    try {
-      const [{ center, course, program, scheme }, roster] = await Promise.all([
-        validateBatchSyncEligibility(batch),
-        loadBatchRoster(batch.batchId),
-      ]);
-      const payload = buildBatchPayload(batch, center, course, scheme, program, roster.batchCandidates.length);
-      console.log(`[SIDH batch push] batchId=${batch.batchId}`);
-      console.log(JSON.stringify(payload, null, 2));
-      const fingerprint = computeFingerprint(payload);
-      state.requestFingerprint = fingerprint;
-      claimedState.batchSync = state;
+    return {
+      batchId: batch.batchId,
+      message: "Batch synced successfully",
+      remoteBatchId: result.remoteBatchId,
+      status: "succeeded",
+      syncStateId: claimedState.batchSyncStateId,
+    };
+  } catch (error) {
+    const connectorError =
+      error instanceof SidhConnectorError
+        ? error
+        : error instanceof ApiError
+          ? new SidhConnectorError({
+              code: error.errorCode,
+              manualReview: true,
+              message: error.message,
+              retryable: false,
+              status: error.status,
+            })
+        : new SidhConnectorError({
+            code: "BATCH_SYNC_FAILED",
+            message: classifyMessage(error),
+            retryable: true,
+          });
 
-      const result = await connector.createBatch({
-        attemptId,
-        payload,
-        syncJobId: claimedState.batchSync.lastJobId ?? claimedState.batchSyncStateId,
-      });
+    if (connectorError.retryable) {
+      await circuitBreaker.recordFailure();
+    } else {
+      await circuitBreaker.recordSuccess();
+    }
 
-      batch.sidhBatchId = result.remoteBatchId;
+    if (connectorError.code === "SIDH_CONFLICT" && connectorError.remoteBatchId) {
+      batch.sidhBatchId = connectorError.remoteBatchId;
       await (batch as never as { save: () => Promise<void> }).save();
-      claimedState.sidhBatchId = result.remoteBatchId;
+      claimedState.sidhBatchId = connectorError.remoteBatchId;
       state.lastAttemptAt = now();
       state.lastFailureCode = null;
       state.lastFailureMessage = null;
@@ -2438,155 +2581,92 @@ export async function processQueuedBatchSyncJobs(actor: AuthSession, input: { li
       state.lockedAt = null;
       state.nextRunAt = null;
       state.remoteStatus = "active";
-      state.retryCount = state.retryCount ?? 0;
       state.status = "synced";
       updateLastAttempt(state, {
         failureCode: null,
         failureMessage: null,
         finishedAt: now(),
-        remoteId: result.remoteBatchId,
-        requestFingerprint: fingerprint,
-        responseCode: result.responseStatus,
+        remoteId: connectorError.remoteBatchId,
+        requestFingerprint: state.requestFingerprint ?? null,
+        responseCode: connectorError.status,
         retryable: false,
         status: "succeeded",
       });
       claimedState.batchSync = state;
       await claimedState.save?.();
-
-      await writeAuditLog({
-        action: "batch.sync.succeeded",
-        actorUserId: actor.user.id,
-        entityId: batch.batchId,
-        entityType: "batch",
-        metadata: { attemptId, remoteBatchId: result.remoteBatchId },
-        requestId: input.requestId,
-      });
-
-      if (roster.batchCandidates.length > 0) {
-        try {
-          await queueEnrollmentSync(
-            actor,
-            batch.batchId,
-            {
-              candidateIds: roster.batchCandidates.map((membership) => membership.candidateId),
-              forceResync: false,
-            },
-            input.requestId,
-          );
-        } catch (error) {
-          console.error(`[SIDH enrollment sync] auto-queue failed for ${batch.batchId}`, error);
-        }
-      }
-
-      jobs.push({
+      return {
         batchId: batch.batchId,
-        message: "Batch synced successfully",
-        remoteBatchId: result.remoteBatchId,
+        message: "Batch reconciled from SIDH conflict response",
+        remoteBatchId: connectorError.remoteBatchId,
         status: "succeeded",
         syncStateId: claimedState.batchSyncStateId,
+      };
+    }
+
+    const currentRetryCount = state.retryCount ?? 0;
+    const maxAttempts = Math.max(1, state.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
+    const nextRetryCount = currentRetryCount + 1;
+
+    state.lastAttemptAt = now();
+    state.lastFailureCode = connectorError.code;
+    state.lastFailureMessage = connectorError.message;
+    state.lockId = null;
+    state.lockedAt = null;
+
+    if (connectorError.retryable && nextRetryCount < maxAttempts) {
+      state.nextRunAt = calculateNextRunAt(nextRetryCount, now());
+      state.retryCount = nextRetryCount;
+      state.status = "queued";
+      updateLastAttempt(state, {
+        failureCode: connectorError.code,
+        failureMessage: connectorError.message,
+        finishedAt: now(),
+        responseCode: connectorError.status,
+        retryable: true,
+        status: "failed",
       });
-    } catch (error) {
-      const connectorError =
-        error instanceof SidhConnectorError
-          ? error
-          : error instanceof ApiError
-            ? new SidhConnectorError({
-                code: error.errorCode,
-                manualReview: true,
-                message: error.message,
-                retryable: false,
-                status: error.status,
-              })
-          : new SidhConnectorError({
-              code: "BATCH_SYNC_FAILED",
-              message: classifyMessage(error),
-              retryable: true,
-            });
-
-      if (connectorError.code === "SIDH_CONFLICT" && connectorError.remoteBatchId) {
-        batch.sidhBatchId = connectorError.remoteBatchId;
-        await (batch as never as { save: () => Promise<void> }).save();
-        claimedState.sidhBatchId = connectorError.remoteBatchId;
-        state.lastAttemptAt = now();
-        state.lastFailureCode = null;
-        state.lastFailureMessage = null;
-        state.lastSuccessAt = now();
-        state.lockId = null;
-        state.lockedAt = null;
-        state.nextRunAt = null;
-        state.remoteStatus = "active";
-        state.status = "synced";
-        updateLastAttempt(state, {
-          failureCode: null,
-          failureMessage: null,
-          finishedAt: now(),
-          remoteId: connectorError.remoteBatchId,
-          requestFingerprint: state.requestFingerprint ?? null,
-          responseCode: connectorError.status,
-          retryable: false,
-          status: "succeeded",
-        });
-        claimedState.batchSync = state;
-        await claimedState.save?.();
-        jobs.push({
-          batchId: batch.batchId,
-          message: "Batch reconciled from SIDH conflict response",
-          remoteBatchId: connectorError.remoteBatchId,
-          status: "succeeded",
-          syncStateId: claimedState.batchSyncStateId,
-        });
-        continue;
-      }
-
-      const currentRetryCount = state.retryCount ?? 0;
-      const maxAttempts = Math.max(1, Math.min(state.maxAttempts ?? 3, 3));
-      const nextRetryCount = currentRetryCount + 1;
-
-      state.lastAttemptAt = now();
-      state.lastFailureCode = connectorError.code;
-      state.lastFailureMessage = connectorError.message;
-      state.lockId = null;
-      state.lockedAt = null;
-
-      if (connectorError.retryable && nextRetryCount < maxAttempts) {
-        state.nextRunAt = calculateNextRunAt(nextRetryCount, now());
-        state.retryCount = nextRetryCount;
-        state.status = "queued";
-        updateLastAttempt(state, {
-          failureCode: connectorError.code,
-          failureMessage: connectorError.message,
-          finishedAt: now(),
-          responseCode: connectorError.status,
-          retryable: true,
-          status: "failed",
-        });
-      } else {
-        state.nextRunAt = null;
-        state.retryCount = nextRetryCount;
-        state.status = connectorError.retryable ? "failed" : "manual_review";
-        state.remoteStatus = connectorError.code === "SIDH_REMOTE_BATCH_CANCELLED" ? "cancelled" : state.remoteStatus;
-        updateLastAttempt(state, {
-          failureCode: connectorError.code,
-          failureMessage: connectorError.message,
-          finishedAt: now(),
-          responseCode: connectorError.status,
-          retryable: connectorError.retryable,
-          status: connectorError.retryable ? "failed" : "manual_review",
-        });
-      }
-
-      claimedState.batchSync = state;
-      await claimedState.save?.();
-
-      jobs.push({
-        batchId: claimedState.batchId,
-        message: connectorError.message,
-        remoteBatchId: connectorError.remoteBatchId,
-        status: state.status ?? "failed",
-        syncStateId: claimedState.batchSyncStateId,
+    } else {
+      state.nextRunAt = null;
+      state.retryCount = nextRetryCount;
+      state.status = connectorError.retryable ? "failed" : "manual_review";
+      state.remoteStatus = connectorError.code === "SIDH_REMOTE_BATCH_CANCELLED" ? "cancelled" : state.remoteStatus;
+      updateLastAttempt(state, {
+        failureCode: connectorError.code,
+        failureMessage: connectorError.message,
+        finishedAt: now(),
+        responseCode: connectorError.status,
+        retryable: connectorError.retryable,
+        status: connectorError.retryable ? "failed" : "manual_review",
       });
     }
+
+    claimedState.batchSync = state;
+    await claimedState.save?.();
+
+    return {
+      batchId: claimedState.batchId,
+      message: connectorError.message,
+      remoteBatchId: connectorError.remoteBatchId,
+      status: state.status ?? "failed",
+      syncStateId: claimedState.batchSyncStateId,
+    };
   }
+}
+
+export async function processQueuedBatchSyncJobs(actor: AuthSession, input: { limit?: number; requestId?: string } = {}, dependencies: ProcessDependencies = {}): Promise<ProcessBatchSyncJobsResult> {
+  await connectToDatabase();
+  ensureCanProcessBatchSync(actor);
+
+  const connector = dependencies.connector ?? createSidhConnector();
+  const rateLimiter = dependencies.rateLimiter ?? createInMemoryRateLimiter(FALLBACK_RATE_LIMITER_PER_SEC);
+  const circuitBreaker = dependencies.circuitBreaker ?? createInMemoryCircuitBreaker(FALLBACK_CIRCUIT_BREAKER_OPTIONS);
+  const now = dependencies.now ?? (() => new Date());
+  const limit = Math.max(1, Math.min(input.limit ?? DEFAULT_BATCH_LIMIT, 5_000));
+  const concurrency = Math.max(1, Math.min(dependencies.concurrency ?? DEFAULT_CONCURRENCY, limit));
+
+  const jobs = await runConcurrentPool(limit, concurrency, () =>
+    claimAndProcessNextBatchSync(actor, connector, rateLimiter, circuitBreaker, now, input.requestId),
+  );
 
   return {
     jobs,
@@ -2597,93 +2677,132 @@ export async function processQueuedBatchSyncJobs(actor: AuthSession, input: { li
   };
 }
 
-export async function processQueuedEnrollmentSyncJobs(actor: AuthSession, input: { limit?: number; requestId?: string } = {}, dependencies: ProcessDependencies = {}): Promise<ProcessEnrollmentSyncJobsResult> {
-  await connectToDatabase();
-  ensureCanProcessBatchSync(actor);
+/** Starts the always-on batch-create worker for this process, driven by the active queue driver. */
+export function startBatchSyncWorker(actor: AuthSession, options: { concurrency?: number; requestIdPrefix?: string } = {}) {
+  const env = getEnv();
+  const runtime = getSidhRuntime();
+  const driver = getQueueDriver();
+  const concurrency = Math.max(1, options.concurrency ?? env.SIDH_PUSH_CONCURRENCY);
 
-  const connector = dependencies.connector ?? createSidhConnector();
-  const now = dependencies.now ?? (() => new Date());
-  const limit = Math.max(1, Math.min(input.limit ?? 5, 25));
-  const jobs: ProcessEnrollmentSyncJobsResult["jobs"] = [];
+  return driver.runWorker(
+    BATCH_SYNC_QUEUE,
+    async () => {
+      const result = await claimAndProcessNextBatchSync(
+        actor,
+        runtime.connector,
+        runtime.rateLimiter,
+        runtime.circuitBreaker,
+        () => new Date(),
+        options.requestIdPrefix ? `${options.requestIdPrefix}-${createPrefixedId("bswrun")}` : undefined,
+      );
+      return result !== null;
+    },
+    {
+      concurrency,
+      pollIntervalMs: env.WORKER_POLL_INTERVAL_MS,
+    },
+  );
+}
 
-  for (let index = 0; index < limit; index += 1) {
-    const claimedState = (await claimNextBatchSyncState(now(), "enrollmentSync")) as ServiceBatchSyncState | null;
+/** Wakes up the batch-create worker immediately instead of waiting for the next poll tick. */
+export async function notifyBatchSyncQueue() {
+  await getQueueDriver().notify(BATCH_SYNC_QUEUE);
+}
 
-    if (!claimedState) {
-      break;
-    }
+/**
+ * Claims exactly one queued enrollment-sync job and fully processes it. Returns `null` when
+ * there is nothing left to claim, or when the SIDH circuit breaker is open (the claimed
+ * state is released back to `queued` without consuming a retry attempt).
+ */
+async function claimAndProcessNextEnrollmentSync(
+  actor: AuthSession,
+  connector: ReturnType<typeof createSidhConnector>,
+  rateLimiter: RateLimiter,
+  circuitBreaker: CircuitBreaker,
+  now: () => Date,
+  requestId?: string,
+): Promise<ProcessEnrollmentSyncJobsResult["jobs"][number] | null> {
+  const claimedState = (await claimNextBatchSyncState(now(), "enrollmentSync")) as ServiceBatchSyncState | null;
 
-    const state = getSyncStateValue(claimedState.enrollmentSync);
-    const attemptId = createPrefixedId("enatt");
-    state.status = "processing";
-    setAttempt(state, {
-      attemptId,
-      operation: "enrollment_sync",
-      startedAt: now(),
-      status: "processing",
+  if (!claimedState) {
+    return null;
+  }
+
+  const state = getSyncStateValue(claimedState.enrollmentSync);
+
+  if (await circuitBreaker.isOpen()) {
+    await deferClaimedBatchSyncState(claimedState, "enrollmentSync", state, now());
+    return null;
+  }
+
+  const attemptId = createPrefixedId("enatt");
+  state.status = "processing";
+  setAttempt(state, {
+    attemptId,
+    operation: "enrollment_sync",
+    startedAt: now(),
+    status: "processing",
+  });
+  claimedState.enrollmentSync = state;
+
+  const batch = (await BatchModel.findOne({ batchId: claimedState.batchId })) as ServiceBatch | null;
+  if (!batch) {
+    state.lockId = null;
+    state.lockedAt = null;
+    state.status = "manual_review";
+    state.lastFailureCode = "BATCH_NOT_FOUND";
+    state.lastFailureMessage = "Batch not found for enrollment sync processing";
+    updateLastAttempt(state, {
+      failureCode: "BATCH_NOT_FOUND",
+      failureMessage: "Batch not found for enrollment sync processing",
+      finishedAt: now(),
+      retryable: false,
+      status: "manual_review",
     });
     claimedState.enrollmentSync = state;
+    await claimedState.save?.();
+    return {
+      batchId: claimedState.batchId,
+      cancelledCount: 0,
+      failedCount: 1,
+      message: "Batch not found for enrollment sync processing",
+      queuedCount: 0,
+      status: "manual_review",
+      succeededCount: 0,
+      syncStateId: claimedState.batchSyncStateId,
+    };
+  }
 
-    const batch = (await BatchModel.findOne({ batchId: claimedState.batchId })) as ServiceBatch | null;
-    if (!batch) {
-      state.lockId = null;
-      state.lockedAt = null;
-      state.status = "manual_review";
-      state.lastFailureCode = "BATCH_NOT_FOUND";
-      state.lastFailureMessage = "Batch not found for enrollment sync processing";
-      updateLastAttempt(state, {
-        failureCode: "BATCH_NOT_FOUND",
-        failureMessage: "Batch not found for enrollment sync processing",
-        finishedAt: now(),
-        retryable: false,
-        status: "manual_review",
-      });
-      claimedState.enrollmentSync = state;
-      await claimedState.save?.();
-      jobs.push({
-        batchId: claimedState.batchId,
-        cancelledCount: 0,
-        failedCount: 1,
-        message: "Batch not found for enrollment sync processing",
-        queuedCount: 0,
-        status: "manual_review",
-        succeededCount: 0,
-        syncStateId: claimedState.batchSyncStateId,
-      });
-      continue;
-    }
+  const queuedMemberships = (await BatchCandidateModel.find({ batchId: batch.batchId, enrollmentStatus: "queued" })) as ServiceBatchCandidate[];
 
-    const queuedMemberships = (await BatchCandidateModel.find({ batchId: batch.batchId, enrollmentStatus: "queued" })) as ServiceBatchCandidate[];
+  if (queuedMemberships.length === 0) {
+    state.lockId = null;
+    state.lockedAt = null;
+    state.nextRunAt = null;
+    state.status = "synced";
+    updateLastAttempt(state, {
+      failureCode: null,
+      failureMessage: null,
+      finishedAt: now(),
+      retryable: false,
+      status: "succeeded",
+    });
+    claimedState.enrollmentSync = state;
+    await claimedState.save?.();
+    return {
+      batchId: batch.batchId,
+      cancelledCount: 0,
+      failedCount: 0,
+      message: "No queued enrollments were found",
+      queuedCount: 0,
+      status: "succeeded",
+      succeededCount: 0,
+      syncStateId: claimedState.batchSyncStateId,
+    };
+  }
 
-    if (queuedMemberships.length === 0) {
-      state.lockId = null;
-      state.lockedAt = null;
-      state.nextRunAt = null;
-      state.status = "synced";
-      updateLastAttempt(state, {
-        failureCode: null,
-        failureMessage: null,
-        finishedAt: now(),
-        retryable: false,
-        status: "succeeded",
-      });
-      claimedState.enrollmentSync = state;
-      await claimedState.save?.();
-      jobs.push({
-        batchId: batch.batchId,
-        cancelledCount: 0,
-        failedCount: 0,
-        message: "No queued enrollments were found",
-        queuedCount: 0,
-        status: "succeeded",
-        succeededCount: 0,
-        syncStateId: claimedState.batchSyncStateId,
-      });
-      continue;
-    }
-
-    try {
-      await validateEnrollmentEligibility(batch, queuedMemberships);
+  try {
+    await validateEnrollmentEligibility(batch, queuedMemberships);
       const candidates = (await CandidateModel.find({ candidateId: { $in: queuedMemberships.map((item) => item.candidateId) } }).select({
         candidateId: 1,
         fullName: 1,
@@ -2721,11 +2840,13 @@ export async function processQueuedEnrollmentSyncJobs(actor: AuthSession, input:
         state.requestFingerprint = computeFingerprint(payload);
 
         try {
+          await rateLimiter.acquire();
           const result = await connector.enrollCandidate({
             attemptId,
             payload,
             syncJobId: state.lastJobId ?? claimedState.batchSyncStateId,
           });
+          await circuitBreaker.recordSuccess();
 
           for (const membership of eligibleMemberships) {
             membership.enrollmentStatus = "synced";
@@ -2756,6 +2877,12 @@ export async function processQueuedEnrollmentSyncJobs(actor: AuthSession, input:
                   message: classifyMessage(error),
                   retryable: true,
                 });
+
+          if (connectorError.retryable) {
+            await circuitBreaker.recordFailure();
+          } else {
+            await circuitBreaker.recordSuccess();
+          }
 
           if (connectorError.code === "SIDH_REMOTE_BATCH_CANCELLED") {
             claimedState.batchSync = {
@@ -2812,7 +2939,7 @@ export async function processQueuedEnrollmentSyncJobs(actor: AuthSession, input:
             succeededCount = eligibleMemberships.length;
           } else if (connectorError.retryable) {
             const nextRetryCount = (state.retryCount ?? 0) + 1;
-            const maxAttempts = Math.max(1, Math.min(state.maxAttempts ?? 3, 3));
+            const maxAttempts = Math.max(1, state.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
 
             for (const membership of eligibleMemberships) {
               membership.enrollmentStatus = "queued";
@@ -2864,8 +2991,7 @@ export async function processQueuedEnrollmentSyncJobs(actor: AuthSession, input:
       }
 
       if (terminalJob) {
-        jobs.push(terminalJob);
-        continue;
+        return terminalJob;
       }
 
       state.lastAttemptAt = now();
@@ -2886,7 +3012,7 @@ export async function processQueuedEnrollmentSyncJobs(actor: AuthSession, input:
       claimedState.enrollmentSync = state;
       await claimedState.save?.();
 
-      jobs.push({
+      return {
         batchId: batch.batchId,
         cancelledCount,
         failedCount,
@@ -2895,37 +3021,52 @@ export async function processQueuedEnrollmentSyncJobs(actor: AuthSession, input:
         status: failedCount > 0 ? "manual_review" : "succeeded",
         succeededCount,
         syncStateId: claimedState.batchSyncStateId,
-      });
-    } catch (error) {
-      const apiError = error instanceof ApiError ? error : new ApiError(500, "ENROLLMENT_SYNC_FAILED", classifyMessage(error));
-      state.lastAttemptAt = now();
-      state.lastFailureCode = apiError.errorCode;
-      state.lastFailureMessage = apiError.message;
-      state.lockId = null;
-      state.lockedAt = null;
-      state.nextRunAt = null;
-      state.status = "manual_review";
-      updateLastAttempt(state, {
-        failureCode: apiError.errorCode,
-        failureMessage: apiError.message,
-        finishedAt: now(),
-        retryable: false,
-        status: "manual_review",
-      });
-      claimedState.enrollmentSync = state;
-      await claimedState.save?.();
-      jobs.push({
-        batchId: claimedState.batchId,
-        cancelledCount: 0,
-        failedCount: 1,
-        message: apiError.message,
-        queuedCount: await BatchCandidateModel.countDocuments({ batchId: claimedState.batchId, enrollmentStatus: "queued" }),
-        status: "manual_review",
-        succeededCount: 0,
-        syncStateId: claimedState.batchSyncStateId,
-      });
-    }
+      };
+  } catch (error) {
+    const apiError = error instanceof ApiError ? error : new ApiError(500, "ENROLLMENT_SYNC_FAILED", classifyMessage(error));
+    state.lastAttemptAt = now();
+    state.lastFailureCode = apiError.errorCode;
+    state.lastFailureMessage = apiError.message;
+    state.lockId = null;
+    state.lockedAt = null;
+    state.nextRunAt = null;
+    state.status = "manual_review";
+    updateLastAttempt(state, {
+      failureCode: apiError.errorCode,
+      failureMessage: apiError.message,
+      finishedAt: now(),
+      retryable: false,
+      status: "manual_review",
+    });
+    claimedState.enrollmentSync = state;
+    await claimedState.save?.();
+    return {
+      batchId: claimedState.batchId,
+      cancelledCount: 0,
+      failedCount: 1,
+      message: apiError.message,
+      queuedCount: await BatchCandidateModel.countDocuments({ batchId: claimedState.batchId, enrollmentStatus: "queued" }),
+      status: "manual_review",
+      succeededCount: 0,
+      syncStateId: claimedState.batchSyncStateId,
+    };
   }
+}
+
+export async function processQueuedEnrollmentSyncJobs(actor: AuthSession, input: { limit?: number; requestId?: string } = {}, dependencies: ProcessDependencies = {}): Promise<ProcessEnrollmentSyncJobsResult> {
+  await connectToDatabase();
+  ensureCanProcessBatchSync(actor);
+
+  const connector = dependencies.connector ?? createSidhConnector();
+  const rateLimiter = dependencies.rateLimiter ?? createInMemoryRateLimiter(FALLBACK_RATE_LIMITER_PER_SEC);
+  const circuitBreaker = dependencies.circuitBreaker ?? createInMemoryCircuitBreaker(FALLBACK_CIRCUIT_BREAKER_OPTIONS);
+  const now = dependencies.now ?? (() => new Date());
+  const limit = Math.max(1, Math.min(input.limit ?? DEFAULT_BATCH_LIMIT, 5_000));
+  const concurrency = Math.max(1, Math.min(dependencies.concurrency ?? DEFAULT_CONCURRENCY, limit));
+
+  const jobs = await runConcurrentPool(limit, concurrency, () =>
+    claimAndProcessNextEnrollmentSync(actor, connector, rateLimiter, circuitBreaker, now, input.requestId),
+  );
 
   return {
     cancelledCount: jobs.reduce((total, job) => total + job.cancelledCount, 0),
@@ -2935,4 +3076,36 @@ export async function processQueuedEnrollmentSyncJobs(actor: AuthSession, input:
     retryScheduledCount: jobs.filter((job) => job.status === "queued").length,
     succeededCount: jobs.filter((job) => job.status === "succeeded").length,
   };
+}
+
+/** Starts the always-on enrollment worker for this process, driven by the active queue driver. */
+export function startEnrollmentSyncWorker(actor: AuthSession, options: { concurrency?: number; requestIdPrefix?: string } = {}) {
+  const env = getEnv();
+  const runtime = getSidhRuntime();
+  const driver = getQueueDriver();
+  const concurrency = Math.max(1, options.concurrency ?? env.SIDH_PUSH_CONCURRENCY);
+
+  return driver.runWorker(
+    ENROLLMENT_SYNC_QUEUE,
+    async () => {
+      const result = await claimAndProcessNextEnrollmentSync(
+        actor,
+        runtime.connector,
+        runtime.rateLimiter,
+        runtime.circuitBreaker,
+        () => new Date(),
+        options.requestIdPrefix ? `${options.requestIdPrefix}-${createPrefixedId("eswrun")}` : undefined,
+      );
+      return result !== null;
+    },
+    {
+      concurrency,
+      pollIntervalMs: env.WORKER_POLL_INTERVAL_MS,
+    },
+  );
+}
+
+/** Wakes up the enrollment worker immediately instead of waiting for the next poll tick. */
+export async function notifyEnrollmentSyncQueue() {
+  await getQueueDriver().notify(ENROLLMENT_SYNC_QUEUE);
 }

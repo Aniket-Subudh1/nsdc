@@ -66,6 +66,23 @@ const envSchema = z.object({
       "DATABASE_URL must be a MongoDB connection string",
     ),
   REDIS_URL: z.string().trim().url().or(z.literal("")).default(""),
+  QUEUE_DRIVER: z.enum(["auto", "redis", "mongo"]).default("auto"),
+  REDIS_TLS: z.enum(["auto", "true", "false"]).default("auto"),
+  REDIS_KEY_PREFIX: z.string().trim().default(""),
+  SIDH_PUSH_CONCURRENCY: z.coerce.number().int().positive().max(64).default(5),
+  SIDH_RATE_LIMIT_PER_SEC: z.coerce.number().int().positive().max(200).default(10),
+  SIDH_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),
+  SIDH_MAX_ATTEMPTS: z.coerce.number().int().positive().max(20).default(6),
+  SIDH_LEASE_TTL_MS: z.coerce.number().int().positive().default(120_000),
+  SIDH_TXN_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
+  WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(2_000),
+  WORKER_BATCH_LIMIT: z.coerce.number().int().positive().max(500).default(25),
+  SIDH_CIRCUIT_BREAKER_THRESHOLD: z.coerce.number().min(0).max(1).default(0.5),
+  SIDH_CIRCUIT_BREAKER_MIN_SAMPLES: z.coerce.number().int().positive().default(10),
+  SIDH_CIRCUIT_BREAKER_COOLDOWN_MS: z.coerce.number().int().positive().default(30_000),
+  CACHE_DASHBOARD_TTL_SEC: z.coerce.number().int().nonnegative().default(45),
+  CACHE_OPTIONS_TTL_SEC: z.coerce.number().int().nonnegative().default(300),
+  CACHE_ANALYTICS_TTL_SEC: z.coerce.number().int().nonnegative().default(120),
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_REFRESH_SECRET: z.string().min(32),
   SESSION_SECRET: z.string().min(32),
@@ -115,6 +132,43 @@ export function getEnv(): AppEnv {
 
 export function resetEnvCache() {
   cachedEnv = undefined;
+}
+
+export function resolveQueueDriverKind(env: AppEnv): "redis" | "mongo" {
+  if (env.QUEUE_DRIVER === "redis") {
+    return "redis";
+  }
+
+  if (env.QUEUE_DRIVER === "mongo") {
+    return "mongo";
+  }
+
+  return env.REDIS_URL.trim() ? "redis" : "mongo";
+}
+
+export function resolveRedisKeyPrefix(env: AppEnv): string {
+  return env.REDIS_KEY_PREFIX.trim() || `nsdc:${env.APP_ENV}:`;
+}
+
+export function resolveRedisTlsEnabled(env: AppEnv): boolean {
+  if (env.REDIS_TLS === "true") {
+    return true;
+  }
+
+  if (env.REDIS_TLS === "false") {
+    return false;
+  }
+
+  const url = env.REDIS_URL.trim();
+  if (!url) {
+    return false;
+  }
+
+  if (url.startsWith("rediss://")) {
+    return true;
+  }
+
+  return /\.cache\.amazonaws\.com/i.test(url);
 }
 
 export function getSidhBaseUrl(env: AppEnv): string {

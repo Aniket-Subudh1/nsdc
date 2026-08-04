@@ -7,9 +7,11 @@ const mocks = vi.hoisted(() => ({
   candidateFindOne: vi.fn(),
   connectToDatabase: vi.fn(),
   programFindOne: vi.fn(),
+  sidhApiTransactionFindOne: vi.fn(),
   syncJobFindOneAndUpdate: vi.fn(),
   trainingCenterFindOne: vi.fn(),
   writeAuditLog: vi.fn(),
+  writeSyncEvent: vi.fn(),
 }));
 
 vi.mock("@/lib/server/mongodb", () => ({
@@ -20,10 +22,21 @@ vi.mock("@/lib/server/services/audit", () => ({
   writeAuditLog: mocks.writeAuditLog,
 }));
 
+vi.mock("@/lib/server/services/sync-events", () => ({
+  writeSyncEvent: mocks.writeSyncEvent,
+}));
+
 vi.mock("@/lib/server/models/candidate", () => ({
   CandidateModel: {
     findOne: mocks.candidateFindOne,
   },
+}));
+
+vi.mock("@/lib/server/models/sidh-api-transaction", () => ({
+  SidhApiTransactionModel: {
+    findOne: mocks.sidhApiTransactionFindOne,
+  },
+  truncateTransactionPayload: (value: unknown) => value,
 }));
 
 vi.mock("@/lib/server/models/sync-job", () => ({
@@ -142,6 +155,10 @@ describe("candidate sync worker", () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
+    mocks.sidhApiTransactionFindOne.mockReturnValue({
+      sort: vi.fn().mockResolvedValue(null),
+    });
+    mocks.writeSyncEvent.mockResolvedValue(undefined);
   });
 
   it("processes a queued sync job and stores the remote candidate id", async () => {

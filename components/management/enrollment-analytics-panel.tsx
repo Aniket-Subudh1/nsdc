@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   IconBuildingCommunity,
   IconChartBar,
@@ -14,7 +14,8 @@ import {
   IconUsers,
 } from "@tabler/icons-react";
 
-import { apiFetch, ClientApiError } from "@/lib/client/api";
+import { ClientApiError } from "@/lib/client/api";
+import { swrKey, useApiSWR } from "@/lib/client/use-api-swr";
 import { formatUserDate, formatUserDateTime } from "@/lib/format-datetime";
 import { cn } from "@/lib/utils";
 
@@ -224,10 +225,6 @@ function exportToCSV(data: EnrollmentAnalyticsData, financialYear: string) {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function EnrollmentAnalyticsPanel() {
-  const [data, setData] = useState<EnrollmentAnalyticsData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
   const [financialYear, setFinancialYear] = useState("all");
   const [district, setDistrict] = useState("");
   const [sectorId, setSectorId] = useState("");
@@ -238,40 +235,34 @@ export default function EnrollmentAnalyticsPanel() {
     "district",
   );
 
-  const fetchData = useCallback(
-    async (params: {
-      financialYear: string;
-      district: string;
-      sectorId: string;
-      programId: string;
-      centerId: string;
-    }) => {
-      setLoading(true);
-      setError(null);
-      try {
-        const qs = new URLSearchParams();
-        if (params.financialYear) qs.set("financialYear", params.financialYear);
-        if (params.district) qs.set("district", params.district);
-        if (params.sectorId) qs.set("sectorId", params.sectorId);
-        if (params.programId) qs.set("programId", params.programId);
-        if (params.centerId) qs.set("centerId", params.centerId);
+  const analyticsKey = swrKey("/api/v1/dashboard/enrollment-analytics", {
+    financialYear,
+    district: district || undefined,
+    sectorId: sectorId || undefined,
+    programId: programId || undefined,
+    centerId: centerId || undefined,
+  });
 
-        const result = await apiFetch<EnrollmentAnalyticsData>(
-          `/api/v1/dashboard/enrollment-analytics?${qs.toString()}`,
-        );
-        setData(result);
-      } catch (err) {
-        setError(err instanceof ClientApiError ? err.message : "Failed to load analytics");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [],
-  );
+  const {
+    data: swrData,
+    error: swrError,
+    isLoading,
+    isValidating,
+    mutate,
+  } = useApiSWR<EnrollmentAnalyticsData>(analyticsKey);
+  const data = swrData ?? null;
 
-  useEffect(() => {
-    void fetchData({ financialYear, district, sectorId, programId, centerId });
-  }, [fetchData, financialYear, district, sectorId, programId, centerId]);
+  const loading = isLoading && !data;
+  const error =
+    swrError instanceof ClientApiError
+      ? swrError.message
+      : swrError
+        ? "Failed to load analytics"
+        : null;
+
+  async function fetchData() {
+    await mutate();
+  }
 
   const fyLabel = financialYear === "all" ? "All Financial Years" : `FY ${financialYear}`;
   const hasFilters = financialYear !== "all" || !!district || !!sectorId || !!programId || !!centerId;
@@ -306,11 +297,11 @@ export default function EnrollmentAnalyticsPanel() {
             ) : null}
             <button
               type="button"
-              onClick={() => void fetchData({ financialYear, district, sectorId, programId, centerId })}
-              disabled={loading}
+              onClick={() => void fetchData()}
+              disabled={loading || isValidating}
               className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
             >
-              <IconRefresh className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+              <IconRefresh className={cn("h-3.5 w-3.5", (loading || isValidating) && "animate-spin")} />
               Refresh
             </button>
             {data && data.totalEnrolled > 0 ? (

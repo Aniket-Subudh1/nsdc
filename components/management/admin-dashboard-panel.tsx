@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   IconActivity,
@@ -12,7 +12,8 @@ import {
   IconStack2,
 } from "@tabler/icons-react";
 
-import { apiFetch, ClientApiError } from "@/lib/client/api";
+import { ClientApiError } from "@/lib/client/api";
+import { swrKey, useApiSWR } from "@/lib/client/use-api-swr";
 import { cn } from "@/lib/utils";
 import EnrollmentAnalyticsPanel from "@/components/management/enrollment-analytics-panel";
 
@@ -208,28 +209,135 @@ export default function AdminDashboardPanel({
   const [activeTab, setActiveTab] = useState<DashboardTab>("overview");
   const [catalogKind, setCatalogKind] = useState<CatalogKind>("sectors");
   const [centerSearch, setCenterSearch] = useState("");
+  const [debouncedCenterSearch, setDebouncedCenterSearch] = useState("");
   const [centerStatus, setCenterStatus] = useState("all");
   const [centerPage, setCenterPage] = useState(1);
   const [catalogSearch, setCatalogSearch] = useState("");
+  const [debouncedCatalogSearch, setDebouncedCatalogSearch] = useState("");
   const [catalogPage, setCatalogPage] = useState(1);
   const [batchSearch, setBatchSearch] = useState("");
+  const [debouncedBatchSearch, setDebouncedBatchSearch] = useState("");
   const [batchStatus, setBatchStatus] = useState("all");
   const [batchPage, setBatchPage] = useState(1);
   const [activitySearch, setActivitySearch] = useState("");
+  const [debouncedActivitySearch, setDebouncedActivitySearch] = useState("");
   const [activityType, setActivityType] = useState("all");
   const [activityPage, setActivityPage] = useState(1);
-  const [centerItems, setCenterItems] = useState<DashboardPlatformOverview["preview"]["centers"]>([]);
-  const [catalogItems, setCatalogItems] = useState<
-    Array<DashboardPlatformOverview["preview"]["sectors"][number] | DashboardPlatformOverview["preview"]["courses"][number]>
-  >([]);
-  const [batchItems, setBatchItems] = useState<DashboardPlatformOverview["preview"]["batches"]>([]);
-  const [activityItems, setActivityItems] = useState<DashboardPlatformOverview["preview"]["activity"]>([]);
-  const [centerTotal, setCenterTotal] = useState(0);
-  const [catalogTotal, setCatalogTotal] = useState(0);
-  const [batchTotal, setBatchTotal] = useState(0);
-  const [activityTotal, setActivityTotal] = useState(0);
-  const [sectionLoading, setSectionLoading] = useState(false);
-  const [sectionError, setSectionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedCenterSearch(centerSearch.trim()), centerSearch ? 250 : 0);
+    return () => window.clearTimeout(timer);
+  }, [centerSearch]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedCatalogSearch(catalogSearch.trim()), catalogSearch ? 250 : 0);
+    return () => window.clearTimeout(timer);
+  }, [catalogSearch]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedBatchSearch(batchSearch.trim()), batchSearch ? 250 : 0);
+    return () => window.clearTimeout(timer);
+  }, [batchSearch]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedActivitySearch(activitySearch.trim()), activitySearch ? 250 : 0);
+    return () => window.clearTimeout(timer);
+  }, [activitySearch]);
+
+  const centersKey =
+    activeTab === "centers"
+      ? swrKey("/api/v1/dashboard/platform-overview", {
+          section: "centers",
+          page: centerPage,
+          pageSize: PAGE_SIZE,
+          search: debouncedCenterSearch || undefined,
+          status: centerStatus !== "all" ? centerStatus : undefined,
+        })
+      : null;
+  const catalogKey =
+    activeTab === "catalog"
+      ? swrKey("/api/v1/dashboard/platform-overview", {
+          section: catalogKind,
+          page: catalogPage,
+          pageSize: PAGE_SIZE,
+          search: debouncedCatalogSearch || undefined,
+        })
+      : null;
+  const batchesKey =
+    activeTab === "batches"
+      ? swrKey("/api/v1/dashboard/platform-overview", {
+          section: "batches",
+          page: batchPage,
+          pageSize: PAGE_SIZE,
+          search: debouncedBatchSearch || undefined,
+          status: batchStatus !== "all" ? batchStatus : undefined,
+        })
+      : null;
+  const activityKey =
+    activeTab === "activity"
+      ? swrKey("/api/v1/dashboard/platform-overview", {
+          section: "activity",
+          page: activityPage,
+          pageSize: PAGE_SIZE,
+          search: debouncedActivitySearch || undefined,
+          entityType: activityType !== "all" ? activityType : undefined,
+        })
+      : null;
+
+  const {
+    data: centersData,
+    error: centersError,
+    isLoading: centersLoading,
+    isValidating: centersValidating,
+  } = useApiSWR<PagedSectionResponse<DashboardPlatformOverview["preview"]["centers"][number]>>(centersKey);
+  const {
+    data: catalogData,
+    error: catalogError,
+    isLoading: catalogLoading,
+    isValidating: catalogValidating,
+  } = useApiSWR<
+    PagedSectionResponse<
+      | DashboardPlatformOverview["preview"]["sectors"][number]
+      | DashboardPlatformOverview["preview"]["courses"][number]
+    >
+  >(catalogKey);
+  const {
+    data: batchesData,
+    error: batchesError,
+    isLoading: batchesLoading,
+    isValidating: batchesValidating,
+  } = useApiSWR<PagedSectionResponse<DashboardPlatformOverview["preview"]["batches"][number]>>(batchesKey);
+  const {
+    data: activityData,
+    error: activityError,
+    isLoading: activityLoading,
+    isValidating: activityValidating,
+  } = useApiSWR<PagedSectionResponse<DashboardPlatformOverview["preview"]["activity"][number]>>(activityKey);
+
+  const centerItems = centersData?.items ?? [];
+  const catalogItems = catalogData?.items ?? [];
+  const batchItems = batchesData?.items ?? [];
+  const activityItems = activityData?.items ?? [];
+  const centerTotal = centersData?.total ?? 0;
+  const catalogTotal = catalogData?.total ?? 0;
+  const batchTotal = batchesData?.total ?? 0;
+  const activityTotal = activityData?.total ?? 0;
+  const sectionLoading =
+    (activeTab === "centers" && centersLoading && !centersData) ||
+    (activeTab === "catalog" && catalogLoading && !catalogData) ||
+    (activeTab === "batches" && batchesLoading && !batchesData) ||
+    (activeTab === "activity" && activityLoading && !activityData) ||
+    (activeTab === "centers" && centersValidating && Boolean(centersData)) ||
+    (activeTab === "catalog" && catalogValidating && Boolean(catalogData)) ||
+    (activeTab === "batches" && batchesValidating && Boolean(batchesData)) ||
+    (activeTab === "activity" && activityValidating && Boolean(activityData));
+  const sectionSwrError = centersError ?? catalogError ?? batchesError ?? activityError;
+  const sectionError =
+    sectionSwrError instanceof ClientApiError
+      ? sectionSwrError.message
+      : sectionSwrError
+        ? "Unable to load dashboard data"
+        : null;
 
   const totals = platformOverview?.totals;
 
@@ -245,119 +353,6 @@ export default function AdminDashboardPanel({
       ] satisfies Array<{ id: DashboardTab; label: string; count: number | null }>,
     [totals?.batches, totals?.courses, totals?.sectors, totals?.trainingCenters],
   );
-
-  const loadSection = useCallback(
-    async (section: string, params: URLSearchParams) => {
-      setSectionLoading(true);
-
-      try {
-        const data = await apiFetch<PagedSectionResponse<unknown>>(
-          `/api/v1/dashboard/platform-overview?${params.toString()}`,
-        );
-
-        if (section === "centers") {
-          setCenterItems(data.items as DashboardPlatformOverview["preview"]["centers"]);
-          setCenterTotal(data.total);
-        } else if (section === "sectors" || section === "courses") {
-          setCatalogItems(
-            data.items as Array<
-              | DashboardPlatformOverview["preview"]["sectors"][number]
-              | DashboardPlatformOverview["preview"]["courses"][number]
-            >,
-          );
-          setCatalogTotal(data.total);
-        } else if (section === "batches") {
-          setBatchItems(data.items as DashboardPlatformOverview["preview"]["batches"]);
-          setBatchTotal(data.total);
-        } else if (section === "activity") {
-          setActivityItems(data.items as DashboardPlatformOverview["preview"]["activity"]);
-          setActivityTotal(data.total);
-        }
-
-        setSectionError(null);
-      } catch (fetchError) {
-        setSectionError(fetchError instanceof ClientApiError ? fetchError.message : "Unable to load dashboard data");
-      } finally {
-        setSectionLoading(false);
-      }
-    },
-    [],
-  );
-
-  useEffect(() => {
-    if (activeTab !== "centers") {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      const params = new URLSearchParams({
-        section: "centers",
-        page: String(centerPage),
-        pageSize: String(PAGE_SIZE),
-      });
-      if (centerSearch.trim()) params.set("search", centerSearch.trim());
-      if (centerStatus !== "all") params.set("status", centerStatus);
-      void loadSection("centers", params);
-    }, centerSearch ? 250 : 0);
-
-    return () => window.clearTimeout(timer);
-  }, [activeTab, centerPage, centerSearch, centerStatus, loadSection]);
-
-  useEffect(() => {
-    if (activeTab !== "catalog") {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      const params = new URLSearchParams({
-        section: catalogKind,
-        page: String(catalogPage),
-        pageSize: String(PAGE_SIZE),
-      });
-      if (catalogSearch.trim()) params.set("search", catalogSearch.trim());
-      void loadSection(catalogKind, params);
-    }, catalogSearch ? 250 : 0);
-
-    return () => window.clearTimeout(timer);
-  }, [activeTab, catalogKind, catalogPage, catalogSearch, loadSection]);
-
-  useEffect(() => {
-    if (activeTab !== "batches") {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      const params = new URLSearchParams({
-        section: "batches",
-        page: String(batchPage),
-        pageSize: String(PAGE_SIZE),
-      });
-      if (batchSearch.trim()) params.set("search", batchSearch.trim());
-      if (batchStatus !== "all") params.set("status", batchStatus);
-      void loadSection("batches", params);
-    }, batchSearch ? 250 : 0);
-
-    return () => window.clearTimeout(timer);
-  }, [activeTab, batchPage, batchSearch, batchStatus, loadSection]);
-
-  useEffect(() => {
-    if (activeTab !== "activity") {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      const params = new URLSearchParams({
-        section: "activity",
-        page: String(activityPage),
-        pageSize: String(PAGE_SIZE),
-      });
-      if (activitySearch.trim()) params.set("search", activitySearch.trim());
-      if (activityType !== "all") params.set("entityType", activityType);
-      void loadSection("activity", params);
-    }, activitySearch ? 250 : 0);
-
-    return () => window.clearTimeout(timer);
-  }, [activeTab, activityPage, activitySearch, activityType, loadSection]);
 
   return (
     <div className="space-y-4">

@@ -2,7 +2,6 @@
 
 import { memo, startTransition, useEffect, useMemo, useState } from "react";
 
-import { useRefreshableLoad } from "@/lib/client/use-refreshable-load";
 import {
   IconArrowRight,
   IconChevronLeft,
@@ -31,6 +30,8 @@ import {
 import { toast } from "sonner";
 
 import { apiFetch, ClientApiError, type ApiEnvelope } from "@/lib/client/api";
+import { swrKey, useApiSWR, usePortalMutate } from "@/lib/client/use-api-swr";
+import { usePortalOptions } from "@/lib/client/use-portal-options";
 import { downloadCandidateImportTemplateWorkbook } from "@/lib/candidate-import-template-excel";
 import type { CandidateImportTemplateOptions } from "@/lib/candidate-import-template-workbook";
 import {
@@ -933,37 +934,6 @@ async function uploadCandidateImport(form: ImportFormState) {
   return payload.data;
 }
 
-async function fetchCandidates(filters: CandidateFilters) {
-  const query = buildQueryString({
-    page: filters.page,
-    pageSize: filters.pageSize,
-    search: filters.search || undefined,
-    syncStatus: filters.syncStatus || undefined,
-    state: filters.state || undefined,
-    district: filters.district || undefined,
-    centerId: filters.centerId || undefined,
-    referenceCourseId: filters.referenceCourseId || undefined,
-    referenceSectorName: filters.referenceSectorName || undefined,
-    gender: filters.gender || undefined,
-    registrationMode: filters.registrationMode || undefined,
-    programId: filters.programId || undefined,
-    registeredFrom: filters.registeredFrom || undefined,
-    registeredTo: filters.registeredTo || undefined,
-  });
-
-  return apiFetch<PagedCandidates>(`/api/v1/candidates?${query}`);
-}
-
-async function fetchSyncJobs(filters: SyncFilters) {
-  const query = buildQueryString({
-    page: filters.page,
-    pageSize: filters.pageSize,
-    status: filters.status || undefined,
-  });
-
-  return apiFetch<PagedSyncJobs>(`/api/v1/sync/jobs?${query}`);
-}
-
 async function fetchImportRows(
   jobId: string,
   page: number,
@@ -991,14 +961,10 @@ async function queueCandidateSyncBulk(candidateIds: string[]) {
 
 export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   const [activeTab, setActiveTab] = useState<CandidateWorkspaceTab>("all_candidates");
-  const [candidates, setCandidates] = useState<CandidateRecord[]>([]);
   const [candidateFilters, setCandidateFilters] = useState(initialCandidateFilters);
   const [searchDraft, setSearchDraft] = useState("");
   const [showAdvancedCandidateFilters, setShowAdvancedCandidateFilters] = useState(false);
-  const [candidatePagination, setCandidatePagination] = useState({ page: 1, pageSize: 12, total: 0 });
-  const [syncJobs, setSyncJobs] = useState<SyncJobRecord[]>([]);
   const [syncFilters, setSyncFilters] = useState(initialSyncFilters);
-  const [syncPagination, setSyncPagination] = useState({ page: 1, pageSize: 12, total: 0 });
   const [importForm, setImportForm] = useState(emptyImportForm);
   const [individualCandidateForm, setIndividualCandidateForm] = useState(emptyIndividualCandidateForm);
   const [currentImportJob, setCurrentImportJob] = useState<ImportJobRecord | null>(null);
@@ -1017,7 +983,66 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   const [selectedSyncJobId, setSelectedSyncJobId] = useState<string | null>(null);
   const [selectedSyncJob, setSelectedSyncJob] = useState<SyncJobRecord | null>(null);
   const [processLimit, setProcessLimit] = useState("5");
-  const loadState = useRefreshableLoad();
+  const { revalidateKeys } = usePortalMutate();
+  const candidatesKey = useMemo(
+    () =>
+      swrKey("/api/v1/candidates", {
+        page: candidateFilters.page,
+        pageSize: candidateFilters.pageSize,
+        search: candidateFilters.search || undefined,
+        syncStatus: candidateFilters.syncStatus || undefined,
+        state: candidateFilters.state || undefined,
+        district: candidateFilters.district || undefined,
+        centerId: candidateFilters.centerId || undefined,
+        referenceCourseId: candidateFilters.referenceCourseId || undefined,
+        referenceSectorName: candidateFilters.referenceSectorName || undefined,
+        gender: candidateFilters.gender || undefined,
+        registrationMode: candidateFilters.registrationMode || undefined,
+        programId: candidateFilters.programId || undefined,
+        registeredFrom: candidateFilters.registeredFrom || undefined,
+        registeredTo: candidateFilters.registeredTo || undefined,
+      }),
+    [candidateFilters],
+  );
+  const syncJobsKey = useMemo(
+    () =>
+      swrKey("/api/v1/sync/jobs", {
+        page: syncFilters.page,
+        pageSize: syncFilters.pageSize,
+        status: syncFilters.status || undefined,
+      }),
+    [syncFilters],
+  );
+  const {
+    data: candidatePage,
+    error: candidatesSwrError,
+    isLoading: candidatesLoading,
+    isValidating: candidatesValidating,
+    mutate: mutateCandidates,
+  } = useApiSWR<PagedCandidates>(candidatesKey);
+  const {
+    data: syncJobsPage,
+    error: syncJobsSwrError,
+    isLoading: syncJobsLoading,
+    isValidating: syncJobsValidating,
+    mutate: mutateSyncJobs,
+  } = useApiSWR<PagedSyncJobs>(syncJobsKey);
+  const candidates = candidatePage?.items ?? [];
+  const candidatePagination = {
+    page: candidatePage?.page ?? candidateFilters.page,
+    pageSize: candidatePage?.pageSize ?? candidateFilters.pageSize,
+    total: candidatePage?.total ?? 0,
+  };
+  const syncJobs = syncJobsPage?.items ?? [];
+  const syncPagination = {
+    page: syncJobsPage?.page ?? syncFilters.page,
+    pageSize: syncJobsPage?.pageSize ?? syncFilters.pageSize,
+    total: syncJobsPage?.total ?? 0,
+  };
+  const loadState = {
+    isInitialLoading: (candidatesLoading || syncJobsLoading) && !candidatePage && !syncJobsPage,
+    isRefreshing: (candidatesValidating || syncJobsValidating) && Boolean(candidatePage || syncJobsPage),
+  };
   const [isLoadingSyncDetail, setIsLoadingSyncDetail] = useState(false);
   const [isUploadingImport, setIsUploadingImport] = useState(false);
   const [isCreatingCandidate, setIsCreatingCandidate] = useState(false);
@@ -1034,10 +1059,33 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
   const [isExportingCandidates, setIsExportingCandidates] = useState(false);
   const [isLinkingCandidate, setIsLinkingCandidate] = useState(false);
   const [linkForm, setLinkForm] = useState(emptyLinkForm);
-  const [centers, setCenters] = useState<CenterOption[]>([]);
-  const [courses, setCourses] = useState<CourseOption[]>([]);
-  const [sectors, setSectors] = useState<SectorOption[]>([]);
-  const [programs, setPrograms] = useState<ProgramOption[]>([]);
+  const {
+    courses: portalCourses,
+    programs: portalPrograms,
+    sectors: portalSectors,
+    trainingCenters: portalCenters,
+  } = usePortalOptions();
+  const centers = useMemo(
+    () => portalCenters.map((center) => ({ centerId: center.centerId, centerName: center.centerName })),
+    [portalCenters],
+  );
+  const courses = useMemo(
+    () =>
+      portalCourses.map((course) => ({
+        courseId: course.courseId,
+        courseName: course.courseName,
+        sectorId: course.sectorId ?? "",
+      })),
+    [portalCourses],
+  );
+  const sectors = useMemo(
+    () => portalSectors.map((sector) => ({ name: sector.name, sectorId: sector.sectorId })),
+    [portalSectors],
+  );
+  const programs = useMemo(
+    () => portalPrograms.map((program) => ({ name: program.name, programId: program.programId })),
+    [portalPrograms],
+  );
   const sortedCourses = useMemo(() => getSortedCourseOptions(courses), [courses]);
   const sortedSectors = useMemo(
     () => [...sectors].sort((left, right) => left.name.localeCompare(right.name)),
@@ -1185,32 +1233,9 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
     }
   }
 
-  async function loadReferenceOptions() {
-    try {
-      const [centerData, courseData, programData, sectorData] = await Promise.all([
-        apiFetch<{ items: CenterOption[] }>("/api/v1/masters/training-centers?page=1&pageSize=100"),
-        apiFetch<{ items: CourseOption[] }>("/api/v1/masters/courses?page=1&pageSize=100&status=active&approvalStatus=approved"),
-        apiFetch<{ items: ProgramOption[] }>("/api/v1/masters/programs?page=1&pageSize=100"),
-        apiFetch<{ items: SectorOption[] }>("/api/v1/masters/sectors?page=1&pageSize=100"),
-      ]);
-      setCenters(centerData.items);
-      setCourses(courseData.items);
-      setPrograms(programData.items);
-      setSectors(sectorData.items);
-    } catch {
-      // Reference data is optional for the main list; link modal will show empty selects.
-    }
-  }
-
   async function refreshVisibleData() {
-    loadState.begin();
-
     try {
-      const [candidateData, syncJobData] = await Promise.all([fetchCandidates(candidateFilters), fetchSyncJobs(syncFilters)]);
-      setCandidates(candidateData.items);
-      setCandidatePagination({ page: candidateData.page, pageSize: candidateData.pageSize, total: candidateData.total });
-      setSyncJobs(syncJobData.items);
-      setSyncPagination({ page: syncJobData.page, pageSize: syncJobData.pageSize, total: syncJobData.total });
+      await Promise.all([mutateCandidates(), mutateSyncJobs(), revalidateKeys("/api/v1/dashboard/summary")]);
 
       if (currentImportJob) {
         await loadImportRows(
@@ -1228,16 +1253,17 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
       }
     } catch (error) {
       setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to refresh candidate operations data");
-    } finally {
-      loadState.end();
     }
   }
 
   useEffect(() => {
-    startTransition(() => {
-      void loadReferenceOptions();
-    });
-  }, []);
+    const swrError = candidatesSwrError ?? syncJobsSwrError;
+    if (!swrError) {
+      return;
+    }
+
+    setErrorMessage(swrError instanceof ClientApiError ? swrError.message : "Unable to refresh candidate operations data");
+  }, [candidatesSwrError, syncJobsSwrError]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -1252,41 +1278,6 @@ export default function CandidatesManager({ portal }: CandidatesManagerProps) {
 
     return () => window.clearTimeout(timeoutId);
   }, [searchDraft]);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    async function refreshLists() {
-      loadState.begin();
-
-      try {
-        const [candidateData, syncJobData] = await Promise.all([fetchCandidates(candidateFilters), fetchSyncJobs(syncFilters)]);
-
-        if (!isMounted) {
-          return;
-        }
-
-        setCandidates(candidateData.items);
-        setCandidatePagination({ page: candidateData.page, pageSize: candidateData.pageSize, total: candidateData.total });
-        setSyncJobs(syncJobData.items);
-        setSyncPagination({ page: syncJobData.page, pageSize: syncJobData.pageSize, total: syncJobData.total });
-      } catch (error) {
-        if (isMounted) {
-          setErrorMessage(error instanceof ClientApiError ? error.message : "Unable to refresh candidate operations data");
-        }
-      } finally {
-        if (isMounted) {
-          loadState.end();
-        }
-      }
-    }
-
-    void refreshLists();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [candidateFilters, syncFilters]);
 
   useEffect(() => {
     let isMounted = true;

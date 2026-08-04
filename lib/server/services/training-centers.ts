@@ -1,3 +1,4 @@
+import { bustDashboardAndOptionsCaches } from "@/lib/server/cache/invalidation";
 import { ApiError } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
 import { connectToDatabase } from "@/lib/server/mongodb";
@@ -204,6 +205,7 @@ export async function createTrainingCenter(actor: AuthSession, input: CreateTrai
     requestId: input.requestId,
   });
 
+  await bustDashboardAndOptionsCaches();
   return serializeTrainingCenter(center);
 }
 
@@ -270,6 +272,7 @@ export async function updateTrainingCenter(
     requestId: input.requestId,
   });
 
+  await bustDashboardAndOptionsCaches();
   return serializeTrainingCenter(center);
 }
 
@@ -299,6 +302,7 @@ export async function verifyTrainingCenterForSidh(actor: AuthSession, centerId: 
     requestId,
   });
 
+  await bustDashboardAndOptionsCaches();
   return serializeTrainingCenter(center);
 }
 
@@ -352,5 +356,6 @@ export async function deleteTrainingCenter(actor: AuthSession, centerId: string,
     requestId,
   });
 
+  await bustDashboardAndOptionsCaches();
   return serializeTrainingCenter(center);
 }

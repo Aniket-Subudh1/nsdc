@@ -26,6 +26,8 @@ import { toast } from "sonner";
 
 import CourseBulkImportPanel from "@/components/management/course-bulk-import-panel";
 import { apiFetch, ClientApiError } from "@/lib/client/api";
+import { usePortalMutate } from "@/lib/client/use-api-swr";
+import { PORTAL_OPTIONS_KEY, usePortalOptions } from "@/lib/client/use-portal-options";
 import {
   getSidhBatchFieldDefault,
   resolveSidhBatchFieldOptions,
@@ -326,7 +328,8 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
   const [schemeForm, setSchemeForm] = useState(emptySchemeForm);
   const [courseForm, setCourseForm] = useState(emptyCourseForm);
 
-  const [referenceEnums, setReferenceEnums] = useState<Record<string, Array<{ code: string; label: string }>>>({});
+  const { enums: referenceEnums } = usePortalOptions();
+  const { revalidateKeys } = usePortalMutate();
   const [sidhFieldOptions, setSidhFieldOptions] = useState<SidhBatchFieldOptionsResponse | null>(null);
   const loadState = useRefreshableLoad();
   const [isCoursesLoading, setIsCoursesLoading] = useState(false);
@@ -544,11 +547,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
 
   async function loadSidhFieldOptions() {
     try {
-      const [referenceData, sidhOptions] = await Promise.all([
-        apiFetch<{ enums?: Record<string, Array<{ code: string; label: string }>> }>("/api/v1/reference-data/candidate"),
-        apiFetch<SidhBatchFieldOptionsResponse>("/api/v1/masters/sidh-batch-field-options"),
-      ]);
-      setReferenceEnums(referenceData.enums ?? {});
+      const sidhOptions = await apiFetch<SidhBatchFieldOptionsResponse>("/api/v1/masters/sidh-batch-field-options");
       setSidhFieldOptions(sidhOptions);
     } catch (error) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to load SIDH batch field options");
@@ -576,6 +575,7 @@ export default function MasterDataManager({ portal }: MasterDataManagerProps) {
       setSectors(sectorData.items);
       setSchemes(schemeData.items);
       await loadCourses();
+      await revalidateKeys(PORTAL_OPTIONS_KEY, "/api/v1/dashboard/summary");
     } catch (error) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to load master data");
     } finally {

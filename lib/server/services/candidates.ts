@@ -8,6 +8,7 @@ import {
   resolveCandidateProgramId,
 } from "@/lib/candidate-field-options";
 import { normalizeCandidateDistrict, normalizeCandidateState } from "@/lib/candidate-location-options";
+import { bustDashboardCaches } from "@/lib/server/cache/invalidation";
 import { ApiError } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
 import { connectToDatabase } from "@/lib/server/mongodb";
@@ -30,6 +31,8 @@ import {
 } from "@/lib/server/rbac";
 import { writeAuditLog } from "@/lib/server/services/audit";
 import { applyBatchEnrollmentEligibilityFilters } from "@/lib/server/services/batch-enrollment-jobs";
+import { notifyCandidateSyncQueue } from "@/lib/server/services/candidate-sync-worker";
+import { writeSyncEvent } from "@/lib/server/services/sync-events";
 import { type AuthSession } from "@/lib/server/services/session";
 import { parseUserDateInput } from "@/lib/server/sidh-payload";
 import { buildCandidateExportWorkbook } from "@/lib/server/candidate-export";
@@ -1088,7 +1091,28 @@ async function ensureUniqueMobileNumber(
   }
 }
 
+function buildCandidateSyncIdempotencyKey(candidate: SerializedCandidate) {
+  const fingerprint = createHash("sha256")
+    .update(
+      JSON.stringify({
+        candidateId: candidate.candidateId,
+        dateOfBirth: candidate.personalDetails?.dateOfBirth ?? null,
+        fullName: candidate.personalDetails?.fullName ?? null,
+        mobileNumber: candidate.contactDetails?.mobileNumber ?? null,
+        programId: candidate.programId,
+      }),
+    )
+    .digest("hex")
+    .slice(0, 24);
+
+  return `${candidate.candidateId}:${fingerprint}`;
+}
+
 async function createQueuedSyncJob(actor: AuthSession, candidate: SerializedCandidate, requestId?: string) {
+  if (candidate.sidhCandidateId) {
+    throw new ApiError(409, "SYNC_NOT_REQUIRED", "Candidate is already linked with Skill India");
+  }
+
   const existingQueuedJob = await SyncJobModel.findOne({
     candidateId: candidate.candidateId,
     status: { $in: ["queued", "processing"] },
@@ -1099,16 +1123,28 @@ async function createQueuedSyncJob(actor: AuthSession, candidate: SerializedCand
   }
 
   const syncJobId = createPrefixedId("sync");
-  const syncJob = await SyncJobModel.create({
-    syncJobId,
-    entityType: "candidate",
-    entityId: candidate.candidateId,
-    candidateId: candidate.candidateId,
-    maxAttempts: 3,
-    status: "queued",
-    payloadSnapshot: candidate,
-    createdByUserId: actor.user.id,
-  });
+  const idempotencyKey = buildCandidateSyncIdempotencyKey(candidate);
+  let syncJob;
+
+  try {
+    syncJob = await SyncJobModel.create({
+      syncJobId,
+      entityType: "candidate",
+      entityId: candidate.candidateId,
+      candidateId: candidate.candidateId,
+      idempotencyKey,
+      maxAttempts: 6,
+      status: "queued",
+      payloadSnapshot: candidate,
+      createdByUserId: actor.user.id,
+    });
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === 11000) {
+      throw new ApiError(409, "SYNC_ALREADY_QUEUED", "A sync job is already queued for this candidate");
+    }
+
+    throw error;
+  }
 
   await OutboxEventModel.create({
     outboxEventId: createPrefixedId("evt"),
@@ -1144,9 +1180,20 @@ async function createQueuedSyncJob(actor: AuthSession, candidate: SerializedCand
     actorUserId: actor.user.id,
     entityType: "candidate",
     entityId: candidate.candidateId,
-    metadata: { syncJobId },
+    metadata: { syncJobId, idempotencyKey },
     requestId,
   });
+
+  await writeSyncEvent({
+    entityId: candidate.candidateId,
+    entityType: "candidate",
+    eventType: "queued",
+    metadata: { idempotencyKey },
+    requestId,
+    syncJobId,
+  });
+
+  await notifyCandidateSyncQueue();
 
   return serializeSyncJob(syncJob);
 }
@@ -1200,6 +1247,8 @@ async function createCandidateRecord(actor: AuthSession, input: CreateCandidateI
       requestId: options.requestId,
     });
   }
+
+  await bustDashboardCaches();
 
   if (options.queueSync && input.registrationMode === "internal_registration") {
     const syncJob = await createQueuedSyncJob(actor, serialized, options.requestId);
@@ -1433,6 +1482,7 @@ export async function deleteCandidate(actor: AuthSession, candidateId: string, r
     requestId,
   });
 
+  await bustDashboardCaches();
   return { candidateId, deleted: true };
 }
 
@@ -2184,33 +2234,123 @@ export async function queueCandidateSyncBulk(actor: AuthSession, input: BulkQueu
   ensureCanWriteCandidates(actor);
 
   const candidateIds = Array.from(new Set(bulkQueueCandidateSyncSchema.parse(input).candidateIds));
+  const scopedCenterFilter = resolveScopedCenterFilter(actor);
+
   const items: Array<{ candidateId: string; message: string; status: "queued" | "skipped" }> = [];
+  const candidates = await CandidateModel.find({ candidateId: { $in: candidateIds } });
+  const candidateById = new Map(candidates.map((candidate) => [candidate.candidateId, candidate]));
+
+  const eligible: Array<{ candidate: (typeof candidates)[number]; serialized: SerializedCandidate }> = [];
 
   for (const candidateId of candidateIds) {
-    const candidate = await CandidateModel.findOne({ candidateId });
+    const candidate = candidateById.get(candidateId);
 
     if (!candidate) {
       items.push({ candidateId, message: "Candidate not found", status: "skipped" });
       continue;
     }
 
-    resolveScopedCenterFilter(actor, candidate.centerId);
+    if (Array.isArray(scopedCenterFilter) && !scopedCenterFilter.includes(candidate.centerId)) {
+      items.push({ candidateId, message: "You do not have access to this center", status: "skipped" });
+      continue;
+    }
 
     if (candidate.registrationMode === "existing_sidh_link" || candidate.sidhCandidateId) {
       items.push({ candidateId, message: "Already linked with Skill India", status: "skipped" });
       continue;
     }
 
-    try {
-      await createQueuedSyncJob(actor, serializeCandidate(candidate), requestId);
-      items.push({ candidateId, message: "Queued for Skill India registration", status: "queued" });
-    } catch (error) {
-      if (error instanceof ApiError && error.errorCode === "SYNC_ALREADY_QUEUED") {
-        items.push({ candidateId, message: "Already queued for delivery", status: "skipped" });
-        continue;
+    eligible.push({ candidate, serialized: serializeCandidate(candidate) });
+  }
+
+  if (eligible.length > 0) {
+    const eligibleIds = eligible.map((entry) => entry.candidate.candidateId);
+    const alreadyQueuedJobs = await SyncJobModel.find({
+      candidateId: { $in: eligibleIds },
+      status: { $in: ["queued", "processing"] },
+    }).select({ candidateId: 1 });
+    const alreadyQueuedIds = new Set(alreadyQueuedJobs.map((job) => job.candidateId));
+
+    const toQueue = eligible.filter((entry) => {
+      if (alreadyQueuedIds.has(entry.candidate.candidateId)) {
+        items.push({ candidateId: entry.candidate.candidateId, message: "Already queued for delivery", status: "skipped" });
+        return false;
       }
 
-      throw error;
+      return true;
+    });
+
+    if (toQueue.length > 0) {
+      const syncJobDocs = toQueue.map((entry) => ({
+        attempts: [],
+        candidateId: entry.candidate.candidateId,
+        createdByUserId: actor.user.id,
+        entityId: entry.candidate.candidateId,
+        entityType: "candidate" as const,
+        idempotencyKey: buildCandidateSyncIdempotencyKey(entry.serialized),
+        maxAttempts: 6,
+        payloadSnapshot: entry.serialized,
+        status: "queued" as const,
+        syncJobId: createPrefixedId("sync"),
+      }));
+
+      const insertedJobs = await SyncJobModel.insertMany(syncJobDocs, { ordered: false });
+      const syncJobIdByCandidateId = new Map(insertedJobs.map((job) => [job.candidateId, job.syncJobId]));
+
+      await OutboxEventModel.insertMany(
+        insertedJobs.map((job) => ({
+          entityId: job.candidateId,
+          entityType: "candidate",
+          eventType: "candidate.sync.queued",
+          outboxEventId: createPrefixedId("evt"),
+          payload: { candidateId: job.candidateId, syncJobId: job.syncJobId },
+        })),
+        { ordered: false },
+      );
+
+      await CandidateModel.bulkWrite(
+        toQueue.map((entry) => ({
+          updateOne: {
+            filter: { candidateId: entry.candidate.candidateId },
+            update: {
+              $set: {
+                syncState: {
+                  lastAttemptAt: null,
+                  lastFailureCode: null,
+                  lastFailureMessage: null,
+                  lastJobId: syncJobIdByCandidateId.get(entry.candidate.candidateId) ?? null,
+                  lastSuccessAt: (entry.serialized.syncState as Record<string, unknown> | null)?.lastSuccessAt ?? null,
+                  retryCount: (entry.serialized.syncState as Record<string, unknown> | null)?.retryCount ?? 0,
+                  status: "queued",
+                },
+                updatedByUserId: actor.user.id,
+              },
+            },
+          },
+        })) as never,
+      );
+
+      await writeAuditLog({
+        action: "candidate.sync.bulk_queued",
+        actorUserId: actor.user.id,
+        entityId: requestId ?? "bulk",
+        entityType: "candidate",
+        metadata: {
+          candidateIds: toQueue.map((entry) => entry.candidate.candidateId),
+          count: toQueue.length,
+        },
+        requestId,
+      });
+
+      await notifyCandidateSyncQueue();
+
+      for (const entry of toQueue) {
+        items.push({
+          candidateId: entry.candidate.candidateId,
+          message: "Queued for Skill India registration",
+          status: "queued",
+        });
+      }
     }
   }
 
@@ -2333,6 +2473,16 @@ export async function retrySyncJob(actor: AuthSession, syncJobId: string, reques
     metadata: { candidateId: job.candidateId },
     requestId,
   });
+
+  await writeSyncEvent({
+    entityId: job.candidateId,
+    entityType: "candidate",
+    eventType: "requeued",
+    requestId,
+    syncJobId,
+  });
+
+  await notifyCandidateSyncQueue();
 
   return serializeSyncJob(job);
 }

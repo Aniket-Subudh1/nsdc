@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   IconChevronLeft,
@@ -10,7 +10,8 @@ import {
   IconStack2,
 } from "@tabler/icons-react";
 
-import { apiFetch, ClientApiError } from "@/lib/client/api";
+import { ClientApiError } from "@/lib/client/api";
+import { swrKey, useApiSWR } from "@/lib/client/use-api-swr";
 import { cn } from "@/lib/utils";
 
 type DashboardCenterOverview = {
@@ -112,112 +113,83 @@ export default function TrainingPartnerDashboardPanel({
   const [activeTab, setActiveTab] = useState<DashboardTab>("overview");
   const [catalogKind, setCatalogKind] = useState<CatalogKind>("sectors");
   const [catalogSearch, setCatalogSearch] = useState("");
+  const [debouncedCatalogSearch, setDebouncedCatalogSearch] = useState("");
   const [catalogPage, setCatalogPage] = useState(1);
   const [batchSearch, setBatchSearch] = useState("");
+  const [debouncedBatchSearch, setDebouncedBatchSearch] = useState("");
   const [batchStatus, setBatchStatus] = useState("all");
   const [batchPage, setBatchPage] = useState(1);
-  const [catalogItems, setCatalogItems] = useState<
-    Array<
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedCatalogSearch(catalogSearch.trim()), catalogSearch ? 250 : 0);
+    return () => window.clearTimeout(timer);
+  }, [catalogSearch]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedBatchSearch(batchSearch.trim()), batchSearch ? 250 : 0);
+    return () => window.clearTimeout(timer);
+  }, [batchSearch]);
+
+  const catalogKey =
+    activeTab === "catalog"
+      ? swrKey("/api/v1/dashboard/center-overview", {
+          section: catalogKind,
+          page: catalogPage,
+          pageSize: PAGE_SIZE,
+          search: debouncedCatalogSearch || undefined,
+        })
+      : null;
+  const batchesKey =
+    activeTab === "batches"
+      ? swrKey("/api/v1/dashboard/center-overview", {
+          section: "batches",
+          page: batchPage,
+          pageSize: PAGE_SIZE,
+          search: debouncedBatchSearch || undefined,
+          status: batchStatus !== "all" ? batchStatus : undefined,
+        })
+      : null;
+
+  const {
+    data: catalogData,
+    error: catalogError,
+    isLoading: catalogLoading,
+    isValidating: catalogValidating,
+  } = useApiSWR<
+    PagedSectionResponse<
       | DashboardCenterOverview["preview"]["sectors"][number]
       | DashboardCenterOverview["preview"]["courses"][number]
     >
-  >([]);
-  const [batchItems, setBatchItems] = useState<DashboardCenterOverview["preview"]["batches"]>([]);
-  const [catalogTotal, setCatalogTotal] = useState(0);
-  const [batchTotal, setBatchTotal] = useState(0);
-  const [sectionLoading, setSectionLoading] = useState(false);
-  const [sectionError, setSectionError] = useState<string | null>(null);
+  >(catalogKey);
+  const {
+    data: batchesData,
+    error: batchesError,
+    isLoading: batchesLoading,
+    isValidating: batchesValidating,
+  } = useApiSWR<PagedSectionResponse<DashboardCenterOverview["preview"]["batches"][number]>>(batchesKey);
+
+  const catalogItems = catalogData?.items ?? [];
+  const batchItems = batchesData?.items ?? [];
+  const catalogTotal = catalogData?.total ?? 0;
+  const batchTotal = batchesData?.total ?? 0;
+  const sectionLoading =
+    (activeTab === "catalog" && catalogLoading && !catalogData) ||
+    (activeTab === "batches" && batchesLoading && !batchesData) ||
+    (activeTab === "catalog" && catalogValidating && Boolean(catalogData)) ||
+    (activeTab === "batches" && batchesValidating && Boolean(batchesData));
+  const sectionSwrError = catalogError ?? batchesError;
+  const sectionError =
+    sectionSwrError instanceof ClientApiError
+      ? sectionSwrError.message
+      : sectionSwrError
+        ? "Unable to load dashboard data"
+        : null;
 
   const primaryCenter = centerOverview?.centers[0] ?? null;
   const totals = centerOverview?.totals;
 
   const catalogTotalPages = Math.max(1, Math.ceil(catalogTotal / PAGE_SIZE));
   const batchTotalPages = Math.max(1, Math.ceil(batchTotal / PAGE_SIZE));
-
-  const loadCatalogSection = useCallback(async () => {
-    setSectionLoading(true);
-
-    try {
-      const params = new URLSearchParams({
-        section: catalogKind,
-        page: String(catalogPage),
-        pageSize: String(PAGE_SIZE),
-      });
-
-      if (catalogSearch.trim()) {
-        params.set("search", catalogSearch.trim());
-      }
-
-      const data = await apiFetch<
-        PagedSectionResponse<
-          | DashboardCenterOverview["preview"]["sectors"][number]
-          | DashboardCenterOverview["preview"]["courses"][number]
-        >
-      >(`/api/v1/dashboard/center-overview?${params.toString()}`);
-      setCatalogItems(data.items);
-      setCatalogTotal(data.total);
-      setSectionError(null);
-    } catch (fetchError) {
-      setSectionError(fetchError instanceof ClientApiError ? fetchError.message : "Unable to load catalog data");
-    } finally {
-      setSectionLoading(false);
-    }
-  }, [catalogKind, catalogPage, catalogSearch]);
-
-  const loadBatchSection = useCallback(async () => {
-    setSectionLoading(true);
-
-    try {
-      const params = new URLSearchParams({
-        section: "batches",
-        page: String(batchPage),
-        pageSize: String(PAGE_SIZE),
-      });
-
-      if (batchSearch.trim()) {
-        params.set("search", batchSearch.trim());
-      }
-
-      if (batchStatus !== "all") {
-        params.set("status", batchStatus);
-      }
-
-      const data = await apiFetch<PagedSectionResponse<DashboardCenterOverview["preview"]["batches"][number]>>(
-        `/api/v1/dashboard/center-overview?${params.toString()}`,
-      );
-      setBatchItems(data.items);
-      setBatchTotal(data.total);
-      setSectionError(null);
-    } catch (fetchError) {
-      setSectionError(fetchError instanceof ClientApiError ? fetchError.message : "Unable to load batches");
-    } finally {
-      setSectionLoading(false);
-    }
-  }, [batchPage, batchSearch, batchStatus]);
-
-  useEffect(() => {
-    if (activeTab !== "catalog") {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      void loadCatalogSection();
-    }, catalogSearch ? 250 : 0);
-
-    return () => window.clearTimeout(timer);
-  }, [activeTab, loadCatalogSection, catalogSearch]);
-
-  useEffect(() => {
-    if (activeTab !== "batches") {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      void loadBatchSection();
-    }, batchSearch ? 250 : 0);
-
-    return () => window.clearTimeout(timer);
-  }, [activeTab, loadBatchSection, batchSearch]);
 
   const tabs = useMemo(
     () =>

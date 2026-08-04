@@ -2,7 +2,6 @@
 
 import { startTransition, useEffect, useMemo, useState } from "react";
 
-import { useRefreshableLoad } from "@/lib/client/use-refreshable-load";
 import {
   IconCalendar,
   IconCircleCheck,
@@ -25,6 +24,8 @@ import {
 import { toast } from "sonner";
 
 import { apiFetch, ClientApiError } from "@/lib/client/api";
+import { useApiSWR, usePortalMutate } from "@/lib/client/use-api-swr";
+import { PORTAL_OPTIONS_KEY, usePortalOptions } from "@/lib/client/use-portal-options";
 import { formatUserDateTime } from "@/lib/format-datetime";
 import { cn } from "@/lib/utils";
 import {
@@ -138,13 +139,6 @@ type BatchListItem = {
 
 type PagedBatches = {
   items: BatchListItem[];
-  page: number;
-  pageSize: number;
-  total: number;
-};
-
-type PagedCourses = {
-  items: CourseOption[];
   page: number;
   pageSize: number;
   total: number;
@@ -862,9 +856,20 @@ function FieldSelect({
   );
 }
 
+const BATCHES_LIST_KEY = "/api/v1/batches?page=1&pageSize=100";
+
 export default function BatchesManager({ portal }: BatchesManagerProps) {
   const content = portalContent[portal];
-  const [referenceData, setReferenceData] = useState<ReferenceData | null>(null);
+  const { data: portalOptions, isValidating: optionsValidating } = usePortalOptions();
+  const referenceData = (portalOptions as ReferenceData | undefined) ?? null;
+  const { revalidateKeys } = usePortalMutate();
+  const {
+    data: batchesPage,
+    error: batchesSwrError,
+    isLoading: batchesLoading,
+    isValidating: batchesValidating,
+    mutate: mutateBatches,
+  } = useApiSWR<PagedBatches>(BATCHES_LIST_KEY);
   const [batches, setBatches] = useState<BatchListItem[]>([]);
   const [selectedBatch, setSelectedBatch] = useState<BatchDetail | null>(null);
   const [batchForm, setBatchForm] = useState<BatchFormState>(emptyBatchForm);
@@ -874,7 +879,10 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [editingBatchId, setEditingBatchId] = useState<string | null>(null);
-  const loadState = useRefreshableLoad();
+  const loadState = {
+    isInitialLoading: batchesLoading && !batchesPage,
+    isRefreshing: (batchesValidating || optionsValidating) && Boolean(batchesPage),
+  };
   const [isSaving, setIsSaving] = useState(false);
   const [syncingBatchId, setSyncingBatchId] = useState<string | null>(null);
   const [syncingEnrollmentBatchId, setSyncingEnrollmentBatchId] = useState<string | null>(null);
@@ -1073,22 +1081,16 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
     setIsLoadingSectorCourses(false);
   }
 
-  async function loadCoursesForSector(sectorId: string) {
+  function loadCoursesForSector(sectorId: string) {
     if (!sectorId) {
       setSectorCourses([]);
       return;
     }
 
     setIsLoadingSectorCourses(true);
-
     try {
-      const coursePage = await apiFetch<PagedCourses>(
-        `/api/v1/masters/courses?page=1&pageSize=100&status=active&approvalStatus=approved&sectorId=${encodeURIComponent(sectorId)}`,
-      );
-      setSectorCourses(coursePage.items);
-    } catch (error) {
-      setSectorCourses([]);
-      toast.error(error instanceof ClientApiError ? error.message : "Unable to load courses for the selected sector");
+      const courses = (referenceData?.courses ?? []).filter((course) => course.sectorId === sectorId);
+      setSectorCourses(courses);
     } finally {
       setIsLoadingSectorCourses(false);
     }
@@ -1110,64 +1112,55 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
     setShowCreateModal(true);
   }
 
-  async function fetchReferenceData() {
-    const [refs, coursePage] = await Promise.all([
-      apiFetch<ReferenceData>("/api/v1/reference-data/candidate"),
-      apiFetch<PagedCourses>("/api/v1/masters/courses?page=1&pageSize=100&status=active&approvalStatus=approved"),
-    ]);
+  useEffect(() => {
+    if (batchesPage?.items) {
+      setBatches(batchesPage.items);
+    }
+  }, [batchesPage]);
 
-    setReferenceData({ ...refs, courses: coursePage.items });
+  useEffect(() => {
+    if (!batchesSwrError) {
+      return;
+    }
+
+    toast.error(batchesSwrError instanceof ClientApiError ? batchesSwrError.message : "Unable to load batches");
+  }, [batchesSwrError]);
+
+  useEffect(() => {
+    if (!referenceData) {
+      return;
+    }
+
     setBatchForm((current) => {
       const next = { ...current };
 
-      if (!current.centerId && refs.trainingCenters.length === 1) {
-        next.centerId = refs.trainingCenters[0]?.centerId ?? "";
+      if (!current.centerId && referenceData.trainingCenters.length === 1) {
+        next.centerId = referenceData.trainingCenters[0]?.centerId ?? "";
       }
 
-      if (!current.tpId && refs.sidhBatchContext?.tpId) {
-        next.tpId = refs.sidhBatchContext.tpId;
+      if (!current.tpId && referenceData.sidhBatchContext?.tpId) {
+        next.tpId = referenceData.sidhBatchContext.tpId;
       }
 
       return next;
     });
-  }
-
-  async function fetchBatches() {
-    const batchPage = await apiFetch<PagedBatches>("/api/v1/batches?page=1&pageSize=100");
-    setBatches(batchPage.items);
-  }
+  }, [referenceData]);
 
   async function loadData() {
-    loadState.begin();
-
     try {
-      await Promise.all([fetchReferenceData(), fetchBatches()]);
+      await Promise.all([mutateBatches(), revalidateKeys(PORTAL_OPTIONS_KEY, "/api/v1/dashboard/summary")]);
     } catch (error) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to load batch details");
-    } finally {
-      loadState.end();
     }
   }
 
   async function refreshBatches() {
-    loadState.begin();
-
     try {
-      await fetchBatches();
+      await mutateBatches();
     } catch (error) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to refresh batches");
-    } finally {
-      loadState.end();
     }
   }
-
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      void loadData();
-    }, 0);
-
-    return () => window.clearTimeout(timeoutId);
-  }, []);
 
   function updateBatchForm(patch: Partial<BatchFormState>) {
     setBatchForm((current) => ({ ...current, ...patch }));

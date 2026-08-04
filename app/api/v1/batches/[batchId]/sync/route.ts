@@ -18,8 +18,9 @@ export async function POST(request: Request, context: RouteContext) {
       const session = await requireAuth(request);
       const body = batchSyncRequestSchema.parse(await request.json().catch(() => ({})));
       const { batchId } = await context.params;
+      const immediate = new URL(request.url).searchParams.get("immediate") === "true";
 
-      return queueBatchSync(session, batchId, body, request.headers.get("x-request-id") ?? undefined);
+      return queueBatchSync(session, batchId, body, request.headers.get("x-request-id") ?? undefined, { immediate });
     },
     {
       message: "Batch sync queued",

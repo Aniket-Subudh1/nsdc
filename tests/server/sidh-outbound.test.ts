@@ -120,9 +120,14 @@ describe("SIDH outbound payload normalization", () => {
         {
           assessmentDetails: {
             assessmentDataUploadedOn: "2026-02-05T00:00:00Z",
+            assessmentStatus: "Pass",
           },
           certificationDetails: {
             certificationDate: "2026-02-05T00:00:00Z",
+          },
+          trainingDetails: {
+            attendance: 92,
+            trainingStatus: "Completed",
           },
         },
       ],

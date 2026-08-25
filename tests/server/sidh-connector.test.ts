@@ -317,9 +317,61 @@ describe("SIDH connector", () => {
       candidates: [
         expect.objectContaining({
           candidateID: "CAN_001",
-          trainingDetails: { attendance: 92, trainingStatus: "completed" },
+          trainingDetails: { attendance: 92, trainingStatus: "Completed" },
         }),
       ],
+    });
+  });
+
+  it("sends numeric SIDH batch IDs and surfaces logical assessment failures", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "csrf-token" }, status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { headers: { "x-csrf-token": "login-csrf-token" }, status: 200 }))
+      .mockResolvedValueOnce(createJsonResponse({ publicKey: "test-public-key", secretKey: "test-secret" }))
+      .mockResolvedValueOnce(createJsonResponse({ accessToken: "access-token" }))
+      .mockResolvedValueOnce(createJsonResponse({ success: false, message: "Attendance below threshold" }, { status: 200 }));
+
+    const connector = createSidhConnector({ env, fetchImpl });
+
+    await expect(
+      connector.submitTrainingAndAssessment({
+        attemptId: "taatt_002",
+        payload: {
+          batchId: "3877010",
+          candidates: [
+            {
+              assessmentDetails: {
+                assessmentAgency: "Self",
+                assessmentDataUploadedOn: "2026-08-01",
+                assessmentPercentage: 100,
+                assessmentStatus: "Pass",
+                assessorID: "AR153013",
+                assessorName: "Saurav Barman",
+                grade: "A",
+              },
+              candidateID: "CAN_40911229",
+              certificationDetails: {
+                certificationDate: "2026-08-03",
+                certificationName: "Mushroom Farming",
+                certifyingAgency: "Self",
+                isCertified: true,
+              },
+              trainingDetails: {
+                attendance: 100,
+                trainingStatus: "completed",
+              },
+            },
+          ],
+        },
+        syncJobId: "tasjob_002",
+      }),
+    ).rejects.toMatchObject({
+      message: "Attendance below threshold",
+    });
+
+    expect(JSON.parse(String(fetchImpl.mock.calls[4]?.[1]?.body))).toMatchObject({
+      batchId: 3877010,
     });
   });
 

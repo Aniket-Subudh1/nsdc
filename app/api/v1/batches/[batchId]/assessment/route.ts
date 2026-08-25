@@ -1,6 +1,7 @@
 import { ApiError, handleRoute } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
 import { canManageBatchSync } from "@/lib/server/rbac";
+import { resolveSidhBatchId } from "@/lib/server/sidh-payload";
 import { resolveSidhBatchIdForActor } from "@/lib/server/services/batches";
 import { requireAuth } from "@/lib/server/services/session";
 import { createSidhConnector, SidhConnectorError, toApiErrorFromSidh } from "@/lib/server/services/sidh-connector";
@@ -27,6 +28,10 @@ export async function POST(request: Request, context: RouteContext) {
       const { batchId } = await context.params;
       const body = trainingAssessmentSubmissionSchema.parse(await request.json());
       const { sidhBatchId } = await resolveSidhBatchIdForActor(session, batchId);
+      const remoteBatchId = resolveSidhBatchId(body.batchId ?? sidhBatchId);
+      if (remoteBatchId === null) {
+        throw new ApiError(400, "BATCH_NOT_SYNCED", "Batch must be synced to SIDH before assessments can be submitted");
+      }
       const connector = createSidhConnector();
 
       try {
@@ -34,7 +39,7 @@ export async function POST(request: Request, context: RouteContext) {
           attemptId: createPrefixedId("taatt"),
           payload: {
             ...body,
-            batchId: body.batchId ?? sidhBatchId,
+            batchId: remoteBatchId,
           },
           syncJobId: requestId,
         });

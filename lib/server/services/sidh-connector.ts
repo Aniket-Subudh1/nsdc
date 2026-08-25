@@ -6,6 +6,7 @@ import { type AppEnv, getEnv, getSidhCredentials } from "@/lib/server/env";
 import { ApiError } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
 import { SidhApiTransactionModel, truncateTransactionPayload } from "@/lib/server/models/sidh-api-transaction";
+import { resolveSidhBatchId } from "@/lib/server/sidh-payload";
 import {
   normalizeBatchCreationPayload,
   normalizeCandidateRegistrationPayload,
@@ -385,6 +386,25 @@ function extractErrorMessage(responseBody: unknown, fallbackMessage: string) {
   return (
     extractJsonValue<string>(responseBody, ["message", "Message", "error", "errorMessage"]) ?? fallbackMessage
   );
+}
+
+function extractFailedSidhPayloadMessage(payload: unknown) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const record = payload as Record<string, unknown>;
+  const outcome = record.success ?? record.Success ?? record.status ?? record.Status;
+  const failed =
+    outcome === false ||
+    outcome === "false" ||
+    (typeof outcome === "string" && ["failed", "failure", "error"].includes(outcome.toLowerCase()));
+
+  if (!failed) {
+    return null;
+  }
+
+  return extractErrorMessage(payload, "SIDH rejected the request");
 }
 
 function looksLikeDuplicateConflict(message: string) {
@@ -1153,7 +1173,10 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
     },
 
     async submitTrainingAndAssessment(input: SubmitTrainingAssessmentInput): Promise<SubmitTrainingAssessmentResult> {
-      const payload = normalizeTrainingAssessmentPayload(input.payload);
+      const payload = normalizeTrainingAssessmentPayload({
+        ...input.payload,
+        batchId: resolveSidhBatchId(input.payload.batchId) ?? input.payload.batchId,
+      });
 
       const runSubmission = async (session: ConnectorSession) => {
         const response = await requestJson({
@@ -1164,6 +1187,10 @@ export function createSidhConnector(dependencies: ConnectorDependencies = {}) {
           session,
           syncJobId: input.syncJobId,
         });
+        const failedMessage = extractFailedSidhPayloadMessage(response.payload);
+        if (failedMessage) {
+          throw classifyError(response.status || 502, response.payload, failedMessage, "batch.training_assessment_submit");
+        }
 
         return {
           responseBody: response.payload,

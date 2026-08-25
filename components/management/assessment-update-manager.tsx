@@ -126,6 +126,32 @@ function gradeFromPercentage(percentage: number) {
   return "D";
 }
 
+function applySharedDefaults(row: CandidateAssessmentRow, defaults: SharedDefaults): CandidateAssessmentRow {
+  const assessmentPercentage = Number.isFinite(row.assessmentDetails.assessmentPercentage)
+    ? row.assessmentDetails.assessmentPercentage
+    : 0;
+  const assessmentStatus = row.assessmentDetails.assessmentStatus;
+
+  return {
+    ...row,
+    assessmentDetails: {
+      ...row.assessmentDetails,
+      assessmentAgency: defaults.assessmentAgency.trim() || row.assessmentDetails.assessmentAgency,
+      assessmentDataUploadedOn: defaults.assessmentDataUploadedOn || row.assessmentDetails.assessmentDataUploadedOn,
+      assessorID: defaults.assessorID.trim() || row.assessmentDetails.assessorID,
+      assessorName: defaults.assessorName.trim() || row.assessmentDetails.assessorName,
+      grade: row.assessmentDetails.grade.trim() || gradeFromPercentage(assessmentPercentage),
+    },
+    certificationDetails: {
+      ...row.certificationDetails,
+      certificationDate: defaults.certificationDate || row.certificationDetails.certificationDate,
+      certificationName: defaults.certificationName.trim() || row.certificationDetails.certificationName,
+      certifyingAgency: defaults.certifyingAgency.trim() || row.certificationDetails.certifyingAgency,
+      isCertified: assessmentStatus === "Pass" ? true : row.certificationDetails.isCertified,
+    },
+  };
+}
+
 function FieldSelect({
   children,
   id,
@@ -380,12 +406,15 @@ export default function AssessmentUpdateManager({ portal }: AssessmentUpdateMana
 
     const payloadCandidates = selectedRows
       .filter((row) => row.sidhCandidateId)
-      .map((row) => ({
-        candidateID: row.sidhCandidateId as string,
-        trainingDetails: row.trainingDetails,
-        assessmentDetails: row.assessmentDetails,
-        certificationDetails: row.certificationDetails,
-      }));
+      .map((row) => {
+        const merged = applySharedDefaults(row, defaults);
+        return {
+          candidateID: merged.sidhCandidateId as string,
+          trainingDetails: merged.trainingDetails,
+          assessmentDetails: merged.assessmentDetails,
+          certificationDetails: merged.certificationDetails,
+        };
+      });
 
     if (payloadCandidates.length === 0) {
       toast.error("Select at least one learner with a verified SIDH candidate ID");
@@ -684,14 +713,18 @@ export default function AssessmentUpdateManager({ portal }: AssessmentUpdateMana
                               max={100}
                               type="number"
                               value={row.trainingDetails.attendance}
-                              onChange={(event) =>
+                              onChange={(event) => {
+                                const attendance = Number(event.target.value);
+                                const threshold = summary?.assessmentEligibilityThreshold ?? 70;
                                 updateRow(row.candidateId, {
+                                  eligibleForAssessment:
+                                    attendance >= threshold && row.trainingDetails.trainingStatus !== "dropout",
                                   trainingDetails: {
                                     ...row.trainingDetails,
-                                    attendance: Number(event.target.value),
+                                    attendance,
                                   },
-                                })
-                              }
+                                });
+                              }}
                               aria-label="Attendance percentage"
                             />
                           </div>
@@ -704,6 +737,10 @@ export default function AssessmentUpdateManager({ portal }: AssessmentUpdateMana
                               onChange={(value) =>
                                 updateRow(row.candidateId, {
                                   assessmentDetails: { ...row.assessmentDetails, assessmentStatus: value },
+                                  certificationDetails: {
+                                    ...row.certificationDetails,
+                                    isCertified: value === "Pass",
+                                  },
                                 })
                               }
                             >
@@ -719,14 +756,16 @@ export default function AssessmentUpdateManager({ portal }: AssessmentUpdateMana
                                 max={100}
                                 type="number"
                                 value={row.assessmentDetails.assessmentPercentage}
-                                onChange={(event) =>
+                                onChange={(event) => {
+                                  const assessmentPercentage = Number(event.target.value);
                                   updateRow(row.candidateId, {
                                     assessmentDetails: {
                                       ...row.assessmentDetails,
-                                      assessmentPercentage: Number(event.target.value),
+                                      assessmentPercentage,
+                                      grade: gradeFromPercentage(assessmentPercentage),
                                     },
-                                  })
-                                }
+                                  });
+                                }}
                                 aria-label="Assessment percentage"
                               />
                               <Input

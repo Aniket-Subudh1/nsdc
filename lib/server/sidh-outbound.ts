@@ -39,6 +39,19 @@ export function normalizeBatchCreationPayload(payload: BatchCreationPayload): Ba
   };
 }
 
+function toSidhTrainingStatus(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "dropout") {
+    return "Dropout";
+  }
+
+  return "Completed";
+}
+
+function toSidhAssessmentStatus(value: string) {
+  return value.trim().toLowerCase() === "fail" ? "Fail" : "Pass";
+}
+
 export function normalizeTrainingAssessmentPayload(payload: TrainingAssessmentPayload): TrainingAssessmentPayload {
   return {
     ...payload,
@@ -47,10 +60,15 @@ export function normalizeTrainingAssessmentPayload(payload: TrainingAssessmentPa
       assessmentDetails: {
         ...candidate.assessmentDetails,
         assessmentDataUploadedOn: toSidhDateField(candidate.assessmentDetails.assessmentDataUploadedOn),
+        assessmentStatus: toSidhAssessmentStatus(candidate.assessmentDetails.assessmentStatus),
       },
       certificationDetails: {
         ...candidate.certificationDetails,
         certificationDate: toSidhDateField(candidate.certificationDetails.certificationDate),
+      },
+      trainingDetails: {
+        ...candidate.trainingDetails,
+        trainingStatus: toSidhTrainingStatus(candidate.trainingDetails.trainingStatus),
       },
     })),
   };

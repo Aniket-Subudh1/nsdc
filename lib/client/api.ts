@@ -19,20 +19,53 @@ export class ClientApiError extends Error {
   }
 }
 
-export async function apiFetch<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
-  const response = await fetch(input, {
-    credentials: "include",
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
+function formatApiErrorMessage(payload: Partial<ApiEnvelope<unknown>>, fallback: string) {
+  const details = payload.errors
+    ?.map((error) => error.message)
+    .filter((message): message is string => Boolean(message?.trim()))
+    .join("; ");
 
-  const payload = (await response.json()) as ApiEnvelope<T>;
+  return [payload.message ?? fallback, details].filter(Boolean).join(" — ");
+}
+
+export async function apiFetch<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
+  let response: Response;
+
+  try {
+    response = await fetch(input, {
+      credentials: "include",
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error && /failed to fetch|networkerror|load failed/i.test(error.message)
+        ? "Network request was blocked or failed. If antivirus is blocking this site, choose Proceed Anyway and retry."
+        : error instanceof Error
+          ? error.message
+          : "Network request failed";
+    throw new ClientApiError(message, 0);
+  }
+
+  const text = await response.text();
+  let payload: ApiEnvelope<T>;
+
+  try {
+    payload = JSON.parse(text) as ApiEnvelope<T>;
+  } catch {
+    throw new ClientApiError(
+      response.ok
+        ? "The server returned an unexpected response"
+        : `Request failed (${response.status})`,
+      response.status,
+    );
+  }
 
   if (!response.ok || !payload.success) {
-    throw new ClientApiError(payload.message ?? "Request failed", response.status);
+    throw new ClientApiError(formatApiErrorMessage(payload, "Request failed"), response.status);
   }
 
   return payload.data;

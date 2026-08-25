@@ -111,8 +111,8 @@ export function formatSidhInstant(
   return instant.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
-export function resolveSidhBatchId(batchId: string | null | undefined) {
-  const normalized = batchId?.trim();
+export function resolveSidhBatchId(batchId: string | number | null | undefined) {
+  const normalized = typeof batchId === "number" ? String(batchId) : batchId?.trim();
 
   if (!normalized) {
     return null;

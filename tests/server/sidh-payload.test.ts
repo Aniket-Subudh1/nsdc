@@ -21,6 +21,7 @@ describe("SIDH payload helpers", () => {
 
   it("parses numeric SIDH batch IDs for enrollment payloads", () => {
     expect(resolveSidhBatchId("2237653")).toBe(2237653);
+    expect(resolveSidhBatchId(2237653)).toBe(2237653);
     expect(resolveSidhBatchId("BATCH_REMOTE_001")).toBe("BATCH_REMOTE_001");
   });
 

@@ -1,7 +1,7 @@
 import { ApiError, apiError, getRequestId, handleRoute } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
 import { canManageBatchSync } from "@/lib/server/rbac";
-import { resolveSidhBatchIdForActor } from "@/lib/server/services/batches";
+import { resolveCertificateDownloadFileName, resolveSidhBatchIdForActor } from "@/lib/server/services/batches";
 import { requireAuth } from "@/lib/server/services/session";
 import { createSidhConnector, SidhConnectorError, toApiErrorFromSidh } from "@/lib/server/services/sidh-connector";
 import { certificateDownloadQuerySchema, certificateGenerationRequestSchema } from "@/lib/server/validation";
@@ -65,7 +65,8 @@ export async function GET(request: Request, context: RouteContext) {
 
     const { batchId } = await context.params;
     const query = certificateDownloadQuerySchema.parse(Object.fromEntries(new URL(request.url).searchParams.entries()));
-    const { sidhBatchId } = await resolveSidhBatchIdForActor(session, batchId);
+    const { batch, sidhBatchId } = await resolveSidhBatchIdForActor(session, batchId);
+    const fileName = await resolveCertificateDownloadFileName(batch.batchId, query.candidateId);
     const connector = createSidhConnector();
 
     let result;
@@ -90,7 +91,7 @@ export async function GET(request: Request, context: RouteContext) {
 
     return new Response(result.responseBody, {
       headers: {
-        "content-disposition": `attachment; filename="${result.fileName ?? "certificate.pdf"}"`,
+        "content-disposition": `attachment; filename="${fileName.replaceAll('"', "")}"`,
         "content-type": result.contentType ?? "application/pdf",
         "x-request-id": requestId,
       },

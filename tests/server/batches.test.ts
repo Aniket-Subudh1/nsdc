@@ -38,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   schemeFindOne: vi.fn(),
   trainingCenterFindOne: vi.fn(),
   writeAuditLog: vi.fn(),
+  sidhTxnFindOne: vi.fn(),
 }));
 
 vi.mock("@/lib/server/mongodb", () => ({
@@ -141,11 +142,20 @@ vi.mock("@/lib/server/models/training-center", () => ({
   },
 }));
 
+vi.mock("@/lib/server/models/sidh-api-transaction", () => ({
+  SidhApiTransactionModel: {
+    findOne: mocks.sidhTxnFindOne,
+  },
+  truncateTransactionPayload: (value: unknown) => value,
+}));
+
 import {
   createAttendanceImport,
   createBatch,
   evaluateCandidateBatchAssignment,
   getBatchAttendanceSummary,
+  markBatchAssessedOnSidh,
+  refreshBatchSidhLifecycleStatus,
   linkBatchToSidh,
   processQueuedBatchSyncJobs,
   processQueuedEnrollmentSyncJobs,
@@ -938,5 +948,71 @@ describe("enrollment sync worker", () => {
     expect(result.jobs[0]?.status).toBe("cancelled");
     expect(claimedState.enrollmentSync.status).toBe("cancelled");
     expect(mocks.batchCandidateUpdateMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SIDH assessment status sync", () => {
+  const actor = {
+    permissions: [],
+    sessionId: "ses_001",
+    user: {
+      centerIds: ["tc_001"],
+      email: "admin@example.com",
+      id: "usr_001",
+      lastLoginAt: null,
+      mobileNumber: "9876543210",
+      mustChangePassword: false,
+      name: "Platform Admin",
+      role: "training_partner_admin",
+      roles: ["training_partner_admin"],
+      status: "active",
+    },
+  };
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.batchCandidateAggregate.mockResolvedValue([]);
+    mocks.batchUpdateOne.mockResolvedValue(undefined);
+    mocks.batchSyncStateFindOneAndUpdate.mockResolvedValue(createSyncState());
+    mocks.writeAuditLog.mockResolvedValue(undefined);
+  });
+
+  it("marks a synced batch completed and assessed after SIDH accepts assessment", async () => {
+    const batch = createBatchDocument({ status: "draft" });
+    mocks.batchFindOne.mockResolvedValue(batch);
+    mocks.batchSyncStateFindOne.mockResolvedValue(createSyncState());
+
+    const status = await markBatchAssessedOnSidh(actor as never, "bat_001");
+
+    expect(mocks.batchUpdateOne).toHaveBeenCalledWith(
+      { batchId: "bat_001" },
+      { $set: { status: "completed", updatedByUserId: "usr_001" } },
+    );
+    expect(mocks.batchSyncStateFindOneAndUpdate).toHaveBeenCalledWith(
+      { batchId: "bat_001" },
+      { $set: { "batchSync.remoteStatus": "assessed" } },
+    );
+    expect(status.sidhBatchId).toBe("BATCH_REMOTE_001");
+  });
+
+  it("refreshes lifecycle status from successful SIDH assessment transactions", async () => {
+    const batch = createBatchDocument({ status: "draft" });
+    mocks.batchFindOne.mockResolvedValue(batch);
+    mocks.batchSyncStateFindOne.mockResolvedValue(createSyncState());
+    mocks.sidhTxnFindOne
+      .mockReturnValueOnce({ sort: vi.fn().mockResolvedValue({ transactionId: "txn_assess" }) })
+      .mockReturnValueOnce({ sort: vi.fn().mockResolvedValue(null) });
+
+    const status = await refreshBatchSidhLifecycleStatus(actor as never, "bat_001");
+
+    expect(mocks.batchUpdateOne).toHaveBeenCalledWith(
+      { batchId: "bat_001" },
+      { $set: { status: "completed", updatedByUserId: "usr_001" } },
+    );
+    expect(mocks.batchSyncStateFindOneAndUpdate).toHaveBeenCalledWith(
+      { batchId: "bat_001" },
+      { $set: { "batchSync.remoteStatus": "assessed" } },
+    );
+    expect(status.batchId).toBe("bat_001");
   });
 });

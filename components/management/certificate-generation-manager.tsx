@@ -135,6 +135,19 @@ function enrollmentTone(status: string): "emerald" | "slate" | "amber" | "sky" {
   return "slate";
 }
 
+function triggerBrowserDownload(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function fileNameFromDisposition(response: Response, fallback: string) {
+  return response.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] ?? fallback;
+}
+
 async function downloadCertificateFile(batchId: string, candidateId: string, type: string) {
   const response = await fetch(
     `/api/v1/batches/${batchId}/certificates?candidateId=${encodeURIComponent(candidateId)}&type=${encodeURIComponent(type)}`,
@@ -146,15 +159,30 @@ async function downloadCertificateFile(batchId: string, candidateId: string, typ
     throw new ClientApiError(payload?.message ?? "Unable to download certificate", response.status);
   }
 
-  const blob = await response.blob();
-  const disposition = response.headers.get("content-disposition");
-  const fileName = disposition?.match(/filename="([^"]+)"/)?.[1] ?? "certificate.pdf";
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = fileName;
-  link.click();
-  URL.revokeObjectURL(url);
+  triggerBrowserDownload(await response.blob(), fileNameFromDisposition(response, "certificate.pdf"));
+}
+
+async function downloadCertificatesZip(batchId: string, type: string, candidateIds?: string[]) {
+  const params = new URLSearchParams({ type });
+  if (candidateIds?.length) {
+    params.set("candidateIds", candidateIds.join(","));
+  }
+
+  const response = await fetch(`/api/v1/batches/${batchId}/certificates/zip?${params.toString()}`, {
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new ClientApiError(payload?.message ?? "Unable to download certificates", response.status);
+  }
+
+  triggerBrowserDownload(await response.blob(), fileNameFromDisposition(response, "certificates.zip"));
+
+  return {
+    downloadedCount: Number(response.headers.get("x-certificate-downloaded-count") ?? 0),
+    failedCount: Number(response.headers.get("x-certificate-failed-count") ?? 0),
+  };
 }
 
 export default function CertificateGenerationManager({ portal }: CertificateGenerationManagerProps) {
@@ -177,6 +205,7 @@ export default function CertificateGenerationManager({ portal }: CertificateGene
   const [generatingId, setGeneratingId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [isBulkGenerating, setIsBulkGenerating] = useState(false);
+  const [isDownloadingZip, setIsDownloadingZip] = useState(false);
 
   const selectedBatch = useMemo(
     () => batches.find((batch) => batch.batchId === selectedBatchId) ?? null,
@@ -185,6 +214,7 @@ export default function CertificateGenerationManager({ portal }: CertificateGene
 
   const courseMap = useMemo(() => new Map(courses.map((course) => [course.courseId, course])), [courses]);
   const selectedRows = useMemo(() => rows.filter((row) => row.selected && row.sidhCandidateId), [rows]);
+  const downloadableRows = useMemo(() => rows.filter((row) => row.sidhCandidateId), [rows]);
 
   async function loadBatches() {
     loadState.begin();
@@ -331,6 +361,40 @@ export default function CertificateGenerationManager({ portal }: CertificateGene
     }
   }
 
+  async function handleDownloadZip() {
+    if (!selectedBatchId) {
+      return;
+    }
+
+    if (!selectedBatch?.sidhBatchId) {
+      toast.error("Push the batch to SIDH before downloading certificates");
+      return;
+    }
+
+    if (downloadableRows.length === 0) {
+      toast.error("No learners with a SIDH candidate ID are available for download");
+      return;
+    }
+
+    setIsDownloadingZip(true);
+
+    try {
+      const result = await downloadCertificatesZip(selectedBatchId, certificateType);
+
+      if (result.failedCount > 0) {
+        toast.warning(
+          `Downloaded ${result.downloadedCount} certificate(s). ${result.failedCount} could not be fetched from SIDH.`,
+        );
+      } else {
+        toast.success(`Downloaded ${result.downloadedCount} certificate(s) as a ZIP`);
+      }
+    } catch (error) {
+      toast.error(error instanceof ClientApiError ? error.message : "Unable to download certificates");
+    } finally {
+      setIsDownloadingZip(false);
+    }
+  }
+
   if (loadState.isInitialLoading) {
     return (
       <div className="flex flex-1 items-center justify-center bg-slate-100 py-24 text-slate-400">
@@ -363,7 +427,7 @@ export default function CertificateGenerationManager({ portal }: CertificateGene
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs sm:text-sm">
           <li>Submit assessment data from the Assessment Update page.</li>
           <li>Generate certificates here once SIDH accepts the assessment records.</li>
-          <li>Download the issued certificate or mark sheet for each learner.</li>
+          <li>Download one PDF or all certificates in a ZIP named like Aniket_Can_41422.</li>
         </ol>
       </section>
 
@@ -415,18 +479,30 @@ export default function CertificateGenerationManager({ portal }: CertificateGene
             <div>
               <h2 className="text-sm font-semibold text-slate-900">Batch learners</h2>
               <p className="text-xs text-slate-500">
-                Generate certificates individually or in bulk, then download the issued document.
+                Generate certificates, then download one PDF or every issued file in a ZIP named like
+                Aniket_Can_41422.
               </p>
             </div>
-            <button
-              type="button"
-              disabled={isBulkGenerating || selectedRows.length === 0}
-              onClick={() => void handleBulkGenerate()}
-              className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60 sm:w-auto"
-            >
-              {isBulkGenerating ? <IconLoader2 className="h-4 w-4 animate-spin" /> : <IconSparkles className="h-4 w-4" />}
-              Generate {selectedRows.length > 0 ? selectedRows.length : ""} certificate(s)
-            </button>
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+              <button
+                type="button"
+                disabled={isDownloadingZip || downloadableRows.length === 0 || !selectedBatch?.sidhBatchId}
+                onClick={() => void handleDownloadZip()}
+                className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-60 sm:w-auto"
+              >
+                {isDownloadingZip ? <IconLoader2 className="h-4 w-4 animate-spin" /> : <IconDownload className="h-4 w-4" />}
+                Download all (ZIP){downloadableRows.length > 0 ? ` (${downloadableRows.length})` : ""}
+              </button>
+              <button
+                type="button"
+                disabled={isBulkGenerating || selectedRows.length === 0}
+                onClick={() => void handleBulkGenerate()}
+                className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60 sm:w-auto"
+              >
+                {isBulkGenerating ? <IconLoader2 className="h-4 w-4 animate-spin" /> : <IconSparkles className="h-4 w-4" />}
+                Generate {selectedRows.length > 0 ? selectedRows.length : ""} certificate(s)
+              </button>
+            </div>
           </div>
 
           {isLoadingCandidates ? (

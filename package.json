@@ -38,6 +38,7 @@
     "exceljs": "^4.4.0",
     "ioredis": "^6.0.0",
     "jose": "^6.1.0",
+    "jszip": "^3.10.1",
     "lucide-react": "^1.17.0",
     "mongoose": "^8.24.0",
     "motion": "^12.40.0",

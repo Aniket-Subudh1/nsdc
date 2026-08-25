@@ -2,7 +2,7 @@ import { ApiError, handleRoute } from "@/lib/server/http";
 import { createPrefixedId } from "@/lib/server/ids";
 import { canManageBatchSync } from "@/lib/server/rbac";
 import { resolveSidhBatchId } from "@/lib/server/sidh-payload";
-import { resolveSidhBatchIdForActor } from "@/lib/server/services/batches";
+import { markBatchAssessedOnSidh, resolveSidhBatchIdForActor } from "@/lib/server/services/batches";
 import { requireAuth } from "@/lib/server/services/session";
 import { createSidhConnector, SidhConnectorError, toApiErrorFromSidh } from "@/lib/server/services/sidh-connector";
 import { trainingAssessmentSubmissionSchema } from "@/lib/server/validation";
@@ -35,7 +35,7 @@ export async function POST(request: Request, context: RouteContext) {
       const connector = createSidhConnector();
 
       try {
-        return await connector.submitTrainingAndAssessment({
+        const result = await connector.submitTrainingAndAssessment({
           attemptId: createPrefixedId("taatt"),
           payload: {
             ...body,
@@ -43,6 +43,12 @@ export async function POST(request: Request, context: RouteContext) {
           },
           syncJobId: requestId,
         });
+        try {
+          await markBatchAssessedOnSidh(session, batchId);
+        } catch (statusError) {
+          console.error(`[assessment] SIDH accepted but portal status update failed for ${batchId}`, statusError);
+        }
+        return result;
       } catch (error) {
         if (error instanceof SidhConnectorError) {
           throw toApiErrorFromSidh(error);

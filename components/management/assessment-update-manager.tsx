@@ -5,15 +5,24 @@ import { startTransition, useEffect, useMemo, useState } from "react";
 import { useRefreshableLoad } from "@/lib/client/use-refreshable-load";
 import {
   IconAlertTriangle,
+  IconCircleCheck,
   IconClipboardCheck,
+  IconDownload,
   IconLoader2,
   IconRefresh,
   IconSend,
+  IconUpload,
 } from "@tabler/icons-react";
 import { toast } from "sonner";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  applyAssessmentExcelRows,
+  defaultAssessmentScores,
+  extractSidhResponseMessage,
+} from "@/lib/assessment-excel";
+import { downloadAssessmentExcelWorkbook, parseAssessmentExcelFile } from "@/lib/assessment-excel-workbook";
 import { apiFetch, ClientApiError } from "@/lib/client/api";
 import { usePortalOptions } from "@/lib/client/use-portal-options";
 import { cn } from "@/lib/utils";
@@ -72,12 +81,23 @@ type SharedDefaults = {
   certificationName: string;
 };
 
+type AssessmentSubmissionResult = {
+  learners: Array<{
+    candidateId: string;
+    candidateName: string | null;
+    sidhCandidateId: string | null;
+  }>;
+  message: string;
+  submittedAt: string;
+};
+
 type CandidateAssessmentRow = {
   candidateId: string;
   candidateName: string | null;
   eligibleForAssessment: boolean;
   selected: boolean;
   sidhCandidateId: string | null;
+  submittedAt?: string | null;
   assessmentDetails: {
     assessmentAgency: string;
     assessmentDataUploadedOn: string;
@@ -200,32 +220,33 @@ function buildRowFromSummary(
 ): CandidateAssessmentRow {
   const trainingStatus = candidate.trainingStatus ?? "completed";
   const isDropout = trainingStatus === "dropout";
-  const defaultScore = isDropout ? 0 : 75;
+  const scores = defaultAssessmentScores(isDropout);
 
   return {
     candidateId: candidate.candidateId,
     candidateName: candidate.candidateName,
-    eligibleForAssessment: candidate.eligibleForAssessment,
-    selected: candidate.eligibleForAssessment && Boolean(candidate.sidhCandidateId),
+    eligibleForAssessment: !isDropout,
+    selected: !isDropout && Boolean(candidate.sidhCandidateId),
     sidhCandidateId: candidate.sidhCandidateId,
+    submittedAt: null,
     trainingDetails: {
-      attendance: Math.round(candidate.attendancePercentage),
+      attendance: scores.attendance,
       trainingStatus,
     },
     assessmentDetails: {
       assessmentAgency: defaults.assessmentAgency,
       assessmentDataUploadedOn: defaults.assessmentDataUploadedOn,
-      assessmentPercentage: defaultScore,
-      assessmentStatus: isDropout ? "Fail" : "Pass",
+      assessmentPercentage: scores.score,
+      assessmentStatus: scores.result,
       assessorID: defaults.assessorID,
       assessorName: defaults.assessorName,
-      grade: gradeFromPercentage(defaultScore),
+      grade: scores.grade,
     },
     certificationDetails: {
       certificationDate: defaults.certificationDate,
       certificationName: defaults.certificationName,
       certifyingAgency: defaults.certifyingAgency,
-      isCertified: !isDropout,
+      isCertified: scores.certified,
     },
   };
 }
@@ -257,7 +278,9 @@ export default function AssessmentUpdateManager({ portal }: AssessmentUpdateMana
   const loadState = useRefreshableLoad();
   const [isLoadingSummary, setIsLoadingSummary] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showOnlyEligible, setShowOnlyEligible] = useState(true);
+  const [isImportingExcel, setIsImportingExcel] = useState(false);
+  const [showOnlyEligible, setShowOnlyEligible] = useState(false);
+  const [submissionResult, setSubmissionResult] = useState<AssessmentSubmissionResult | null>(null);
 
   const selectedBatch = useMemo(
     () => batches.find((batch) => batch.batchId === selectedBatchId) ?? null,
@@ -290,8 +313,11 @@ export default function AssessmentUpdateManager({ portal }: AssessmentUpdateMana
     if (!batchId) {
       setSummary(null);
       setRows([]);
+      setSubmissionResult(null);
       return;
     }
+
+    setSubmissionResult(null);
 
     setIsLoadingSummary(true);
 
@@ -455,18 +481,88 @@ export default function AssessmentUpdateManager({ portal }: AssessmentUpdateMana
     setIsSubmitting(true);
 
     try {
-      await apiFetch(`/api/v1/batches/${selectedBatchId}/assessment`, {
+      const result = await apiFetch<{ responseBody?: unknown }>(`/api/v1/batches/${selectedBatchId}/assessment`, {
         body: JSON.stringify({
           batchId: selectedBatch.sidhBatchId,
           candidates: payloadCandidates,
         }),
         method: "POST",
       });
+      const submittedAt = new Date().toISOString();
+      const submittedIds = new Set(selectedRows.filter((row) => row.sidhCandidateId).map((row) => row.candidateId));
+      const learners = selectedRows
+        .filter((row) => submittedIds.has(row.candidateId))
+        .map((row) => ({
+          candidateId: row.candidateId,
+          candidateName: row.candidateName,
+          sidhCandidateId: row.sidhCandidateId,
+        }));
+
+      setSubmissionResult({
+        learners,
+        message: extractSidhResponseMessage(result?.responseBody),
+        submittedAt,
+      });
+      setRows((current) =>
+        current.map((row) => (submittedIds.has(row.candidateId) ? { ...row, submittedAt, selected: false } : row)),
+      );
+      void loadBatches();
       toast.success(`Assessment data submitted for ${payloadCandidates.length} learner(s)`);
     } catch (error) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to submit assessment data to SIDH");
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleDownloadAssessmentExcel() {
+    if (rows.length === 0) {
+      toast.error("Load a batch before downloading the assessment template");
+      return;
+    }
+
+    await downloadAssessmentExcelWorkbook(
+      `${selectedBatch?.batchCode ?? "batch"}_assessment.xlsx`,
+      rows.map((row) => ({
+        attendance: row.trainingDetails.attendance,
+        candidateId: row.candidateId,
+        certificateName: row.certificationDetails.certificationName,
+        certified: row.certificationDetails.isCertified,
+        grade: row.assessmentDetails.grade,
+        learnerName: row.candidateName ?? "",
+        result: row.assessmentDetails.assessmentStatus,
+        score: row.assessmentDetails.assessmentPercentage,
+        sidhCandidateId: row.sidhCandidateId ?? "",
+        trainingStatus: row.trainingDetails.trainingStatus,
+      })),
+    );
+  }
+
+  async function handleUploadAssessmentExcel(file: File | undefined) {
+    if (!file) {
+      return;
+    }
+
+    setIsImportingExcel(true);
+
+    try {
+      const excelRows = await parseAssessmentExcelFile(file);
+      if (excelRows.length === 0) {
+        toast.error("The Excel file does not contain any assessment rows");
+        return;
+      }
+
+      const result = applyAssessmentExcelRows(rows, excelRows);
+      setRows(result.rows);
+      toast.success(
+        `Applied ${result.applied} row(s)` +
+          (result.unmatched ? ` · ${result.unmatched} unmatched` : "") +
+          (result.invalid ? ` · ${result.invalid} invalid` : ""),
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to read the assessment Excel file");
+    } finally {
+      setIsImportingExcel(false);
     }
   }
 
@@ -640,6 +736,28 @@ export default function AssessmentUpdateManager({ portal }: AssessmentUpdateMana
                 </p>
               </div>
               <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
+                <button
+                  type="button"
+                  disabled={rows.length === 0}
+                  onClick={() => void handleDownloadAssessmentExcel()}
+                  className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:border-sky-300 disabled:opacity-60 sm:w-auto"
+                >
+                  <IconDownload className="h-4 w-4" />
+                  Download Excel
+                </button>
+                <label className="inline-flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:border-sky-300 sm:w-auto">
+                  {isImportingExcel ? <IconLoader2 className="h-4 w-4 animate-spin" /> : <IconUpload className="h-4 w-4" />}
+                  Upload Excel
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls"
+                    className="hidden"
+                    onChange={(event) => {
+                      void handleUploadAssessmentExcel(event.target.files?.[0]);
+                      event.target.value = "";
+                    }}
+                  />
+                </label>
                 <label className="inline-flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 sm:w-auto">
                   <input
                     type="checkbox"
@@ -660,6 +778,29 @@ export default function AssessmentUpdateManager({ portal }: AssessmentUpdateMana
                 </button>
               </div>
             </div>
+
+            {submissionResult ? (
+              <div className="border-b border-emerald-100 bg-emerald-50 px-4 py-4 sm:px-5">
+                <div className="flex items-start gap-2">
+                  <IconCircleCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-emerald-900">SIDH accepted the assessment</p>
+                    <p className="mt-1 text-sm text-emerald-800">{submissionResult.message}</p>
+                    <p className="mt-1 text-xs text-emerald-700">
+                      {submissionResult.learners.length} learner(s) ·{" "}
+                      {new Date(submissionResult.submittedAt).toLocaleString()}
+                    </p>
+                    <ul className="mt-2 space-y-1 text-xs text-emerald-800">
+                      {submissionResult.learners.map((learner) => (
+                        <li key={learner.candidateId}>
+                          {learner.candidateName ?? "Unnamed learner"} · {learner.sidhCandidateId ?? learner.candidateId}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             {isLoadingSummary ? (
               <div className="flex items-center justify-center py-16 text-slate-400">
@@ -692,7 +833,7 @@ export default function AssessmentUpdateManager({ portal }: AssessmentUpdateMana
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {visibleRows.map((row) => (
-                      <tr key={row.candidateId} className={cn(!row.eligibleForAssessment && "bg-amber-50/40")}>
+                      <tr key={row.candidateId} className={cn(row.submittedAt ? "bg-emerald-50/50" : !row.eligibleForAssessment && "bg-amber-50/40")}>
                         <td className="px-3 py-3 align-top">
                           <input
                             type="checkbox"
@@ -705,7 +846,9 @@ export default function AssessmentUpdateManager({ portal }: AssessmentUpdateMana
                         <td className="px-3 py-3 align-top">
                           <p className="font-medium text-slate-900">{row.candidateName ?? "Unnamed learner"}</p>
                           <p className="text-xs text-slate-500">{row.sidhCandidateId ?? "No SIDH ID"}</p>
-                          {!row.eligibleForAssessment ? (
+                          {row.submittedAt ? (
+                            <p className="mt-1 text-[11px] font-medium text-emerald-700">Submitted to SIDH</p>
+                          ) : !row.eligibleForAssessment ? (
                             <p className="mt-1 text-[11px] font-medium text-amber-700">Below attendance threshold</p>
                           ) : null}
                         </td>

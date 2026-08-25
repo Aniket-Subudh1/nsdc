@@ -2952,6 +2952,18 @@ export function getOpenApiDocument() {
             404: errorResponse("Batch not found"),
           },
         },
+        post: {
+          tags: ["Batches"],
+          summary: "Refresh SIDH lifecycle status from local SIDH transaction history",
+          security: [{ cookieAuth: [] }],
+          parameters: [{ $ref: "#/components/parameters/BatchId" }],
+          responses: {
+            200: successResponse("Batch SIDH lifecycle status refreshed", ref("BatchStatus")),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+            404: errorResponse("Batch not found"),
+          },
+        },
       },
       "/batches/{batchId}/assessment": {
         post: {
@@ -3012,6 +3024,38 @@ export function getOpenApiDocument() {
             401: errorResponse("Authentication required"),
             403: errorResponse("Forbidden"),
             404: errorResponse("Certificate not found"),
+          },
+        },
+      },
+      "/batches/{batchId}/certificates/zip": {
+        get: {
+          tags: ["Batches"],
+          summary: "Download generated SIDH certificates as a ZIP",
+          security: [{ cookieAuth: [] }],
+          parameters: [
+            { $ref: "#/components/parameters/BatchId" },
+            {
+              name: "candidateIds",
+              in: "query",
+              required: false,
+              schema: { type: "string" },
+              description: "Comma-separated SIDH or local candidate IDs. Omit to include every learner with a SIDH ID.",
+            },
+            { name: "type", in: "query", required: false, schema: { type: "string", default: "externalcertificate" } },
+          ],
+          responses: {
+            200: {
+              description: "ZIP archive of certificate PDFs named FirstName_Can_SIDHId",
+              content: {
+                "application/zip": {
+                  schema: { type: "string", format: "binary" },
+                },
+              },
+            },
+            400: errorResponse("Validation failed"),
+            401: errorResponse("Authentication required"),
+            403: errorResponse("Forbidden"),
+            502: errorResponse("Unable to download certificates from SIDH"),
           },
         },
       },

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { buildCertificateFileName, uniqueCertificateFileName } from "@/lib/certificate-file-name";
 import { bustDashboardCaches } from "@/lib/server/cache/invalidation";
 import { getEnv, getSidhBatchContext } from "@/lib/server/env";
 import { ApiError } from "@/lib/server/http";
@@ -21,6 +22,7 @@ import { BatchDailySessionModel } from "@/lib/server/models/batch-daily-session"
 import { BatchModel } from "@/lib/server/models/batch";
 import { BatchSyncStateModel } from "@/lib/server/models/batch-sync-state";
 import { CandidateModel } from "@/lib/server/models/candidate";
+import { SidhApiTransactionModel } from "@/lib/server/models/sidh-api-transaction";
 import { CandidateTrainingStatusHistoryModel } from "@/lib/server/models/candidate-training-status-history";
 import { CourseModel } from "@/lib/server/models/course";
 import { ProgramModel } from "@/lib/server/models/program";
@@ -1639,6 +1641,92 @@ export async function resolveSidhBatchIdForActor(actor: AuthSession, batchId: st
   return { batch, sidhBatchId, syncState };
 }
 
+export async function downloadBatchCertificatesZip(
+  actor: AuthSession,
+  batchId: string,
+  input: { candidateIds?: string[]; type?: string },
+) {
+  await connectToDatabase();
+  ensureCanProcessBatchSync(actor);
+
+  const { batch, sidhBatchId } = await resolveSidhBatchIdForActor(actor, batchId);
+  const roster = await loadBatchRoster(batch.batchId);
+  const requestedIds = new Set((input.candidateIds ?? []).map((value) => value.trim().toLowerCase()).filter(Boolean));
+  const learners = roster.serialized.filter((candidate) => {
+    if (!candidate.sidhCandidateId) {
+      return false;
+    }
+    if (requestedIds.size === 0) {
+      return true;
+    }
+
+    return (
+      requestedIds.has(candidate.sidhCandidateId.toLowerCase()) || requestedIds.has(candidate.candidateId.toLowerCase())
+    );
+  });
+
+  if (learners.length === 0) {
+    throw new ApiError(400, "CERTIFICATE_LEARNERS_MISSING", "No learners with a SIDH candidate ID are available for download");
+  }
+
+  const connector = createSidhConnector();
+  const JSZipModule = await import("jszip");
+  const JSZip = JSZipModule.default ?? JSZipModule;
+  const zip = new JSZip();
+  const usedNames = new Set<string>();
+  const downloaded: string[] = [];
+  const failed: Array<{ candidateId: string; message: string }> = [];
+
+  for (const learner of learners) {
+    try {
+      const result = await connector.downloadCertificate({
+        attemptId: createPrefixedId("certdownatt"),
+        payload: {
+          batchId: sidhBatchId,
+          candidateId: learner.sidhCandidateId as string,
+          type: input.type ?? "externalcertificate",
+        },
+        syncJobId: createPrefixedId("certdown"),
+      });
+      const fileName = uniqueCertificateFileName(
+        buildCertificateFileName(learner.candidateName, learner.sidhCandidateId as string),
+        usedNames,
+      );
+      zip.file(fileName, Buffer.from(result.responseBody));
+      downloaded.push(learner.sidhCandidateId as string);
+    } catch (error) {
+      failed.push({
+        candidateId: learner.sidhCandidateId as string,
+        message: error instanceof Error ? error.message : "Download failed",
+      });
+    }
+  }
+
+  if (downloaded.length === 0) {
+    throw new ApiError(502, "CERTIFICATE_ZIP_EMPTY", failed[0]?.message ?? "Unable to download certificates from SIDH");
+  }
+
+  const buffer = await zip.generateAsync({ compression: "DEFLATE", type: "nodebuffer" });
+  return {
+    batchCode: batch.batchCode,
+    downloadedCount: downloaded.length,
+    failed,
+    fileName: `${batch.batchCode}_certificates.zip`,
+    zip: buffer,
+  };
+}
+
+export async function resolveCertificateDownloadFileName(internalBatchId: string, sidhCandidateId: string) {
+  const roster = await loadBatchRoster(internalBatchId);
+  const needle = sidhCandidateId.trim().toLowerCase();
+  const learner = roster.serialized.find(
+    (candidate) =>
+      candidate.sidhCandidateId?.toLowerCase() === needle || candidate.candidateId.toLowerCase() === needle,
+  );
+
+  return buildCertificateFileName(learner?.candidateName, learner?.sidhCandidateId ?? sidhCandidateId);
+}
+
 async function ensureBatchDeletable(batch: ServiceBatch) {
   if (batch.sidhBatchId) {
     throw new ApiError(409, "BATCH_ALREADY_SYNCED", "Synced batches cannot be deleted");
@@ -1998,11 +2086,81 @@ export async function getBatchStatus(actor: AuthSession, batchId: string) {
     batchId: batch.batchId,
     batchCode: batch.batchCode,
     candidateCount: batch.candidateCount ?? 0,
+    status: batch.status,
     sidhBatchId: batch.sidhBatchId ?? syncState.sidhBatchId ?? null,
     batchSync: serializeSyncState(syncState.batchSync),
     enrollmentSync: serializeSyncState(syncState.enrollmentSync),
     enrollmentCounts,
   };
+}
+
+function sidhBatchIdMatch(sidhBatchId: string) {
+  const numericId = /^\d+$/.test(sidhBatchId) ? Number(sidhBatchId) : null;
+  return numericId === null
+    ? [{ "requestPayload.batchId": sidhBatchId }]
+    : [{ "requestPayload.batchId": sidhBatchId }, { "requestPayload.batchId": numericId }];
+}
+
+export async function markBatchAssessedOnSidh(actor: AuthSession, batchId: string) {
+  await connectToDatabase();
+  ensureCanProcessBatchSync(actor);
+
+  const batch = await loadBatchWithScope(actor, batchId);
+  await ensureBatchSyncState(batch.batchId, actor.user.id);
+  await BatchModel.updateOne(
+    { batchId: batch.batchId },
+    { $set: { status: "completed", updatedByUserId: actor.user.id } },
+  );
+  await BatchSyncStateModel.findOneAndUpdate(
+    { batchId: batch.batchId },
+    { $set: { "batchSync.remoteStatus": "assessed" } },
+  );
+
+  await writeAuditLog({
+    action: "batch.assessment.sidh_accepted",
+    actorUserId: actor.user.id,
+    entityId: batch.batchId,
+    entityType: "batch",
+    metadata: { sidhBatchId: batch.sidhBatchId ?? null },
+  });
+
+  return getBatchStatus(actor, batch.batchId);
+}
+
+export async function refreshBatchSidhLifecycleStatus(actor: AuthSession, batchId: string) {
+  await connectToDatabase();
+  ensureCanReadBatches(actor);
+
+  const { batch, sidhBatchId } = await resolveSidhBatchIdForActor(actor, batchId);
+  const match = sidhBatchIdMatch(String(sidhBatchId));
+
+  const [assessedTxn, certifiedTxn] = await Promise.all([
+    SidhApiTransactionModel.findOne({
+      operation: "batch.training_assessment_submit",
+      success: true,
+      $or: match,
+    }).sort({ createdAt: -1 }),
+    SidhApiTransactionModel.findOne({
+      operation: "certificate.generate",
+      success: true,
+      $or: match,
+    }).sort({ createdAt: -1 }),
+  ]);
+
+  const remoteStatus = certifiedTxn ? "certified" : assessedTxn ? "assessed" : "active";
+  if (assessedTxn || certifiedTxn) {
+    await BatchModel.updateOne(
+      { batchId: batch.batchId },
+      { $set: { status: "completed", updatedByUserId: actor.user.id } },
+    );
+  }
+
+  await BatchSyncStateModel.findOneAndUpdate(
+    { batchId: batch.batchId },
+    { $set: { "batchSync.remoteStatus": remoteStatus } },
+  );
+
+  return getBatchStatus(actor, batch.batchId);
 }
 
 export async function createAttendanceImport(actor: AuthSession, batchId: string, fileName: string, fileBuffer: ArrayBuffer) {

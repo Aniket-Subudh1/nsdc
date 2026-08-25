@@ -26,6 +26,7 @@ import { toast } from "sonner";
 import { apiFetch, ClientApiError } from "@/lib/client/api";
 import { useApiSWR, usePortalMutate } from "@/lib/client/use-api-swr";
 import { PORTAL_OPTIONS_KEY, usePortalOptions } from "@/lib/client/use-portal-options";
+import { formatSidhLifecycleLabel } from "@/lib/assessment-excel";
 import { formatUserDateTime } from "@/lib/format-datetime";
 import { cn } from "@/lib/utils";
 import {
@@ -127,9 +128,11 @@ type BatchListItem = {
   sidhBatchId: string | null;
   startDate: string | null;
   startTime: string;
+  status?: string;
   syncState: {
     batchSync: {
       lastFailureMessage?: string | null;
+      remoteStatus?: string | null;
       status: string;
     };
     enrollmentSync: { status: string };
@@ -686,6 +689,22 @@ function EnrollmentStat({
   );
 }
 
+function SidhLifecycleBadge({ remoteStatus }: { remoteStatus?: string | null }) {
+  const label = formatSidhLifecycleLabel(remoteStatus);
+  if (!label) {
+    return null;
+  }
+
+  const tone =
+    remoteStatus === "assessed" || remoteStatus === "certified"
+      ? "border-sky-200 bg-sky-50 text-sky-800"
+      : remoteStatus === "cancelled"
+        ? "border-rose-200 bg-rose-50 text-rose-800"
+        : "border-slate-200 bg-slate-50 text-slate-700";
+
+  return <span className={cn("inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold", tone)}>{label}</span>;
+}
+
 function StatusBadge({ tone = "slate", value }: { tone?: "emerald" | "slate" | "amber" | "rose" | "sky"; value: string }) {
   const tones = {
     amber: "border-amber-200 bg-amber-50 text-amber-800",
@@ -885,6 +904,7 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
   };
   const [isSaving, setIsSaving] = useState(false);
   const [syncingBatchId, setSyncingBatchId] = useState<string | null>(null);
+  const [refreshingStatusBatchId, setRefreshingStatusBatchId] = useState<string | null>(null);
   const [syncingEnrollmentBatchId, setSyncingEnrollmentBatchId] = useState<string | null>(null);
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
   const [assignBatchId, setAssignBatchId] = useState("");
@@ -1555,6 +1575,27 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
       toast.error(error instanceof ClientApiError ? error.message : "Unable to push batch to SIDH");
     } finally {
       setSyncingBatchId(null);
+    }
+  }
+
+  async function handleRefreshSidhStatus(batchId: string) {
+    setRefreshingStatusBatchId(batchId);
+
+    try {
+      const status = await apiFetch<{
+        batchSync?: { remoteStatus?: string | null };
+        sidhBatchId?: string | null;
+      }>(`/api/v1/batches/${batchId}/status`, { method: "POST" });
+      const label = formatSidhLifecycleLabel(status.batchSync?.remoteStatus) ?? "Active on SIDH";
+      toast.success(`SIDH status refreshed: ${label}`);
+      await refreshBatches();
+      if (selectedBatch?.batchId === batchId) {
+        await handleViewBatch(batchId, false);
+      }
+    } catch (error) {
+      toast.error(error instanceof ClientApiError ? error.message : "Unable to refresh SIDH batch status");
+    } finally {
+      setRefreshingStatusBatchId(null);
     }
   }
 
@@ -2273,9 +2314,12 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                         </td>
                         <td className="px-4 py-3">
                           {batch.sidhBatchId ? (
-                            <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-mono text-[11px] font-semibold text-emerald-800">
-                              {batch.sidhBatchId}
-                            </span>
+                            <div className="flex flex-col items-start gap-1">
+                              <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-mono text-[11px] font-semibold text-emerald-800">
+                                {batch.sidhBatchId}
+                              </span>
+                              <SidhLifecycleBadge remoteStatus={batch.syncState.batchSync.remoteStatus} />
+                            </div>
                           ) : (
                             <span className="text-xs text-slate-400">Not pushed</span>
                           )}
@@ -2310,6 +2354,14 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                             ) : null}
                             {batch.sidhBatchId ? (
                               <BatchActionButton icon={<IconUserPlus className="h-3.5 w-3.5" />} label="Enroll" onClick={() => openAssignModal(batch.batchId)} />
+                            ) : null}
+                            {batch.sidhBatchId ? (
+                              <BatchActionButton
+                                disabled={refreshingStatusBatchId === batch.batchId}
+                                icon={refreshingStatusBatchId === batch.batchId ? <IconLoader2 className="h-3.5 w-3.5 animate-spin" /> : <IconRefresh className="h-3.5 w-3.5" />}
+                                label="Refresh status"
+                                onClick={() => void handleRefreshSidhStatus(batch.batchId)}
+                              />
                             ) : null}
                             {canRetryBatchSync(batch) ? (
                               <BatchActionButton
@@ -2361,6 +2413,11 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                       {formatDate(batch.startDate)} – {formatDate(batch.endDate)} · {batch.candidateCount} learners ·{" "}
                       {batch.sidhBatchId ? `SIDH ${batch.sidhBatchId}` : "Not pushed"}
                     </p>
+                    {batch.sidhBatchId ? (
+                      <div className="mt-2">
+                        <SidhLifecycleBadge remoteStatus={batch.syncState.batchSync.remoteStatus} />
+                      </div>
+                    ) : null}
                     <BatchActionsBar className="mt-2">
                       <BatchActionButton icon={<IconEye className="h-3.5 w-3.5" />} label="View" onClick={() => void handleViewBatch(batch.batchId)} />
                       {canEditBatch(batch) ? (
@@ -2377,6 +2434,14 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                       ) : null}
                       {batch.sidhBatchId ? (
                         <BatchActionButton icon={<IconUserPlus className="h-3.5 w-3.5" />} label="Enroll" onClick={() => openAssignModal(batch.batchId)} />
+                      ) : null}
+                      {batch.sidhBatchId ? (
+                        <BatchActionButton
+                          disabled={refreshingStatusBatchId === batch.batchId}
+                          icon={refreshingStatusBatchId === batch.batchId ? <IconLoader2 className="h-3.5 w-3.5 animate-spin" /> : <IconRefresh className="h-3.5 w-3.5" />}
+                          label="Refresh status"
+                          onClick={() => void handleRefreshSidhStatus(batch.batchId)}
+                        />
                       ) : null}
                       {canRetryBatchSync(batch) ? (
                         <BatchActionButton
@@ -2514,7 +2579,12 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">SIDH batch ID</p>
               {selectedBatch.sidhBatchId ? (
-                <p className="mt-1 break-all font-mono text-lg font-bold text-emerald-800">{selectedBatch.sidhBatchId}</p>
+                <>
+                  <p className="mt-1 break-all font-mono text-lg font-bold text-emerald-800">{selectedBatch.sidhBatchId}</p>
+                  <div className="mt-2">
+                    <SidhLifecycleBadge remoteStatus={selectedBatch.syncState.batchSync.remoteStatus} />
+                  </div>
+                </>
               ) : hasIncompleteSidhLink(selectedBatch) ? (
                 <p className="mt-1 text-sm text-amber-700">
                   Sync marked complete but no SIDH batch ID was saved. Use <span className="font-semibold">Link SIDH ID</span> and
@@ -2555,6 +2625,14 @@ export default function BatchesManager({ portal }: BatchesManagerProps) {
                       openAssignModal(selectedBatch.batchId);
                     }}
                     tone="primary"
+                  />
+                ) : null}
+                {selectedBatch.sidhBatchId ? (
+                  <BatchActionButton
+                    disabled={refreshingStatusBatchId === selectedBatch.batchId}
+                    icon={refreshingStatusBatchId === selectedBatch.batchId ? <IconLoader2 className="h-3.5 w-3.5 animate-spin" /> : <IconRefresh className="h-3.5 w-3.5" />}
+                    label="Refresh status"
+                    onClick={() => void handleRefreshSidhStatus(selectedBatch.batchId)}
                   />
                 ) : null}
                 {canRetryBatchSync(selectedBatch) ? (

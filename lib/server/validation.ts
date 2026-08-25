@@ -1098,6 +1098,22 @@ export const certificateDownloadQuerySchema = z.object({
   type: requiredStringSchema.default("externalcertificate"),
 });
 
+export const certificateZipQuerySchema = z.object({
+  candidateIds: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) =>
+      value
+        ? value
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean)
+        : [],
+    ),
+  type: requiredStringSchema.default("externalcertificate"),
+});
+
 export const attendanceImportFormSchema = z.object({
   batchId: z.string().trim().min(1),
 });
@@ -1142,6 +1158,7 @@ export type EnrollmentSyncRequestInput = z.infer<typeof enrollmentSyncRequestSch
 export type TrainingAssessmentSubmissionInput = z.infer<typeof trainingAssessmentSubmissionSchema>;
 export type CertificateGenerationRequestInput = z.infer<typeof certificateGenerationRequestSchema>;
 export type CertificateDownloadQueryInput = z.infer<typeof certificateDownloadQuerySchema>;
+export type CertificateZipQueryInput = z.infer<typeof certificateZipQuerySchema>;
 export type AttendanceImportFormInput = z.infer<typeof attendanceImportFormSchema>;
 export type AttendanceImportRowInput = z.infer<typeof attendanceImportRowSchema>;
 export type AttendanceCommitInput = z.infer<typeof attendanceCommitSchema>;

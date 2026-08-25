@@ -175,14 +175,32 @@ function FieldSelect({
   );
 }
 
+function RowField({
+  children,
+  htmlFor,
+  label,
+}: {
+  children: React.ReactNode;
+  htmlFor?: string;
+  label: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <label htmlFor={htmlFor} className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+        {label}
+      </label>
+      {children}
+    </div>
+  );
+}
+
 function buildRowFromSummary(
   candidate: AttendanceSummary["candidates"][number],
   defaults: SharedDefaults,
-  eligibilityThreshold: number,
 ): CandidateAssessmentRow {
   const trainingStatus = candidate.trainingStatus ?? "completed";
-  const passed =
-    trainingStatus !== "dropout" && candidate.attendancePercentage >= eligibilityThreshold;
+  const isDropout = trainingStatus === "dropout";
+  const defaultScore = isDropout ? 0 : 75;
 
   return {
     candidateId: candidate.candidateId,
@@ -197,17 +215,17 @@ function buildRowFromSummary(
     assessmentDetails: {
       assessmentAgency: defaults.assessmentAgency,
       assessmentDataUploadedOn: defaults.assessmentDataUploadedOn,
-      assessmentPercentage: passed ? 75 : 0,
-      assessmentStatus: passed ? "Pass" : "Fail",
+      assessmentPercentage: defaultScore,
+      assessmentStatus: isDropout ? "Fail" : "Pass",
       assessorID: defaults.assessorID,
       assessorName: defaults.assessorName,
-      grade: gradeFromPercentage(passed ? 75 : 0),
+      grade: gradeFromPercentage(defaultScore),
     },
     certificationDetails: {
       certificationDate: defaults.certificationDate,
       certificationName: defaults.certificationName,
       certifyingAgency: defaults.certifyingAgency,
-      isCertified: passed,
+      isCertified: !isDropout,
     },
   };
 }
@@ -295,7 +313,7 @@ export default function AssessmentUpdateManager({ portal }: AssessmentUpdateMana
       setSummary(attendanceSummary);
       setRows(
         attendanceSummary.candidates.map((candidate) =>
-          buildRowFromSummary(candidate, nextDefaults, attendanceSummary.assessmentEligibilityThreshold),
+          buildRowFromSummary(candidate, nextDefaults),
         ),
       );
     } catch (error) {
@@ -692,124 +710,141 @@ export default function AssessmentUpdateManager({ portal }: AssessmentUpdateMana
                           ) : null}
                         </td>
                         <td className="px-3 py-3 align-top">
-                          <div className="grid gap-2">
-                            <FieldSelect
-                              id={`trainingStatus-${row.candidateId}`}
-                              value={row.trainingDetails.trainingStatus}
-                              onChange={(value) =>
-                                updateRow(row.candidateId, {
-                                  trainingDetails: { ...row.trainingDetails, trainingStatus: value },
-                                })
-                              }
-                            >
-                              {TRAINING_STATUS_OPTIONS.map((option) => (
-                                <option key={option} value={option}>
-                                  {option}
-                                </option>
-                              ))}
-                            </FieldSelect>
-                            <Input
-                              min={0}
-                              max={100}
-                              type="number"
-                              value={row.trainingDetails.attendance}
-                              onChange={(event) => {
-                                const attendance = Number(event.target.value);
-                                const threshold = summary?.assessmentEligibilityThreshold ?? 70;
-                                updateRow(row.candidateId, {
-                                  eligibleForAssessment:
-                                    attendance >= threshold && row.trainingDetails.trainingStatus !== "dropout",
-                                  trainingDetails: {
-                                    ...row.trainingDetails,
-                                    attendance,
-                                  },
-                                });
-                              }}
-                              aria-label="Attendance percentage"
-                            />
-                          </div>
-                        </td>
-                        <td className="px-3 py-3 align-top">
-                          <div className="grid min-w-[220px] gap-2">
-                            <FieldSelect
-                              id={`assessmentStatus-${row.candidateId}`}
-                              value={row.assessmentDetails.assessmentStatus}
-                              onChange={(value) =>
-                                updateRow(row.candidateId, {
-                                  assessmentDetails: { ...row.assessmentDetails, assessmentStatus: value },
-                                  certificationDetails: {
-                                    ...row.certificationDetails,
-                                    isCertified: value === "Pass",
-                                  },
-                                })
-                              }
-                            >
-                              {ASSESSMENT_STATUS_OPTIONS.map((option) => (
-                                <option key={option} value={option}>
-                                  {option}
-                                </option>
-                              ))}
-                            </FieldSelect>
-                            <div className="grid grid-cols-2 gap-2">
+                          <div className="grid min-w-45 gap-2">
+                            <RowField htmlFor={`trainingStatus-${row.candidateId}`} label="Training status">
+                              <FieldSelect
+                                id={`trainingStatus-${row.candidateId}`}
+                                value={row.trainingDetails.trainingStatus}
+                                onChange={(value) =>
+                                  updateRow(row.candidateId, {
+                                    trainingDetails: { ...row.trainingDetails, trainingStatus: value },
+                                  })
+                                }
+                              >
+                                {TRAINING_STATUS_OPTIONS.map((option) => (
+                                  <option key={option} value={option}>
+                                    {option === "dropout" ? "Dropout" : option === "ongoing" ? "Ongoing" : "Completed"}
+                                  </option>
+                                ))}
+                              </FieldSelect>
+                            </RowField>
+                            <RowField htmlFor={`attendance-${row.candidateId}`} label="Attendance %">
                               <Input
+                                id={`attendance-${row.candidateId}`}
                                 min={0}
                                 max={100}
                                 type="number"
-                                value={row.assessmentDetails.assessmentPercentage}
+                                value={row.trainingDetails.attendance}
                                 onChange={(event) => {
-                                  const assessmentPercentage = Number(event.target.value);
+                                  const attendance = Number(event.target.value);
+                                  const threshold = summary?.assessmentEligibilityThreshold ?? 70;
                                   updateRow(row.candidateId, {
-                                    assessmentDetails: {
-                                      ...row.assessmentDetails,
-                                      assessmentPercentage,
-                                      grade: gradeFromPercentage(assessmentPercentage),
+                                    eligibleForAssessment:
+                                      attendance >= threshold && row.trainingDetails.trainingStatus !== "dropout",
+                                    trainingDetails: {
+                                      ...row.trainingDetails,
+                                      attendance,
                                     },
                                   });
                                 }}
-                                aria-label="Assessment percentage"
+                                placeholder="0–100"
                               />
-                              <Input
-                                value={row.assessmentDetails.grade}
-                                onChange={(event) =>
+                            </RowField>
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 align-top">
+                          <div className="grid min-w-55 gap-2">
+                            <RowField htmlFor={`assessmentStatus-${row.candidateId}`} label="Result">
+                              <FieldSelect
+                                id={`assessmentStatus-${row.candidateId}`}
+                                value={row.assessmentDetails.assessmentStatus}
+                                onChange={(value) =>
                                   updateRow(row.candidateId, {
-                                    assessmentDetails: { ...row.assessmentDetails, grade: event.target.value },
+                                    assessmentDetails: { ...row.assessmentDetails, assessmentStatus: value },
+                                    certificationDetails: {
+                                      ...row.certificationDetails,
+                                      isCertified: value === "Pass",
+                                    },
                                   })
                                 }
-                                aria-label="Grade"
-                                placeholder="Grade"
-                              />
+                              >
+                                {ASSESSMENT_STATUS_OPTIONS.map((option) => (
+                                  <option key={option} value={option}>
+                                    {option}
+                                  </option>
+                                ))}
+                              </FieldSelect>
+                            </RowField>
+                            <div className="grid grid-cols-2 gap-2">
+                              <RowField htmlFor={`assessmentScore-${row.candidateId}`} label="Score %">
+                                <Input
+                                  id={`assessmentScore-${row.candidateId}`}
+                                  min={0}
+                                  max={100}
+                                  type="number"
+                                  value={row.assessmentDetails.assessmentPercentage}
+                                  onChange={(event) => {
+                                    const assessmentPercentage = Number(event.target.value);
+                                    updateRow(row.candidateId, {
+                                      assessmentDetails: {
+                                        ...row.assessmentDetails,
+                                        assessmentPercentage,
+                                        grade: gradeFromPercentage(assessmentPercentage),
+                                      },
+                                    });
+                                  }}
+                                  placeholder="0–100"
+                                />
+                              </RowField>
+                              <RowField htmlFor={`grade-${row.candidateId}`} label="Grade">
+                                <Input
+                                  id={`grade-${row.candidateId}`}
+                                  value={row.assessmentDetails.grade}
+                                  onChange={(event) =>
+                                    updateRow(row.candidateId, {
+                                      assessmentDetails: { ...row.assessmentDetails, grade: event.target.value },
+                                    })
+                                  }
+                                  placeholder="A"
+                                />
+                              </RowField>
                             </div>
                           </div>
                         </td>
                         <td className="px-3 py-3 align-top">
-                          <div className="grid min-w-[180px] gap-2">
-                            <label className="inline-flex items-center gap-2 text-xs text-slate-600">
-                              <input
-                                type="checkbox"
-                                checked={row.certificationDetails.isCertified}
+                          <div className="grid min-w-45 gap-2">
+                            <RowField label="Certified">
+                              <label className="inline-flex h-11 items-center gap-2 text-sm text-slate-700">
+                                <input
+                                  type="checkbox"
+                                  checked={row.certificationDetails.isCertified}
+                                  onChange={(event) =>
+                                    updateRow(row.candidateId, {
+                                      certificationDetails: {
+                                        ...row.certificationDetails,
+                                        isCertified: event.target.checked,
+                                      },
+                                    })
+                                  }
+                                />
+                                Yes
+                              </label>
+                            </RowField>
+                            <RowField htmlFor={`certificationName-${row.candidateId}`} label="Certificate name">
+                              <Input
+                                id={`certificationName-${row.candidateId}`}
+                                value={row.certificationDetails.certificationName}
                                 onChange={(event) =>
                                   updateRow(row.candidateId, {
                                     certificationDetails: {
                                       ...row.certificationDetails,
-                                      isCertified: event.target.checked,
+                                      certificationName: event.target.value,
                                     },
                                   })
                                 }
+                                placeholder="Certificate name"
                               />
-                              Certified
-                            </label>
-                            <Input
-                              value={row.certificationDetails.certificationName}
-                              onChange={(event) =>
-                                updateRow(row.candidateId, {
-                                  certificationDetails: {
-                                    ...row.certificationDetails,
-                                    certificationName: event.target.value,
-                                  },
-                                })
-                              }
-                              aria-label="Certification name"
-                            />
+                            </RowField>
                           </div>
                         </td>
                       </tr>
